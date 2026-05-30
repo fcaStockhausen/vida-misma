@@ -11,6 +11,15 @@ int main(int argc, char* argv[]) {
     Config cfg = load_config(config_path);
 
     Simulation sim(cfg);
+
+    std::printf("La Vida Misma — Community Simulation Engine\n");
+    std::printf("Grid: %dx%d | Agents: %d\n", cfg.grid_width, cfg.grid_height, cfg.initial_population);
+    std::printf("\nPress ENTER to open terminal UI...\n");
+
+    // Wait for Enter in cooked mode (before raw terminal)
+    char buf[8];
+    if (!fgets(buf, sizeof(buf), stdin)) return 0;
+
     Renderer renderer(sim);
 
     RawTerminal term;
