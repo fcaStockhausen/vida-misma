@@ -115,6 +115,89 @@ public:
         return best;
     }
 
+    // EatingZone helpers
+    int min_distance_to_built_machine(int fx, int fy) const {
+        int best = 999999;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Machine) continue;
+                if (!data_at(x, y).built) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best) best = d;
+            }
+        return best;
+    }
+
+    int min_distance_to_any_machine(int fx, int fy) const {
+        int best = 999999;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Machine) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best) best = d;
+            }
+        return best;
+    }
+
+    // From (fx, fy), find the closest Floor tile whose Manhattan distance to any
+    // Machine is at least min_dist. Used by agents who decide to build a new EatingZone.
+    std::pair<int,int> find_nearest_valid_eatingzone_site(int fx, int fy, int min_dist) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                if (at(x, y) != TileType::Floor) continue;
+                if (min_distance_to_any_machine(x, y) < min_dist) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best_dist) {
+                    best_dist = d;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
+    std::pair<int,int> find_nearest_unbuilt_eatingzone(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::EatingZone) continue;
+                if (data_at(x, y).built) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best_dist) {
+                    best_dist = d;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
+    std::pair<int,int> find_nearest_built_eatingzone(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::EatingZone) continue;
+                if (!data_at(x, y).built) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best_dist) {
+                    best_dist = d;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
+    int built_eatingzone_count() const {
+        int n = 0;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) == TileType::EatingZone && data_at(x, y).built) n++;
+            }
+        return n;
+    }
+
     // Find nearest storage with food
     std::pair<int,int> find_nearest_storage_with_food(int fx, int fy) const {
         int best_dist = 999999;
@@ -163,34 +246,9 @@ public:
         set(width_ - 1, mid_y,     TileType::Exit);
         set(width_ - 1, mid_y + 1, TileType::Exit);
 
-        // === FOOD SOURCES (wild food, regenerates) ===
-        // Scattered throughout the map so agents don't have to travel far
-        // NW cluster
-        place_food_source(4, 4);
-        place_food_source(6, 4);
-        place_food_source(4, 6);
-        // NE cluster
-        place_food_source(width_ - 5, 4);
-        place_food_source(width_ - 7, 4);
-        place_food_source(width_ - 5, 6);
-        // SW cluster
-        place_food_source(4, height_ - 5);
-        place_food_source(6, height_ - 5);
-        place_food_source(4, height_ - 7);
-        // SE cluster
-        place_food_source(width_ - 5, height_ - 5);
-        place_food_source(width_ - 7, height_ - 5);
-        place_food_source(width_ - 5, height_ - 7);
-        // Central band -- critical for early survival
-        place_food_source(width_ / 4, mid_y);
-        place_food_source(width_ / 4 + 3, mid_y);
-        place_food_source(3 * width_ / 4, mid_y);
-        place_food_source(3 * width_ / 4 - 3, mid_y);
-        // Mid-top and mid-bottom
-        place_food_source(width_ / 2 - 2, 8);
-        place_food_source(width_ / 2 + 2, 8);
-        place_food_source(width_ / 2 - 2, height_ - 9);
-        place_food_source(width_ / 2 + 2, height_ - 9);
+        // NOTE: FoodSource tiles intentionally removed. In this model, food is only
+        // produced by Machines (industrial pathway). Agents who don't operate machines
+        // can't sustain themselves — that is what creates the cooperation pressure.
 
         // === SCRAP PILES (raw material, finite) ===
         // North corridor
@@ -244,26 +302,24 @@ public:
         place_machine(m4x - 1, m4y + 1);
         place_machine(m4x + 1, m4y + 1);
 
-        // === STORAGE BAYS (near machine clusters) ===
-        // North
-        place_storage(m1x, m1y - 3);
-        place_storage(m1x + 2, m1y - 3);
+        // === STORAGE BAYS — placed at (mx, my±2) so they are 8-adjacent to
+        // all 4 machines in a cluster. This is what makes WORK/EAT actually
+        // reach the storage helpers (3x3 neighborhood).
+        place_storage(m1x, m1y - 2);
+        place_storage(m1x, m1y + 2);
 
-        // South
-        place_storage(m2x, m2y + 3);
-        place_storage(m2x + 2, m2y + 3);
+        place_storage(m2x, m2y - 2);
+        place_storage(m2x, m2y + 2);
 
-        // NE
-        place_storage(m3x, m3y - 3);
-        place_storage(m3x + 2, m3y - 3);
+        place_storage(m3x, m3y - 2);
+        place_storage(m3x, m3y + 2);
 
-        // SE
-        place_storage(m4x, m4y + 3);
-        place_storage(m4x + 2, m4y + 3);
+        place_storage(m4x, m4y - 2);
+        place_storage(m4x, m4y + 2);
 
-        // Central storage
-        place_storage(width_ / 2 - 1, mid_y);
-        place_storage(width_ / 2 + 1, mid_y);
+        // Central storage (mid-grid hub)
+        place_storage(width_ / 2 - 2, mid_y);
+        place_storage(width_ / 2 + 2, mid_y);
 
         // === OPEN SPACES (social/creative) ===
         // Center area
@@ -308,7 +364,9 @@ private:
         auto& d = data_at(x, y);
         d.built          = false;
         d.build_progress = 0.0f;
-        d.build_cost     = 3.0f;
+        d.build_cost     = 3.0f;  // solo: ~25 ticks; two builders: ~12; four: ~6.
+                                  // Build is NOT instantaneous so collaboration matters
+                                  // and agents can pause to attend survival needs.
     }
 
     void place_storage(int x, int y) {

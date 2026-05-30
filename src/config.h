@@ -57,6 +57,23 @@ struct Config {
 
     // Movement noise
     float movement_noise = 0.05f;  // chance of random move instead of toward target
+
+    // External pressure (quota / supply-chain contraction)
+    float quota_per_tick           = 0.10f;  // food units demanded by the outside per tick
+    float health_decay_per_miss    = 0.0015f;// factory_health drop when quota not met
+    float health_recovery_per_hit  = 0.0008f;// factory_health rise when quota met
+    float machine_break_threshold  = 0.40f;  // below this, machines may revert to unbuilt
+    float machine_break_prob       = 0.0008f;// per-tick probability per built machine
+    float initial_food_per_agent   = 2.0f;   // bootstrap so agents survive while building
+
+    // Eating zones / social pressure
+    float inv_food_cap              = 2.0f;  // "una vianda" — max food an agent can carry
+    int   eatingzone_min_dist_machine = 5;   // Manhattan ≥ this from any Machine for an EatingZone
+    float eatingzone_build_cost     = 2.0f;  // raw_material required (~17 BUILD ticks at rate 0.12)
+    float eat_at_work_health_decay  = 0.002f;// factory_health drop per eat-at-work tick
+    float eat_at_work_stress        = 0.010f;// stress added to transgressor per eat-at-work tick
+    int   eat_at_work_witness_radius = 3;    // Manhattan: another agent within this radius "reports"
+                                              // the transgression. Without a witness, no penalty.
 };
 
 Config load_config(const std::string& path);

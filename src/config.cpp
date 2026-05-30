@@ -88,5 +88,25 @@ Config load_config(const std::string& path) {
         cfg.movement_noise = mv->get_as<double>("noise")->value_or(cfg.movement_noise);
     }
 
+    // External pressure
+    if (auto ex = config["external"].as_table()) {
+        cfg.quota_per_tick          = ex->get_as<double>("quota_per_tick")->value_or(cfg.quota_per_tick);
+        cfg.health_decay_per_miss   = ex->get_as<double>("health_decay_per_miss")->value_or(cfg.health_decay_per_miss);
+        cfg.health_recovery_per_hit = ex->get_as<double>("health_recovery_per_hit")->value_or(cfg.health_recovery_per_hit);
+        cfg.machine_break_threshold = ex->get_as<double>("machine_break_threshold")->value_or(cfg.machine_break_threshold);
+        cfg.machine_break_prob      = ex->get_as<double>("machine_break_prob")->value_or(cfg.machine_break_prob);
+        cfg.initial_food_per_agent  = ex->get_as<double>("initial_food_per_agent")->value_or(cfg.initial_food_per_agent);
+    }
+
+    // Eating zones / social pressure
+    if (auto ez = config["eating"].as_table()) {
+        cfg.inv_food_cap              = ez->get_as<double>("inv_food_cap")->value_or(cfg.inv_food_cap);
+        cfg.eatingzone_min_dist_machine = ez->get_as<int64_t>("min_dist_to_machine")->value_or(cfg.eatingzone_min_dist_machine);
+        cfg.eatingzone_build_cost     = ez->get_as<double>("build_cost")->value_or(cfg.eatingzone_build_cost);
+        cfg.eat_at_work_health_decay  = ez->get_as<double>("eat_at_work_health_decay")->value_or(cfg.eat_at_work_health_decay);
+        cfg.eat_at_work_stress        = ez->get_as<double>("eat_at_work_stress")->value_or(cfg.eat_at_work_stress);
+        cfg.eat_at_work_witness_radius = ez->get_as<int64_t>("witness_radius")->value_or(cfg.eat_at_work_witness_radius);
+    }
+
     return cfg;
 }

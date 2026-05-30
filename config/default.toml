@@ -29,34 +29,36 @@ max_population = 200
 seed = 0
 
 [needs]
-hunger_decay      = 0.005   # critical: ~200 ticks to max
-rest_decay        = 0.006   # critical: ~167 ticks to max
-social_decay      = 0.003   # moderate
-expression_decay  = 0.003   # moderate
-purpose_decay     = 0.002   # slow
+# Calibrated so survival doesn't dominate every cycle. Slower decay gives agents
+# time to build, work, and rest within a single "day cycle" without emergency.
+hunger_decay      = 0.0035  # ~285 ticks to max
+rest_decay        = 0.0040  # ~250 ticks to max
+social_decay      = 0.003
+expression_decay  = 0.003
+purpose_decay     = 0.002
 
 [actions]
-eat_satisfaction     = 0.018  # hunger reduction per tick (from processed food)
-eat_raw_efficiency   = 0.7    # raw_food gives this fraction of eat_satisfaction
-eat_food_per_tick    = 0.02   # food units consumed per eat tick
-rest_recovery        = 0.015
+eat_satisfaction     = 0.022
+eat_raw_efficiency   = 0.7
+eat_food_per_tick    = 0.02
+rest_recovery        = 0.020
 social_satisfaction  = 0.012
 create_satisfaction  = 0.012
 explore_satisfaction = 0.008
 work_purpose_gain    = 0.004
 
 [production]
-gather_rate    = 0.20   # resources collected per GATHER tick
-build_rate     = 0.10   # build progress per BUILD tick (build_cost=3 → 30 ticks)
-machine_output = 0.15   # food produced per WORK tick
-machine_input  = 0.05   # raw_food consumed per WORK tick
+gather_rate    = 0.25
+build_rate     = 0.12
+machine_output = 0.18
+machine_input  = 0.05
 
 [urgency]
 alpha = 2.0
 
 [death]
-starvation_ticks = 120
-exhaustion_ticks = 160
+starvation_ticks = 180
+exhaustion_ticks = 200
 
 [stress]
 high_need = 0.008
@@ -73,3 +75,24 @@ curiosity_range      = [0.1, 0.80]
 
 [movement]
 noise = 0.05  # chance of random step instead of toward target
+
+# External pressure — the factory must ship food out through Exit tiles or the
+# supply chain contracts (factory_health drops; built machines may break).
+[external]
+quota_per_tick          = 0.10    # food units demanded out per tick
+health_decay_per_miss   = 0.0015  # factory_health drop when quota not met
+health_recovery_per_hit = 0.0008  # factory_health rise when quota met
+machine_break_threshold = 0.40    # below this, built machines may revert to unbuilt
+machine_break_prob      = 0.0008  # per-tick probability per built machine when health low
+initial_food_per_agent  = 1.0     # bootstrap (~150 ticks of solo feeding before machines need to run)
+
+# Eating zones — agents build designated eating spaces, must stay away from the
+# work zone, and pay a social cost if they eat next to a Machine.
+[eating]
+inv_food_cap                = 2.0    # max food an agent can carry ("una vianda")
+min_dist_to_machine         = 5      # Manhattan distance an EatingZone must keep from machines
+build_cost                  = 2.0    # raw_material to construct an EatingZone (~17 BUILD ticks)
+eat_at_work_health_decay    = 0.002  # factory_health drop per eat-at-work tick
+eat_at_work_stress          = 0.010  # stress added to the transgressor per eat-at-work tick
+witness_radius              = 3      # another agent within Manhattan ≤ N "reports" the transgression
+                                     # — without a witness present, no penalty fires.

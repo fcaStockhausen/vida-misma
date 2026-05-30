@@ -32,18 +32,26 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ftxui)
 
+set(VIDA_SIM_SOURCES
+  src/simulation.cpp
+  src/sim_utility.cpp
+  src/sim_targets.cpp
+  src/sim_movement.cpp
+  src/sim_execute.cpp
+)
+
 # --- Main executable (interactive TUI) ---
 add_executable(vida_misma
   src/main.cpp
   src/config.cpp
-  src/simulation.cpp
+  ${VIDA_SIM_SOURCES}
 )
 
 # --- Batch runner (no TUI) ---
 add_executable(vida_batch
   src/batch_main.cpp
   src/config.cpp
-  src/simulation.cpp
+  ${VIDA_SIM_SOURCES}
 )
 
 # --- Link both targets ---

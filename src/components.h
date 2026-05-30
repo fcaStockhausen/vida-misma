@@ -11,28 +11,44 @@ enum class TileType : uint8_t {
     Floor = 0,
     Wall,
     Machine,      // Factory machine (needs building, then produces food)
-    Storage,      // Holds resources for communal use
+    Storage,      // Holds resources for communal use (machine output lands here)
     Entrance,
     Exit,
     OpenSpace,    // Social/creative area
-    FoodSource,   // Wild food (mushrooms, berries) -- regenerates
+    FoodSource,   // Wild food (legacy, unused in current model)
     ScrapPile,    // Raw material deposit -- finite or slow regen
+    EatingZone,   // Designated eating place (agent-built, must be ≥5 from any Machine)
 };
 
 // --- Actions ---
 
 enum class ActionType : uint8_t {
-    GATHER = 0,   // Collect raw resources from FoodSource/ScrapPile
-    BUILD,        // Construct an unbuilt Machine
-    WORK,         // Operate a built Machine (produces food)
-    EAT,          // Consume food from inventory/storage
+    GATHER = 0,   // Collect raw resources from ScrapPile
+    BUILD,        // Construct an unbuilt Machine or EatingZone frame (or place a new EatingZone)
+    WORK,         // Operate a built Machine (produces food into adjacent Storage)
+    EAT,          // Consume food (from inventory or adjacent Storage / EatingZone)
     REST,
     SOCIALIZE,
     CREATE,       // Artistic expression (needs OpenSpace)
     EXPLORE,      // Move randomly, discover
+    GET_FOOD,     // Pick up food from adjacent Storage into inventory (snack to-go)
     IDLE,
     COUNT
 };
+
+// Spatial contract: which tile an action requires the agent to stand on.
+// EAT/REST/SOCIALIZE/EXPLORE/IDLE/GET_FOOD have no hard tile requirement (return true).
+inline bool is_valid_action_tile(ActionType action, TileType tile) {
+    switch (action) {
+        case ActionType::GATHER: return tile == TileType::ScrapPile;
+        case ActionType::BUILD:  return tile == TileType::Machine
+                                     || tile == TileType::EatingZone
+                                     || tile == TileType::Floor; // Floor: start a new EatingZone here
+        case ActionType::WORK:   return tile == TileType::Machine;
+        case ActionType::CREATE: return tile == TileType::OpenSpace;
+        default:                 return true;
+    }
+}
 
 // --- Resource Types ---
 
@@ -81,6 +97,7 @@ struct ActionComponent {
     float last_utility_socialize = 0.0f;
     float last_utility_create    = 0.0f;
     float last_utility_explore   = 0.0f;
+    float last_utility_get_food  = 0.0f;
 };
 
 struct StressComponent {

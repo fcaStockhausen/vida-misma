@@ -50,9 +50,44 @@ int main(int argc, char* argv[]) {
             pers.gregariousness, pers.resilience, pers.curiosity);
     }
 
-    // Run simulation
+    // Run simulation with periodic sampling
+    int sample_interval = std::max(1, ticks / 20);
+    std::printf("\n--- TIMELINE (every %d ticks) ---\n", sample_interval);
+    std::printf("%6s %5s %5s %5s %5s %5s %5s %5s %5s | %5s %5s %5s | %4s %4s\n",
+        "tick", "alive", "GATH", "BUIL", "WORK", "EAT", "REST", "SOC", "OTHR",
+        "rawF", "rawM", "food", "mach", "raw");
     for (int t = 0; t < ticks; t++) {
         sim.advance();
+        if ((t + 1) % sample_interval == 0 || t == 0) {
+            int alive = sim.alive_count();
+            int act_counts[10] = {};
+            float inv_rf = 0, inv_rm = 0, inv_f = 0;
+            auto av = sim.alive_agents();
+            for (auto e : av) {
+                auto& a = sim.registry().get<ActionComponent>(e);
+                auto& iv = sim.registry().get<InventoryComponent>(e);
+                act_counts[(int)a.current]++;
+                inv_rf += iv.raw_food;
+                inv_rm += iv.raw_material;
+                inv_f  += iv.food;
+            }
+            int other = act_counts[(int)ActionType::CREATE]
+                      + act_counts[(int)ActionType::EXPLORE]
+                      + act_counts[(int)ActionType::GET_FOOD]
+                      + act_counts[(int)ActionType::IDLE];
+            std::printf("%6d %5d %5d %5d %5d %5d %5d %5d %5d | %5.1f %5.1f %5.1f | %4d %4.0f\n",
+                t + 1, alive,
+                act_counts[(int)ActionType::GATHER],
+                act_counts[(int)ActionType::BUILD],
+                act_counts[(int)ActionType::WORK],
+                act_counts[(int)ActionType::EAT],
+                act_counts[(int)ActionType::REST],
+                act_counts[(int)ActionType::SOCIALIZE],
+                other,
+                inv_rf, inv_rm, inv_f,
+                sim.built_machine_count(),
+                sim.total_raw_gathered());
+        }
     }
 
     // Print final state
@@ -61,7 +96,7 @@ int main(int argc, char* argv[]) {
     std::printf("\n");
 
     // Count action distribution and deaths
-    int action_counts[8] = {};
+    int action_counts[9] = {};
     int deaths_by[3] = {};  // starvation, exhaustion, breakdown
 
     // Count dead
@@ -86,7 +121,7 @@ int main(int argc, char* argv[]) {
         action_counts[(int)action.current]++;
 
         const char* action_names[] = {
-            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE"
+            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD"
         };
 
         std::printf("Agent[%2d] action=%-8s stress=%.2f | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
@@ -103,7 +138,7 @@ int main(int argc, char* argv[]) {
         "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE"
     };
     std::printf("\n--- ACTION DISTRIBUTION ---\n");
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 9; i++) {
         if (action_counts[i] > 0) {
             std::printf("  %-8s: %2d ", action_names[i], action_counts[i]);
             for (int j = 0; j < action_counts[i]; j++) std::printf("#");
