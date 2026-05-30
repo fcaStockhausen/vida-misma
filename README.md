@@ -110,18 +110,29 @@ doc/
 ### Phase 1 — Core loop completion
 1. ~~Production system (GATHER, BUILD, WORK)~~ ✓
 2. ~~Spatial constraints (actions require correct tile type)~~ ✓
-3. A* pathfinding (replace greedy movement, restore internal walls)
-4. Proximity requirements (SOCIALIZE needs adjacent agent)
+3. ~~Communal production chain — food goes to Storage (8-adjacent to Machine), agents EAT from Storage, no personal food spillover from WORK~~ ✓
+4. A* pathfinding (replace greedy movement, restore internal walls)
+5. Proximity requirements for SOCIALIZE (currently checks adjacency in execute; not yet driven from utility) — partial
 
-### Phase 2 — Emergent behavior
-5. Affinity matrix between agent pairs (affects stress, cooperation)
-6. Skills that improve with use (factory_work, artistic, gathering)
-7. Dynamic factory health with consequences (breakdowns, bonuses)
+### Phase 2 — External pressure / production lines
+6. ~~Quota / ship-out via Exit tiles — sustained underproduction contracts the supply chain~~ ✓
+7. ~~Factory deterioration — `factory_health` drops on missed quota; below threshold, built Machines may revert to unbuilt~~ ✓
+8. ~~EatingZones — agent-built tiles ≥5 from any Machine; "comer en el trabajo" triggers social penalty (only when another agent witnesses)~~ ✓
+9. ~~GET_FOOD action + inv.food cap ("vianda" to-go)~~ ✓
+10. Conveyors — buildable production-line tiles connecting distant Machines to Storage / Exit
+11. WFC procedural map layout (replace `generate_default`)
+12. Agent-decided placement for ALL buildables (Machines, Conveyors, EatingZones — currently only EatingZones; Machine frames still pre-placed)
 
-### Phase 3 — Long-term engagement
-8. Random events (machine breaks, storms, new agents arrive)
-9. Aging, birth, generations with inherited traits
-10. Narrative event log ("Tick 347: Agent 12 broke the north Machine")
+### Phase 3 — Emergent social behavior
+13. Affinity matrix between agent pairs (stress contagion, cooperation, grief cascades)
+14. Skills that improve with use (factory_work, artistic, gathering)
+15. Generational replacement — new agents arrive at Entrance when population drops
+
+### Phase 4 — Long-term engagement
+16. Random external events (storms, supplier dropouts, sabotage)
+17. Aging + inherited personality traits
+18. Narrative event log surface (ring buffer exists; player-facing view pending)
+19. Director interface — quota setting, machine placement overlay, agent inspector
 
 ## Academic Document
 
