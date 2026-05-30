@@ -38,6 +38,7 @@ set(VIDA_SIM_SOURCES
   src/sim_targets.cpp
   src/sim_movement.cpp
   src/sim_execute.cpp
+  src/sim_conveyor.cpp
 )
 
 # --- Main executable (interactive TUI) ---

@@ -117,6 +117,9 @@ private:
     void system_update_stress();
     void system_check_deaths();
 
+    // --- Conveyor system (sim_conveyor.cpp) ---
+    void system_conveyor_transport();
+
     // --- Movement helpers (sim_movement.cpp) ---
     void move_toward(PositionComponent& pos, int tx, int ty);
     void random_move(PositionComponent& pos);
@@ -126,6 +129,7 @@ private:
     float get_adjacent_raw_food(int px, int py) const;
     void  consume_adjacent_raw_food(int px, int py, float amount);
     float deposit_to_adjacent_storage(int px, int py, ResourceType type, float amount); // returns amount deposited
+    float deposit_to_adjacent_conveyor(int px, int py, ResourceType type, float amount); // returns amount deposited
     float take_from_adjacent_storage(int px, int py);
     // Pulls *food* from any 8-adjacent Storage (including current tile) up to `max_amount`.
     // Returns the amount actually pulled. Used by GET_FOOD and by EAT auto-topup.

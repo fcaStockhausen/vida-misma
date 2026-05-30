@@ -25,14 +25,16 @@ void Simulation::system_find_targets() {
             }
 
             case ActionType::BUILD: {
-                // Priority: existing unbuilt Machine > existing unbuilt EatingZone > new EatingZone site.
-                // The utility scoring already decided this is the best action; here we just pick where.
+                // Priority: unbuilt Machine > unbuilt Conveyor > unbuilt EatingZone > new EatingZone site.
                 auto machine_t = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
+                auto conv_t    = grid_.find_nearest_conveyor_to_build(pos.x, pos.y);
                 auto ez_t      = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y);
                 bool any_built_ez = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
 
                 if (machine_t.first >= 0) {
                     tx = machine_t.first; ty = machine_t.second;
+                } else if (conv_t.first >= 0) {
+                    tx = conv_t.first; ty = conv_t.second;
                 } else if (ez_t.first >= 0) {
                     tx = ez_t.first; ty = ez_t.second;
                 } else if (!any_built_ez) {
@@ -101,6 +103,14 @@ void Simulation::system_find_targets() {
                 std::uniform_int_distribution<int> dy(2, grid_.height() - 3);
                 tx = dx(rng_);
                 ty = dy(rng_);
+                break;
+            }
+
+            case ActionType::MAINTAIN: {
+                auto conv = grid_.find_nearest_conveyor_needing_maintain(pos.x, pos.y);
+                if (conv.first >= 0) {
+                    tx = conv.first; ty = conv.second;
+                }
                 break;
             }
 

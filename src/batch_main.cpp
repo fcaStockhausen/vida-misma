@@ -96,7 +96,7 @@ int main(int argc, char* argv[]) {
     std::printf("\n");
 
     // Count action distribution and deaths
-    int action_counts[9] = {};
+    int action_counts[11] = {};
     int deaths_by[3] = {};  // starvation, exhaustion, breakdown
 
     // Count dead
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
         action_counts[(int)action.current]++;
 
         const char* action_names[] = {
-            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD"
+            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "IDLE"
         };
 
         std::printf("Agent[%2d] action=%-8s stress=%.2f | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
@@ -138,7 +138,7 @@ int main(int argc, char* argv[]) {
         "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE"
     };
     std::printf("\n--- ACTION DISTRIBUTION ---\n");
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 11; i++) {
         if (action_counts[i] > 0) {
             std::printf("  %-8s: %2d ", action_names[i], action_counts[i]);
             for (int j = 0; j < action_counts[i]; j++) std::printf("#");
@@ -159,6 +159,8 @@ int main(int argc, char* argv[]) {
     std::printf("  Food produced:    %.1f\n", sim.total_food_produced());
     std::printf("  Raw gathered:     %.1f\n", sim.total_raw_gathered());
     std::printf("  Storage food:     %.1f\n", sim.total_storage_food());
+    std::printf("  Conveyors:        %d built / %d total\n",
+        sim.grid().built_conveyor_count(), sim.grid().conveyor_count());
 
     // Map resource state
     float remaining_food = 0.0f, remaining_mat = 0.0f;
@@ -177,6 +179,21 @@ int main(int argc, char* argv[]) {
         }
     std::printf("  Wild food left:   %.1f / %.1f\n", remaining_food, total_raw_food);
     std::printf("  Scrap left:       %.1f / %.1f\n", remaining_mat, total_raw_mat);
+
+    // Conveyor stats
+    int conv_built = 0, conv_broken = 0;
+    float conv_contents = 0.0f, avg_condition = 0.0f;
+    for (int y = 0; y < sim.grid().height(); y++)
+        for (int x = 0; x < sim.grid().width(); x++) {
+            if (sim.grid().at(x, y) != TileType::Conveyor) continue;
+            const auto& d = sim.grid().data_at(x, y);
+            if (d.built) { conv_built++; avg_condition += d.conveyor_condition; }
+            if (d.built && d.conveyor_condition < 0.2f) conv_broken++;
+            conv_contents += d.conveyor_contents;
+        }
+    if (conv_built > 0) avg_condition /= conv_built;
+    std::printf("  Conv condition:   %.2f avg, %d broken\n", avg_condition, conv_broken);
+    std::printf("  Conv contents:    %.1f on belts\n", conv_contents);
     std::printf("  In storage:       food=%.1f raw_food=%.1f mat=%.1f\n",
         storage_food, storage_raw, storage_mat);
 

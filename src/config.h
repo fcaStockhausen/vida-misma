@@ -58,6 +58,12 @@ struct Config {
     // Movement noise
     float movement_noise = 0.05f;  // chance of random move instead of toward target
 
+    // Conveyor
+    float conveyor_build_cost  = 1.5f;   // raw_material per segment
+    float conveyor_decay_rate   = 0.0005f; // condition loss per tick
+    float conveyor_throughput   = 0.5f;    // max resource movement per tick
+    float maintain_rate         = 0.02f;   // condition restored per MAINTAIN tick
+
     // External pressure (quota / supply-chain contraction)
     float quota_per_tick           = 0.10f;  // food units demanded by the outside per tick
     float health_decay_per_miss    = 0.0015f;// factory_health drop when quota not met

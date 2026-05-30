@@ -32,7 +32,7 @@ public:
 
     bool is_walkable(int x, int y) const {
         TileType t = at(x, y);
-        return t != TileType::Wall;
+        return t != TileType::Wall;  // Conveyor is walkable
     }
 
     // --- Tile data access ---
@@ -198,6 +198,93 @@ public:
         return n;
     }
 
+    // --- Conveyor helpers ---
+
+    // Find nearest unbuilt or degraded conveyor
+    std::pair<int,int> find_nearest_conveyor_to_build(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Conveyor) continue;
+                const auto& d = data_at(x, y);
+                if (d.built && d.conveyor_condition > 0.3f) continue; // OK, skip
+                int dist = std::abs(x - fx) + std::abs(y - fy);
+                if (dist < best_dist) { best_dist = dist; best = {x, y}; }
+            }
+        return best;
+    }
+
+    // Find nearest conveyor needing maintenance (condition < threshold)
+    std::pair<int,int> find_nearest_conveyor_needing_maintain(
+        int fx, int fy, float threshold = 0.7f) const
+    {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Conveyor) continue;
+                const auto& d = data_at(x, y);
+                if (!d.built) continue;
+                if (d.conveyor_condition >= threshold) continue;
+                int dist = std::abs(x - fx) + std::abs(y - fy);
+                if (dist < best_dist) { best_dist = dist; best = {x, y}; }
+            }
+        return best;
+    }
+
+    // Get the neighbor coordinates that a conveyor at (x,y) flows into
+    std::pair<int,int> conveyor_target(int x, int y) const {
+        const auto& d = data_at(x, y);
+        switch (d.conveyor_dir) {
+            case ConveyorDir::N: return {x, y - 1};
+            case ConveyorDir::S: return {x, y + 1};
+            case ConveyorDir::E: return {x + 1, y};
+            case ConveyorDir::W: return {x - 1, y};
+        }
+        return {x, y};
+    }
+
+    // Auto-detect direction: point toward the nearest important tile type
+    ConveyorDir auto_direction(int x, int y) const {
+        // Check 4 neighbors for important tiles, prefer: Exit > Storage > Machine > Conveyor
+        struct Candidate { int dx, dy; int priority; };
+        Candidate best = {0, 0, -1};
+        auto check = [&](int dx, int dy, int prio) {
+            int nx = x + dx, ny = y + dy;
+            TileType t = at(nx, ny);
+            int p = -1;
+            if (t == TileType::Exit) p = 4;
+            else if (t == TileType::Storage) p = 3;
+            else if (t == TileType::Machine && data_at(nx, ny).built) p = 2;
+            else if (t == TileType::Conveyor && data_at(nx, ny).built) p = 1;
+            if (p > best.priority) {
+                best = {dx, dy, p};
+            }
+        };
+        check(0, -1, 0); check(0, 1, 0); check(1, 0, 0); check(-1, 0, 0);
+        if (best.dy < 0) return ConveyorDir::N;
+        if (best.dy > 0) return ConveyorDir::S;
+        if (best.dx > 0) return ConveyorDir::E;
+        return ConveyorDir::W;
+    }
+
+    int conveyor_count() const {
+        int n = 0;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++)
+                if (at(x, y) == TileType::Conveyor) n++;
+        return n;
+    }
+
+    int built_conveyor_count() const {
+        int n = 0;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++)
+                if (at(x, y) == TileType::Conveyor && data_at(x, y).built) n++;
+        return n;
+    }
+
     // Find nearest storage with food
     std::pair<int,int> find_nearest_storage_with_food(int fx, int fy) const {
         int best_dist = 999999;
@@ -335,6 +422,39 @@ public:
         // No internal walls for now -- open floor plan
         // This allows simple greedy pathfinding to work.
         // Internal walls will be added back once A* pathfinding is implemented.
+
+        // === CONVEYOR LINES (production pipelines) ===
+        // Connect each factory cluster's storage to the central hub,
+        // then from central hub to Exit (right wall).
+        //
+        // Layout: Machine cluster → Storage → Conveyor chain → Central Storage → Conveyor → Exit
+        // Agents BUILD these; placed as unbuilt frames.
+
+        // SE cluster (m4) → East toward Exit
+        place_conveyor(m4x + 3, m4y, ConveyorDir::E);
+        place_conveyor(m4x + 4, m4y, ConveyorDir::E);
+        place_conveyor(m4x + 5, m4y, ConveyorDir::E);
+
+        // NE cluster (m3) → East toward Exit
+        place_conveyor(m3x + 3, m3y, ConveyorDir::E);
+        place_conveyor(m3x + 4, m3y, ConveyorDir::E);
+        place_conveyor(m3x + 5, m3y, ConveyorDir::E);
+
+        // Central hub → Exit (horizontal line at mid_y)
+        int hub_x = width_ / 2 + 3;
+        for (int cx = hub_x; cx < width_ - 2; cx++) {
+            place_conveyor(cx, mid_y, ConveyorDir::E);
+        }
+
+        // NW cluster (m1) → South to central hub
+        place_conveyor(m1x, m1y + 3, ConveyorDir::S);
+        place_conveyor(m1x, m1y + 4, ConveyorDir::S);
+        place_conveyor(m1x, m1y + 5, ConveyorDir::S);
+
+        // SW cluster (m2) → North to central hub
+        place_conveyor(m2x, m2y - 3, ConveyorDir::N);
+        place_conveyor(m2x, m2y - 4, ConveyorDir::N);
+        place_conveyor(m2x, m2y - 5, ConveyorDir::N);
     }
 
 private:
@@ -376,5 +496,16 @@ private:
         d.stored_food         = 0.0f;
         d.stored_raw_food     = 0.0f;
         d.stored_raw_material = 0.0f;
+    }
+
+    void place_conveyor(int x, int y, ConveyorDir dir) {
+        set(x, y, TileType::Conveyor);
+        auto& d = data_at(x, y);
+        d.built = false;
+        d.build_progress = 0.0f;
+        d.build_cost = 1.5f;  // cheaper than machines
+        d.conveyor_dir = dir;
+        d.conveyor_condition = 1.0f;
+        d.conveyor_contents = 0.0f;
     }
 };

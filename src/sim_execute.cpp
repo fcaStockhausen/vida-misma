@@ -92,6 +92,9 @@ void Simulation::system_execute_actions() {
                                 total_machines_built_++;
                                 emit_log(agent.id, "BUILT a machine at (" +
                                          std::to_string(pos.x) + "," + std::to_string(pos.y) + ")!");
+                            } else if (t_after == TileType::Conveyor) {
+                                emit_log(agent.id, "BUILT a conveyor at (" +
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                             } else {
                                 emit_log(agent.id, "BUILT an eating zone at (" +
                                          std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
@@ -110,11 +113,19 @@ void Simulation::system_execute_actions() {
                     float collab = social_.collaboration_bonus(
                         agent.id, registry_, alive_list, e);
                     float produced = config_.machine_output * collab;
+
+                    // Try storage first, then conveyor
                     float deposited = deposit_to_adjacent_storage(pos.x, pos.y,
                         ResourceType::FOOD, produced);
+                    float leftover = produced - deposited;
+                    if (leftover > 0.01f) {
+                        deposited += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                            ResourceType::FOOD, leftover);
+                    }
+
                     if (deposited > 0.0f) {
                         total_food_produced_ += deposited;
-                        emit_log(agent.id, "worked, +" + ff2(deposited) + " food to storage"
+                        emit_log(agent.id, "worked, +" + ff2(deposited) + " food"
                                  + (collab > 1.01f ? " (collab x" + ff2(collab) + ")" : ""));
                     }
 
@@ -250,6 +261,19 @@ void Simulation::system_execute_actions() {
                 random_move(pos);
                 break;
 
+            case ActionType::MAINTAIN: {
+                auto& td = grid_.data_at(pos.x, pos.y);
+                if (grid_.at(pos.x, pos.y) == TileType::Conveyor && td.built) {
+                    float restored = std::min(config_.maintain_rate, 1.0f - td.conveyor_condition);
+                    td.conveyor_condition += restored;
+                    needs.purpose = std::max(0.0f,
+                        needs.purpose - config_.work_purpose_gain * 0.5f);
+                    if (restored > 0.001f)
+                        emit_log(agent.id, "maintained conveyor (" + ff2(td.conveyor_condition) + ")");
+                }
+                break;
+            }
+
             case ActionType::IDLE:
             default:
                 break;
@@ -325,6 +349,28 @@ float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type,
                     } else {
                         d.stored_raw_material += deposit;
                     }
+                    remaining -= deposit;
+                }
+            }
+        }
+    return amount - remaining;
+}
+
+float Simulation::deposit_to_adjacent_conveyor(int px, int py, ResourceType type, float amount) {
+    float remaining = amount;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            if (remaining <= 0.001f) return amount - remaining;
+            int nx = px + dx, ny = py + dy;
+            if (grid_.at(nx, ny) == TileType::Conveyor) {
+                auto& d = grid_.data_at(nx, ny);
+                if (!d.built || d.conveyor_condition < 0.2f) continue;
+                float space = config_.conveyor_throughput - d.conveyor_contents;
+                if (space > 0.001f) {
+                    float deposit = std::min(remaining, space);
+                    d.conveyor_contents += deposit;
+                    d.conveyor_contents_type = type;
                     remaining -= deposit;
                 }
             }

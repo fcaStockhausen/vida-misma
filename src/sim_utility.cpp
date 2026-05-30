@@ -100,6 +100,7 @@ void Simulation::system_compute_utility() {
         float u_build = 0.0f;
         bool unbuilt_ez_exists = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y).first >= 0;
         bool built_ez_exists   = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
+        bool unbuilt_conveyor  = grid_.find_nearest_conveyor_to_build(pos.x, pos.y).first >= 0;
 
         if (inv.raw_material > 0.1f) {
             float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
@@ -144,6 +145,20 @@ void Simulation::system_compute_utility() {
             }
 
             u_build = std::max({u_build_mach, u_build_ez, u_build_new_ez});
+        }
+
+        // Conveyor build is evaluated separately — cheaper, independent of the 2.0 threshold
+        // Strong pull when machines are done — conveyors are the next infrastructure tier.
+        {
+            float u_build_conv = 0.0f;
+            if (unbuilt_conveyor && inv.raw_material > 0.05f) {
+                float conv_mat = std::min(1.0f, inv.raw_material / 1.0f);
+                float conv_boost = unbuilt_exists ? 0.4f : 2.0f;
+                u_build_conv = personality.compliance * u_purpose * conv_boost * conv_mat
+                             + community_pressure * 1.5f * conv_mat;
+                u_build_conv *= mood_factor;
+            }
+            u_build = std::max(u_build, u_build_conv);
         }
 
         // WORK: mood modulates productivity. Influenced agents may follow herd.
@@ -208,6 +223,19 @@ void Simulation::system_compute_utility() {
         // EXPLORE
         float u_explore = personality.curiosity * u_purpose * 0.3f;
 
+        // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
+        float u_maintain = 0.0f;
+        {
+            auto conv = grid_.find_nearest_conveyor_needing_maintain(pos.x, pos.y);
+            if (conv.first >= 0) {
+                const auto& cd = grid_.data_at(conv.first, conv.second);
+                float degradation = 1.0f - cd.conveyor_condition;
+                u_maintain = personality.compliance * degradation * u_purpose * 1.0f
+                           + community_pressure * degradation * 0.5f;
+                u_maintain *= mood_factor;
+            }
+        }
+
         // GET_FOOD: agent considers fetching a "vianda" from Storage when their inv.food
         // is low and they're not at the bottom of immediate hunger urgency. Higher when an
         // EatingZone exists and the agent isn't currently next to Storage.
@@ -237,6 +265,7 @@ void Simulation::system_compute_utility() {
             {ActionType::CREATE,    u_create},
             {ActionType::EXPLORE,   u_explore},
             {ActionType::GET_FOOD,  u_get_food},
+            {ActionType::MAINTAIN,  u_maintain},
         };
 
         float best_score = -1.0f;
@@ -251,11 +280,12 @@ void Simulation::system_compute_utility() {
         // Small noise: random action
         std::uniform_real_distribution<float> noise(0.0f, 1.0f);
         if (noise(rng_) < 0.02f) {
-            std::uniform_int_distribution<int> pick(0, 8);
+            std::uniform_int_distribution<int> pick(0, 9);
             ActionType random_actions[] = {
                 ActionType::GATHER, ActionType::BUILD, ActionType::WORK,
                 ActionType::EAT, ActionType::REST, ActionType::SOCIALIZE,
-                ActionType::CREATE, ActionType::EXPLORE, ActionType::GET_FOOD
+                ActionType::CREATE, ActionType::EXPLORE, ActionType::GET_FOOD,
+                ActionType::MAINTAIN
             };
             best_action = random_actions[pick(rng_)];
         }

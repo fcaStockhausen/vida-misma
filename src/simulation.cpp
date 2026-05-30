@@ -27,6 +27,7 @@ void Simulation::advance() {
     system_find_targets();
     system_move_to_targets();
     system_execute_actions();
+    system_conveyor_transport();   // move resources along conveyor chains
     system_ship_out_food();        // external pressure: shipping food through Exit tiles
     system_factory_deterioration();// machine breaks when health is low
     system_update_stress();

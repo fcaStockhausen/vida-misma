@@ -18,13 +18,22 @@ enum class TileType : uint8_t {
     FoodSource,   // Wild food (legacy, unused in current model)
     ScrapPile,    // Raw material deposit -- finite or slow regen
     EatingZone,   // Designated eating place (agent-built, must be ≥5 from any Machine)
+    Conveyor,     // Directional transport tile — moves resources automatically
+};
+
+// Conveyor flow direction
+enum class ConveyorDir : uint8_t {
+    N = 0,  // up (y-1)
+    S,      // down (y+1)
+    E,      // right (x+1)
+    W,      // left (x-1)
 };
 
 // --- Actions ---
 
 enum class ActionType : uint8_t {
     GATHER = 0,   // Collect raw resources from ScrapPile
-    BUILD,        // Construct an unbuilt Machine or EatingZone frame (or place a new EatingZone)
+    BUILD,        // Construct an unbuilt Machine, EatingZone, or Conveyor
     WORK,         // Operate a built Machine (produces food into adjacent Storage)
     EAT,          // Consume food (from inventory or adjacent Storage / EatingZone)
     REST,
@@ -32,6 +41,7 @@ enum class ActionType : uint8_t {
     CREATE,       // Artistic expression (needs OpenSpace)
     EXPLORE,      // Move randomly, discover
     GET_FOOD,     // Pick up food from adjacent Storage into inventory (snack to-go)
+    MAINTAIN,     // Repair a degraded Conveyor
     IDLE,
     COUNT
 };
@@ -40,13 +50,15 @@ enum class ActionType : uint8_t {
 // EAT/REST/SOCIALIZE/EXPLORE/IDLE/GET_FOOD have no hard tile requirement (return true).
 inline bool is_valid_action_tile(ActionType action, TileType tile) {
     switch (action) {
-        case ActionType::GATHER: return tile == TileType::ScrapPile;
-        case ActionType::BUILD:  return tile == TileType::Machine
-                                     || tile == TileType::EatingZone
-                                     || tile == TileType::Floor; // Floor: start a new EatingZone here
-        case ActionType::WORK:   return tile == TileType::Machine;
-        case ActionType::CREATE: return tile == TileType::OpenSpace;
-        default:                 return true;
+        case ActionType::GATHER:   return tile == TileType::ScrapPile;
+        case ActionType::BUILD:    return tile == TileType::Machine
+                                         || tile == TileType::EatingZone
+                                         || tile == TileType::Floor  // start EatingZone or Conveyor
+                                         || tile == TileType::Conveyor; // build unbuilt conveyor
+        case ActionType::WORK:     return tile == TileType::Machine;
+        case ActionType::CREATE:   return tile == TileType::OpenSpace;
+        case ActionType::MAINTAIN: return tile == TileType::Conveyor;
+        default:                   return true;
     }
 }
 
@@ -137,7 +149,7 @@ struct TileData {
     float resource_max    = 0.0f;   // capacity
     float resource_regen  = 0.0f;   // per tick (0 = finite)
 
-    // Machine state
+    // Machine / EatingZone state
     bool  built          = false;   // starts unbuilt
     float build_progress = 0.0f;    // [0, build_cost]
     float build_cost     = 0.0f;    // raw_material needed
@@ -147,6 +159,12 @@ struct TileData {
     float stored_raw_food     = 0.0f;
     float stored_raw_material = 0.0f;
     float storage_capacity    = 0.0f;
+
+    // Conveyor state
+    ConveyorDir conveyor_dir      = ConveyorDir::E; // flow direction
+    float       conveyor_condition = 1.0f;           // [0, 1], 0 = broken
+    ResourceType conveyor_contents_type = ResourceType::FOOD;
+    float       conveyor_contents     = 0.0f;       // amount sitting on belt
 
     bool has_data() const {
         return resource_max > 0.0f || build_cost > 0.0f || storage_capacity > 0.0f;

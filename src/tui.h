@@ -305,6 +305,35 @@ private:
                 if (d.resource_amount > 0.3f) return styled('s', Color::RGB(150, 110, 60));
                 return styled('s', Color::GrayDark);
             }
+            case TileType::Conveyor: {
+                auto& d = grid.data_at(x, y);
+                // Unbuilt: dim
+                if (!d.built) {
+                    float pct = d.build_cost > 0 ? d.build_progress / d.build_cost : 0;
+                    if (pct > 0.0f) return styled('+', Color::RGB(100, 100, 100));
+                    return styled('+', Color::RGB(60, 60, 60));
+                }
+                // Broken: red
+                if (d.conveyor_condition < 0.2f) return styled('X', Color::Red);
+                // Directional arrow, color by condition
+                char glyph = '?';
+                switch (d.conveyor_dir) {
+                    case ConveyorDir::N: glyph = '^'; break;
+                    case ConveyorDir::S: glyph = 'v'; break;
+                    case ConveyorDir::E: glyph = '>'; break;
+                    case ConveyorDir::W: glyph = '<'; break;
+                }
+                // Has contents: brighter
+                if (d.conveyor_contents > 0.01f) {
+                    if (d.conveyor_condition > 0.7f) return styled(glyph, Color::RGB(100, 220, 255));
+                    if (d.conveyor_condition > 0.3f) return styled(glyph, Color::RGB(220, 220, 100));
+                    return styled(glyph, Color::RGB(220, 100, 100));
+                }
+                // Empty belt
+                if (d.conveyor_condition > 0.7f) return styled(glyph, Color::RGB(60, 150, 200));
+                if (d.conveyor_condition > 0.3f) return styled(glyph, Color::RGB(180, 180, 60));
+                return styled(glyph, Color::RGB(180, 60, 60));
+            }
             default: return styled('?', Color::White);
         }
     }
