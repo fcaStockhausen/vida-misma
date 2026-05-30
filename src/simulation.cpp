@@ -40,6 +40,10 @@ void Simulation::advance() {
     social_.update_mood(registry_, alive);
     social_.decay_relationships(tick_);
 
+    // Social penalty: agents who dismantled conveyors that weren't rebuilt
+    // within the window lose trust with everyone who notices.
+    system_check_dismantle_penalties();
+
     tick_++;
 }
 
@@ -110,19 +114,47 @@ void Simulation::spawn_initial_agents() {
         registry_.emplace<PositionComponent>(entity, sx, sy);
         registry_.emplace<AgentComponent>(entity, i, true);
 
-        // Random personality
-        auto rand_rang = [&](const float (&r)[2]) -> float {
-            std::uniform_real_distribution<float> d(r[0], r[1]);
-            return d(rng_);
+        // Personality from archetype with per-agent jitter.
+        // Distribution: ~4 Foremen, ~4 Networkers, ~3 Workers, ~3 Artisans,
+        //               ~4 Explorers, ~4 Survivors, then cycle.
+        static const Archetype distribution[] = {
+            Archetype::FOREMAN,  Archetype::FOREMAN,
+            Archetype::NETWORKER, Archetype::NETWORKER,
+            Archetype::STEADY_WORKER,
+            Archetype::ARTISAN, Archetype::ARTISAN,
+            Archetype::EXPLORER, Archetype::EXPLORER,
+            Archetype::SURVIVOR, Archetype::SURVIVOR,
+            Archetype::FOREMAN,
+            Archetype::NETWORKER,
+            Archetype::STEADY_WORKER,
+            Archetype::ARTISAN,
+            Archetype::EXPLORER,
+            Archetype::SURVIVOR,
+            Archetype::STEADY_WORKER,
+            Archetype::EXPLORER,
+            Archetype::FOREMAN,
+            Archetype::NETWORKER,
+            Archetype::SURVIVOR,
+            Archetype::ARTISAN,
+            Archetype::STEADY_WORKER,
+        };
+        Archetype at = (i < 24) ? distribution[i]
+                      : static_cast<Archetype>(i % (int)Archetype::COUNT);
+        auto base = archetype_traits(at);
+
+        auto jitter = [&](float center, float j) -> float {
+            std::uniform_real_distribution<float> d(center - j, center + j);
+            return std::clamp(d(rng_), 0.05f, 0.95f);
         };
 
         PersonalityComponent personality;
-        personality.compliance     = rand_rang(config_.compliance_range);
-        personality.laziness       = rand_rang(config_.laziness_range);
-        personality.artistry       = rand_rang(config_.artistry_range);
-        personality.gregariousness = rand_rang(config_.gregariousness_range);
-        personality.resilience     = rand_rang(config_.resilience_range);
-        personality.curiosity      = rand_rang(config_.curiosity_range);
+        personality.compliance     = jitter(base.compliance, base.jitter);
+        personality.laziness       = jitter(base.laziness, base.jitter);
+        personality.artistry       = jitter(base.artistry, base.jitter);
+        personality.gregariousness = jitter(base.gregariousness, base.jitter);
+        personality.resilience     = jitter(base.resilience, base.jitter);
+        personality.curiosity      = jitter(base.curiosity, base.jitter);
+        personality.archetype      = at;
         registry_.emplace<PersonalityComponent>(entity, personality);
 
         // Needs start near zero
@@ -154,22 +186,43 @@ void Simulation::spawn_initial_agents() {
 void Simulation::system_ship_out_food() {
     float quota = config_.quota_per_tick;
     float to_ship = quota;
-    auto exits = grid_.find_all(TileType::Exit);
 
-    for (auto [ex, ey] : exits) {
-        if (to_ship <= 0.001f) break;
-        for (int dy = -1; dy <= 1 && to_ship > 0.001f; dy++)
-            for (int dx = -1; dx <= 1 && to_ship > 0.001f; dx++) {
-                if (dx == 0 && dy == 0) continue;
-                int nx = ex + dx, ny = ey + dy;
-                if (grid_.at(nx, ny) != TileType::Storage) continue;
-                auto& d = grid_.data_at(nx, ny);
-                float take = std::min(to_ship, d.stored_food);
-                if (take > 0.0f) {
-                    d.stored_food -= take;
-                    to_ship -= take;
+    // Drain food from any Storage near an Exit (radius 3 first, then all storages).
+    // The "external demand" represents the supply chain — in practice, any storage
+    // that has food is part of the drainable pool.
+    auto exits = grid_.find_all(TileType::Exit);
+    for (int radius = 1; radius <= 3 && to_ship > 0.001f; radius++) {
+        for (auto [ex, ey] : exits) {
+            if (to_ship <= 0.001f) break;
+            for (int dy = -radius; dy <= radius && to_ship > 0.001f; dy++)
+                for (int dx = -radius; dx <= radius && to_ship > 0.001f; dx++) {
+                    if (dx == 0 && dy == 0) continue;
+                    if (std::max(std::abs(dx), std::abs(dy)) != radius) continue;
+                    int nx = ex + dx, ny = ey + dy;
+                    if (grid_.at(nx, ny) != TileType::Storage) continue;
+                    auto& d = grid_.data_at(nx, ny);
+                    float take = std::min(to_ship, d.stored_food);
+                    if (take > 0.0f) {
+                        d.stored_food -= take;
+                        to_ship -= take;
+                    }
                 }
+        }
+    }
+
+    // Fallback: if Exit-adjacent storages are empty, drain from ANY storage on the map.
+    // Represents the external supply chain reaching deeper into the factory.
+    if (to_ship > 0.001f) {
+        auto storages = grid_.find_all(TileType::Storage);
+        for (auto [sx, sy] : storages) {
+            if (to_ship <= 0.001f) break;
+            auto& d = grid_.data_at(sx, sy);
+            float take = std::min(to_ship, d.stored_food);
+            if (take > 0.0f) {
+                d.stored_food -= take;
+                to_ship -= take;
             }
+        }
     }
 
     float shipped = quota - to_ship;
@@ -282,13 +335,14 @@ void Simulation::system_update_stress() {
 
 void Simulation::system_check_deaths() {
     std::vector<int> newly_dead;
-    auto view = registry_.view<NeedsComponent, AgentComponent, StressComponent>();
+    auto view = registry_.view<NeedsComponent, AgentComponent, StressComponent, PersonalityComponent>();
     for (auto e : view) {
         if (!registry_.get<AgentComponent>(e).alive) continue;
 
         auto& needs  = registry_.get<NeedsComponent>(e);
         auto& agent  = registry_.get<AgentComponent>(e);
         auto& stress = registry_.get<StressComponent>(e);
+        auto& personality = registry_.get<PersonalityComponent>(e);
 
         // Starvation
         if (needs.hunger >= 1.0f) {
@@ -325,6 +379,20 @@ void Simulation::system_check_deaths() {
             emit_log(agent.id, "had a BREAKDOWN (stress=" + ff2(stress.value) + ")");
             newly_dead.push_back(agent.id);
         }
+
+        // Factory collapse: when factory_health == 0, the crumbling factory
+        // kills agents progressively. Lower resilience = faster death.
+        // This creates a ticking clock: fix the factory or everyone dies.
+        if (factory_health_ <= 0.0f) {
+            float collapse_prob = 0.01f * (1.0f - personality.resilience * 0.8f);
+            std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+            if (roll(rng_) < collapse_prob) {
+                agent.alive = false;
+                agent.cause_of_death = "collapse";
+                emit_log(agent.id, "DIED in factory collapse");
+                newly_dead.push_back(agent.id);
+            }
+        }
     }
 
     // Grief cascades: survivors who knew the deceased receive stress
@@ -334,4 +402,59 @@ void Simulation::system_check_deaths() {
             social_.apply_grief(registry_, dead_id, alive_now);
         }
     }
+}
+
+// ============================================================
+// Social penalty for dismantle-without-rebuild
+// ============================================================
+
+void Simulation::system_check_dismantle_penalties() {
+    // Scan all tiles for dismantled conveyors past the rebuild window.
+    // If a tile was a conveyor, was dismantled, and hasn't been rebuilt
+    // (still Floor), the dismantler loses trust with nearby agents.
+    auto alive = alive_agents();
+    for (int y = 0; y < grid_.height(); y++)
+        for (int x = 0; x < grid_.width(); x++) {
+            // We check tiles that are now Floor but have dismantle tracking data
+            if (grid_.at(x, y) != TileType::Floor) continue;
+            const auto& d = grid_.data_at(x, y);
+            if (d.dismantled_by < 0) continue;  // never dismantled here
+            if (d.dismantled_at_tick < 0) continue;
+
+            int ticks_since = tick_ - d.dismantled_at_tick;
+            if (ticks_since < config_.dismantle_rebuild_window) continue;
+            if (ticks_since > config_.dismantle_rebuild_window + 50) {
+                // Penalty already applied, stop checking this tile.
+                continue;
+            }
+
+            // Find the dismantler among alive agents
+            int dismantler_id = d.dismantled_by;
+            bool dismantler_alive = false;
+            for (auto e : alive) {
+                if (registry_.get<AgentComponent>(e).id == dismantler_id) {
+                    dismantler_alive = true;
+                    break;
+                }
+            }
+            if (!dismantler_alive) continue;
+
+            // Apply trust penalty: all agents who can "see" the torn-down belt
+            // (within manhattan distance 6) lose trust in the dismantler.
+            for (auto e : alive) {
+                auto& ag = registry_.get<AgentComponent>(e);
+                if (ag.id == dismantler_id) continue;
+                auto& opos = registry_.get<PositionComponent>(e);
+                int dist = std::abs(opos.x - x) + std::abs(opos.y - y);
+                if (dist > 6) continue;
+
+                // Proximity-based severity: closer agents care more
+                float severity = 0.05f * (1.0f - dist / 7.0f);
+                social_.negative_interaction(ag.id, dismantler_id, tick_, severity);
+
+                // Witness gets a small stress bump (disorder is stressful)
+                auto& st = registry_.get<StressComponent>(e);
+                st.value = std::clamp(st.value + 0.003f, 0.0f, 1.0f);
+            }
+        }
 }

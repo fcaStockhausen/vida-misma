@@ -82,30 +82,69 @@ void Simulation::system_compute_utility() {
         // Personal food buffer (processed only, since FoodSource is gone).
         float food_security = std::min(1.0f, inv.food / 2.0f);
 
-        // GATHER: only raw_material remains (no wild food sources in this model).
-        // Mood modulates productivity — unhappy agents are less motivated.
+        // GATHER: base drive from incomplete infrastructure + purpose/hunger.
+        // Key insight: agents in a factory with unbuilt machines should WANT to gather
+        // raw material even when purpose is low. The unbuilt-machine ratio provides a
+        // constant "the job isn't done" signal that doesn't depend on personal needs.
         float u_gather = 0.0f;
         if (scrap_available) {
-            float low_mat_indicator = (inv.raw_material < 1.0f) ? 1.0f : 0.0f;
-            u_gather = personality.compliance * u_purpose * 0.5f * (1.0f + low_mat_indicator)
-                      * mood_factor;
+            // Infrastructure gap: how much of the factory is unbuilt?
+            // Provides a constant 0-1 drive independent of personal needs.
+            int total_machines = 0, built_machines = 0;
+            for (int gy = 0; gy < grid_.height(); gy++)
+                for (int gx = 0; gx < grid_.width(); gx++)
+                    if (grid_.at(gx, gy) == TileType::Machine) {
+                        total_machines++;
+                        if (grid_.data_at(gx, gy).built) built_machines++;
+                    }
+            float infra_gap = (total_machines > 0)
+                ? 1.0f - (float)built_machines / (float)total_machines : 0.0f;
+
+            // Low material indicator: agent has nothing to build with
+            float low_mat = std::max(0.0f, 1.0f - inv.raw_material / 2.0f);
+
+            // Factory health crisis amplifies
+            float gather_urgency = 1.0f + (1.0f - factory_health_) * 2.0f;
+
+            // Base drive: compliance × infrastructure gap × material scarcity
+            // Purpose adds extra but isn't required — the factory itself creates urgency.
+            float base_drive = personality.compliance * infra_gap * low_mat * 1.5f;
+            float purpose_drive = personality.compliance * u_purpose * 0.4f;
+            float hunger_drive = u_hunger * 0.2f;  // hungry agents know: no material → no food
+
+            u_gather = (base_drive + purpose_drive + hunger_drive)
+                      * mood_factor * gather_urgency;
         }
 
-        // BUILD: doc formula + community pressure + "finish what you started" + EatingZone need.
-        // Three sub-targets:
-        //   1. Unbuilt Machine frame — existing infrastructure to complete.
-        //   2. Unbuilt EatingZone frame — partial eating place that someone started.
-        //   3. A new EatingZone — if NO built EatingZone exists yet and the agent has materials,
-        //      they're motivated to initiate one on a Floor tile ≥ min_dist from any Machine.
+        // BUILD: infrastructure completion drive.
+        // Two components: (1) "I have material, let me build" and (2) "the factory needs this".
+        // The infra_gap provides constant urgency even when purpose is low.
         float u_build = 0.0f;
         bool unbuilt_ez_exists = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y).first >= 0;
         bool built_ez_exists   = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
         bool unbuilt_conveyor  = grid_.find_nearest_conveyor_to_build(pos.x, pos.y).first >= 0;
 
-        if (inv.raw_material > 0.1f) {
-            float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
+        // Factory health crisis amplifies BUILD urgency: infrastructure = survival.
+        float build_urgency = 1.0f + (1.0f - factory_health_) * 4.0f; // 1x at full, 5x at zero
 
-            // Sub 1: machine
+        // Material availability boost: having material should STRONGLY push toward BUILD
+        // vs other actions. This creates the gather→build→work cycle.
+        float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
+
+        // Compute infra_gap for BUILD (same as GATHER — could cache but perf is fine for 24 agents)
+        int total_mach = 0, built_mach = 0;
+        for (int gy2 = 0; gy2 < grid_.height(); gy2++)
+            for (int gx2 = 0; gx2 < grid_.width(); gx2++)
+                if (grid_.at(gx2, gy2) == TileType::Machine) {
+                    total_mach++;
+                    if (grid_.data_at(gx2, gy2).built) built_mach++;
+                }
+        float build_infra_gap = (total_mach > 0)
+            ? 1.0f - (float)built_mach / (float)total_mach : 0.0f;
+
+        if (inv.raw_material > 0.1f) {
+            // Sub 1: machine — strongest build target. Having material + unbuilt machines
+            // is the clearest "do this now" signal in the game.
             float u_build_mach = 0.0f;
             if (unbuilt_exists) {
                 auto near_m = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
@@ -113,13 +152,18 @@ void Simulation::system_compute_utility() {
                 if (near_m.first >= 0) {
                     const auto& td = grid_.data_at(near_m.first, near_m.second);
                     if (td.build_cost > 0.0f) {
-                        finish_bonus = (td.build_progress / td.build_cost) * 1.5f;
+                        finish_bonus = (td.build_progress / td.build_cost) * 2.0f;
                     }
                 }
-                u_build_mach = (personality.compliance * u_purpose * 1.2f
-                              + personality.compliance * community_pressure * 0.8f) * mat_readiness
-                             + finish_bonus;
-                u_build_mach *= mood_factor;
+                // Base: strong compliance × material readiness × infrastructure gap
+                float base = personality.compliance * mat_readiness * build_infra_gap * 2.0f;
+                // Purpose supplement (not primary driver)
+                float purpose_sup = personality.compliance * u_purpose * 0.8f;
+                // Community pressure
+                float community = personality.compliance * community_pressure * 0.6f;
+
+                u_build_mach = (base + purpose_sup + community) + finish_bonus;
+                u_build_mach *= mood_factor * build_urgency;
             }
 
             // Sub 2: continue an unbuilt EatingZone frame (high finish_bonus pull)
@@ -147,47 +191,31 @@ void Simulation::system_compute_utility() {
             u_build = std::max({u_build_mach, u_build_ez, u_build_new_ez});
         }
 
-        // Conveyor build is evaluated separately — cheaper, independent of the 2.0 threshold
-        // Strong pull when machines are done — conveyors are the next infrastructure tier.
+        // Conveyor build: cheaper, independent sub-target.
+        // Boosted by infrastructure gap — conveyors connect the factory.
         {
             float u_build_conv = 0.0f;
             if (unbuilt_conveyor && inv.raw_material > 0.05f) {
                 float conv_mat = std::min(1.0f, inv.raw_material / 1.0f);
-                float conv_boost = unbuilt_exists ? 0.4f : 2.0f;
-                u_build_conv = personality.compliance * u_purpose * conv_boost * conv_mat
-                             + community_pressure * 1.5f * conv_mat;
-                u_build_conv *= mood_factor;
+                // Conveyors are infrastructure too — gap drives them
+                float conv_base = personality.compliance * conv_mat * build_infra_gap * 1.5f;
+                float conv_sup  = personality.compliance * u_purpose * 1.0f;
+                float conv_community = community_pressure * 1.2f * conv_mat;
+                u_build_conv = conv_base + conv_sup + conv_community;
+                u_build_conv *= mood_factor * build_urgency;
             }
             u_build = std::max(u_build, u_build_conv);
         }
 
         // WORK: mood modulates productivity. Influenced agents may follow herd.
+        // Factory health crisis amplifies WORK urgency.
         float u_work = 0.0f;
         if (built_exists) {
+            float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f; // 1x at full health, 4x at zero
             u_work = (personality.compliance * u_hunger * 0.8f
                 + (1.0f - personality.laziness) * u_purpose * 0.3f
                 + personality.compliance * community_pressure * 0.6f)
-                * mood_factor;
-            // Herding: if nearby high-influence agents are working, boost WORK
-            if (nearby_count > 0) {
-                float herd_work = 0.0f;
-                auto alive_view2 = registry_.view<PositionComponent, const AgentComponent,
-                                                   SocialComponent, ActionComponent>();
-                for (auto other : alive_view2) {
-                    if (other == e) continue;
-                    if (!registry_.get<AgentComponent>(other).alive) continue;
-                    auto& opos = registry_.get<PositionComponent>(other);
-                    int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                    if (d <= 3) {
-                        auto& osoc = registry_.get<SocialComponent>(other);
-                        auto& oact = registry_.get<ActionComponent>(other);
-                        if (oact.current == ActionType::WORK) {
-                            herd_work += osoc.influence;
-                        }
-                    }
-                }
-                u_work += herd_work * 0.3f * personality.compliance;
-            }
+                * mood_factor * health_urgency;
         }
 
         // EAT
@@ -226,13 +254,41 @@ void Simulation::system_compute_utility() {
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
         float u_maintain = 0.0f;
         {
-            auto conv = grid_.find_nearest_conveyor_needing_maintain(pos.x, pos.y);
+            auto conv = grid_.find_nearest_conveyor_needing_maintain(pos.x, pos.y, 0.9f);
             if (conv.first >= 0) {
                 const auto& cd = grid_.data_at(conv.first, conv.second);
                 float degradation = 1.0f - cd.conveyor_condition;
-                u_maintain = personality.compliance * degradation * u_purpose * 1.0f
-                           + community_pressure * degradation * 0.5f;
+                // Only maintain when degradation is significant AND agent isn't hungry
+                float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 2.0f);
+                u_maintain = personality.compliance * degradation * u_purpose * 1.5f * hunger_gate
+                           + community_pressure * degradation * 0.8f * hunger_gate;
                 u_maintain *= mood_factor;
+            }
+        }
+
+        // DISMANTLE: consider tearing down conveyors that are dead-ends or blocking paths.
+        // Only high-compliance agents who see a clear improvement will do this.
+        // Hunger-gated: don't dismantle when starving. Low stress needed (calm judgment).
+        float u_dismantle = 0.0f;
+        {
+            // Check if there's a blocking conveyor nearby (strong reason)
+            bool blocking_nearby = false;
+            bool dead_end_nearby = grid_.find_nearest_dead_end_conveyor(pos.x, pos.y).first >= 0;
+            for (int sy = std::max(0, pos.y - 8); sy < std::min(grid_.height(), pos.y + 8); sy++)
+                for (int sx = std::max(0, pos.x - 8); sx < std::min(grid_.width(), pos.x + 8); sx++)
+                    if (grid_.is_conveyor_blocking_path(sx, sy)) blocking_nearby = true;
+
+            if (blocking_nearby || dead_end_nearby) {
+                float reason_strength = blocking_nearby ? 1.5f : 0.6f;
+                float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 3.0f);  // strong hunger gate
+                float calm_gate = std::max(0.0f, soc.mood * 2.0f - 0.5f); // need calm (high mood) to dismantle
+                // High compliance agents more willing to improve the factory layout
+                // Low laziness helps (they're willing to do the extra work)
+                u_dismantle = personality.compliance * reason_strength
+                            * hunger_gate * calm_gate * (1.0f - personality.laziness * 0.5f)
+                            * mood_factor;
+                // If agent already has raw_material, less incentive to dismantle for refund
+                if (inv.raw_material > 2.0f) u_dismantle *= 0.3f;
             }
         }
 
@@ -253,6 +309,43 @@ void Simulation::system_compute_utility() {
             }
         }
 
+        // SOCIAL LEARNING: agents observe what trusted neighbors are doing
+        // and get a bonus for copying productive actions. This creates
+        // emergent coordination: a trusted agent gathering → others gather nearby.
+        {
+            auto alive_view3 = registry_.view<PositionComponent, const AgentComponent,
+                                               SocialComponent, ActionComponent>();
+            for (auto other : alive_view3) {
+                if (other == e) continue;
+                if (!registry_.get<AgentComponent>(other).alive) continue;
+                auto& opos = registry_.get<PositionComponent>(other);
+                int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                if (d > 3) continue;
+
+                auto& oact = registry_.get<ActionComponent>(other);
+                auto& osoc = registry_.get<SocialComponent>(other);
+                int oid = registry_.get<AgentComponent>(other).id;
+                const auto& rel = social_.get_rel(ag.id, oid);
+
+                // Weight: trust * influence * proximity decay
+                float trust_w = std::max(0.0f, rel.trust);
+                float prox = 1.0f / (1.0f + (float)d);
+                float weight = trust_w * (0.3f + 0.7f * osoc.influence) * prox;
+
+                if (weight < 0.01f) continue;
+
+                // Boost the matching action
+                switch (oact.current) {
+                    case ActionType::GATHER:   u_gather  += weight * 0.4f; break;
+                    case ActionType::BUILD:    u_build   += weight * 0.5f; break;
+                    case ActionType::WORK:     u_work    += weight * 0.3f; break;
+                    case ActionType::MAINTAIN: u_maintain += weight * 0.3f; break;
+                    case ActionType::GET_FOOD: u_get_food += weight * 0.2f; break;
+                    default: break;
+                }
+            }
+        }
+
         // Pick best action
         struct Scored { ActionType type; float score; };
         Scored options[] = {
@@ -266,6 +359,7 @@ void Simulation::system_compute_utility() {
             {ActionType::EXPLORE,   u_explore},
             {ActionType::GET_FOOD,  u_get_food},
             {ActionType::MAINTAIN,  u_maintain},
+            {ActionType::DISMANTLE, u_dismantle},
         };
 
         float best_score = -1.0f;
@@ -280,12 +374,12 @@ void Simulation::system_compute_utility() {
         // Small noise: random action
         std::uniform_real_distribution<float> noise(0.0f, 1.0f);
         if (noise(rng_) < 0.02f) {
-            std::uniform_int_distribution<int> pick(0, 9);
+            std::uniform_int_distribution<int> pick(0, 10);
             ActionType random_actions[] = {
                 ActionType::GATHER, ActionType::BUILD, ActionType::WORK,
                 ActionType::EAT, ActionType::REST, ActionType::SOCIALIZE,
                 ActionType::CREATE, ActionType::EXPLORE, ActionType::GET_FOOD,
-                ActionType::MAINTAIN
+                ActionType::MAINTAIN, ActionType::DISMANTLE
             };
             best_action = random_actions[pick(rng_)];
         }

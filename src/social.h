@@ -223,8 +223,8 @@ public:
         entt::registry& registry,
         const std::vector<entt::entity>& alive,
         entt::entity agent_entity,
-        float fam_threshold = 0.3f,
-        float trust_threshold = 0.3f) const
+        float fam_threshold = 0.1f,
+        float trust_threshold = 0.1f) const
     {
         auto& pos = registry.get<PositionComponent>(agent_entity);
         float bonus = 0.0f;
@@ -235,14 +235,15 @@ public:
 
             auto& opos = registry.get<PositionComponent>(other);
             int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-            if (d > 1) continue;  // must be adjacent
+            if (d > 2) continue;  // expanded from 1 to 2 for more collaboration
 
             const auto& rel = get_rel(agent_id, oag.id);
             if (rel.familiarity >= fam_threshold && rel.trust >= trust_threshold) {
-                bonus += 0.15f * rel.trust * rel.familiarity;
+                // Higher bonus per friend, scales with trust
+                bonus += 0.2f * std::max(0.0f, rel.trust) * (0.5f + 0.5f * rel.familiarity);
             }
         }
-        return 1.0f + std::min(0.5f, bonus);  // cap at 1.5x
+        return 1.0f + std::min(1.0f, bonus);  // cap at 2.0x (up from 1.5x)
     }
 
     // --- 7. Decay relationships over time ---

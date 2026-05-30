@@ -99,6 +99,8 @@ private:
             case ActionType::CREATE:    return "CREATE";
             case ActionType::EXPLORE:   return "EXPLORE";
             case ActionType::GET_FOOD:  return "GET_FOOD";
+            case ActionType::MAINTAIN:  return "MAINTAIN";
+            case ActionType::DISMANTLE: return "DISMANTLE";
             case ActionType::IDLE:      return "IDLE";
             default:                    return "?";
         }
@@ -116,6 +118,7 @@ private:
     void system_factory_deterioration(); // health/machine-break (simulation.cpp)
     void system_update_stress();
     void system_check_deaths();
+    void system_check_dismantle_penalties();
 
     // --- Conveyor system (sim_conveyor.cpp) ---
     void system_conveyor_transport();
@@ -134,6 +137,9 @@ private:
     // Pulls *food* from any 8-adjacent Storage (including current tile) up to `max_amount`.
     // Returns the amount actually pulled. Used by GET_FOOD and by EAT auto-topup.
     float pull_food_from_adjacent_storage(int px, int py, float max_amount);
-    // Tile predicate: is there a Machine within Manhattan ≤ 1 of (px, py)?
+    // Pulls *raw_material* from any 8-adjacent Storage up to `max_amount`.
+    float pull_raw_material_from_adjacent_storage(int px, int py, float max_amount);
+    float pull_construction_material_from_adjacent_storage(int px, int py, float max_amount);
+    // Tile predicate: is there a Machine within Manhattan <= 1 of (px, py)?
     bool  is_near_machine(int px, int py) const;
 };

@@ -30,9 +30,10 @@ struct Config {
     float work_purpose_gain     = 0.004f;
 
     // Production
-    float gather_rate       = 0.05f;   // resources gathered per tick
-    float build_rate        = 0.02f;   // build progress per tick
+    float gather_rate       = 0.08f;   // resources gathered per tick
+    float build_rate        = 0.05f;   // build progress per tick
     float machine_output    = 0.025f;  // food produced per work tick
+    float machine_mat_output = 0.015f; // construction material produced per work tick
     float machine_input     = 0.02f;   // raw_food consumed per work tick
 
     // Urgency
@@ -62,15 +63,17 @@ struct Config {
     float conveyor_build_cost  = 1.5f;   // raw_material per segment
     float conveyor_decay_rate   = 0.0005f; // condition loss per tick
     float conveyor_throughput   = 0.5f;    // max resource movement per tick
-    float maintain_rate         = 0.02f;   // condition restored per MAINTAIN tick
+    float maintain_rate       = 0.08f;  // condition restored per MAINTAIN tick
+    float dismantle_return    = 0.5f;   // fraction of build_cost returned on DISMANTLE
+    int   dismantle_rebuild_window = 200; // ticks before social penalty for not rebuilding
 
     // External pressure (quota / supply-chain contraction)
     float quota_per_tick           = 0.10f;  // food units demanded by the outside per tick
-    float health_decay_per_miss    = 0.0015f;// factory_health drop when quota not met
-    float health_recovery_per_hit  = 0.0008f;// factory_health rise when quota met
-    float machine_break_threshold  = 0.40f;  // below this, machines may revert to unbuilt
-    float machine_break_prob       = 0.0008f;// per-tick probability per built machine
-    float initial_food_per_agent   = 2.0f;   // bootstrap so agents survive while building
+    float health_decay_per_miss    = 0.0005f;// factory_health drop when quota not met (slow — gives time to build)
+    float health_recovery_per_hit  = 0.002f; // factory_health rise when quota met
+    float machine_break_threshold  = 0.25f;  // below this, machines may revert to unbuilt
+    float machine_break_prob       = 0.0003f;// per-tick probability per built machine
+    float initial_food_per_agent   = 3.0f;   // bootstrap so agents survive while building
 
     // Eating zones / social pressure
     float inv_food_cap              = 2.0f;  // "una vianda" — max food an agent can carry

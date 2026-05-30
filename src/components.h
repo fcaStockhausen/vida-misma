@@ -21,6 +21,14 @@ enum class TileType : uint8_t {
     Conveyor,     // Directional transport tile — moves resources automatically
 };
 
+// Machine subtypes: each Machine tile has a specific function.
+// This determines what WORK produces and what inputs it consumes.
+enum class MachineType : uint8_t {
+    Food       = 0,  // raw_food → processed_food
+    Materials  = 1,  // raw_material → construction_material + scrap byproduct
+    Output     = 2,  // construction_material → factory health restoration
+};
+
 // Conveyor flow direction
 enum class ConveyorDir : uint8_t {
     N = 0,  // up (y-1)
@@ -42,6 +50,7 @@ enum class ActionType : uint8_t {
     EXPLORE,      // Move randomly, discover
     GET_FOOD,     // Pick up food from adjacent Storage into inventory (snack to-go)
     MAINTAIN,     // Repair a degraded Conveyor
+    DISMANTLE,    // Tear down a built Conveyor (returns partial material)
     IDLE,
     COUNT
 };
@@ -53,11 +62,12 @@ inline bool is_valid_action_tile(ActionType action, TileType tile) {
         case ActionType::GATHER:   return tile == TileType::ScrapPile;
         case ActionType::BUILD:    return tile == TileType::Machine
                                          || tile == TileType::EatingZone
-                                         || tile == TileType::Floor  // start EatingZone or Conveyor
-                                         || tile == TileType::Conveyor; // build unbuilt conveyor
+                                         || tile == TileType::Floor   // start EZ or build adjacent Conveyor
+                                         || tile == TileType::Conveyor; // stand on unbuilt frame to build
         case ActionType::WORK:     return tile == TileType::Machine;
         case ActionType::CREATE:   return tile == TileType::OpenSpace;
-        case ActionType::MAINTAIN: return tile == TileType::Conveyor;
+        case ActionType::MAINTAIN: return true;  // agent stands ADJACENT to conveyor
+        case ActionType::DISMANTLE: return true; // agent stands ADJACENT to conveyor to tear down
         default:                   return true;
     }
 }
@@ -68,6 +78,7 @@ enum class ResourceType : uint8_t {
     RAW_FOOD = 0,
     RAW_MATERIAL,
     FOOD,
+    CONSTRUCTION_MATERIAL,  // output of MaterialsMachine, input to OutputMachine
 };
 
 // --- Components ---
@@ -80,6 +91,63 @@ struct NeedsComponent {
     float purpose    = 0.0f;
 };
 
+// ============================================================
+// Personality Archetypes
+// Based on: Big Five (Costa & McCrae, 1992),
+//           Belbin Team Roles (Belbin, 1981),
+//           Holland RIASEC (Holland, 1959).
+//
+// Each archetype defines base trait values with per-spawn
+// noise (±jitter) so no two agents are identical.
+// ============================================================
+
+enum class Archetype : uint8_t {
+    FOREMAN,        // Belbin: Shaper/Coordinator. Drives construction, pulls others.
+    NETWORKER,      // Belbin: Resource Investigator. Social glue, shares food, builds trust.
+    ARTISAN,        // Belbin: Plant. Expression-driven, explores, creates variety.
+    SURVIVOR,       // High resilience, low social. Outlasts crises. Ancho del grupo.
+    EXPLORER,       // Belbin: Monitor-Evaluator. Curious, maps resources, tests limits.
+    STEADY_WORKER,  // Belbin: Implementer. Works tirelessly, productive backbone.
+    COUNT
+};
+
+inline const char* archetype_name(Archetype a) {
+    switch (a) {
+        case Archetype::FOREMAN:       return "Foreman";
+        case Archetype::NETWORKER:     return "Networker";
+        case Archetype::ARTISAN:       return "Artisan";
+        case Archetype::SURVIVOR:      return "Survivor";
+        case Archetype::EXPLORER:      return "Explorer";
+        case Archetype::STEADY_WORKER: return "Worker";
+        default:                       return "?";
+    }
+}
+
+struct ArchetypeTraits {
+    float compliance, laziness, artistry, gregariousness, resilience, curiosity;
+    float jitter;  // ± noise applied to each trait on spawn
+};
+
+inline ArchetypeTraits archetype_traits(Archetype a) {
+    switch (a) {
+        //                         comp  lazy  art   greg  resi  cur   jitter
+        case Archetype::FOREMAN:
+            return {0.85f, 0.15f, 0.15f, 0.60f, 0.70f, 0.20f, 0.08f};
+        case Archetype::NETWORKER:
+            return {0.55f, 0.40f, 0.30f, 0.85f, 0.50f, 0.60f, 0.10f};
+        case Archetype::ARTISAN:
+            return {0.35f, 0.30f, 0.80f, 0.25f, 0.40f, 0.70f, 0.10f};
+        case Archetype::SURVIVOR:
+            return {0.40f, 0.50f, 0.10f, 0.15f, 0.90f, 0.20f, 0.08f};
+        case Archetype::EXPLORER:
+            return {0.30f, 0.25f, 0.50f, 0.45f, 0.55f, 0.85f, 0.10f};
+        case Archetype::STEADY_WORKER:
+            return {0.75f, 0.20f, 0.10f, 0.35f, 0.60f, 0.15f, 0.08f};
+        default:
+            return {0.50f, 0.50f, 0.50f, 0.50f, 0.50f, 0.50f, 0.10f};
+    }
+}
+
 struct PersonalityComponent {
     float compliance     = 0.5f;  // [0, 1], immutable
     float laziness       = 0.5f;
@@ -87,6 +155,7 @@ struct PersonalityComponent {
     float gregariousness = 0.5f;
     float resilience     = 0.5f;
     float curiosity      = 0.5f;
+    Archetype archetype  = Archetype::COUNT;  // for display
 };
 
 struct PositionComponent {
@@ -128,9 +197,10 @@ struct InventoryComponent {
     float raw_food     = 0.0f;
     float raw_material = 0.0f;
     float food         = 0.0f;
+    float construction_material = 0.0f;  // for building OutputMachine and conveyors
     static constexpr float CAPACITY = 10.0f;
 
-    float total() const { return raw_food + raw_material + food; }
+    float total() const { return raw_food + raw_material + food + construction_material; }
     bool can_carry(float amount) const { return total() + amount <= CAPACITY; }
 };
 
@@ -153,11 +223,13 @@ struct TileData {
     bool  built          = false;   // starts unbuilt
     float build_progress = 0.0f;    // [0, build_cost]
     float build_cost     = 0.0f;    // raw_material needed
+    MachineType machine_type = MachineType::Food;  // subtype: Food, Materials, or Output
 
     // Storage contents
     float stored_food         = 0.0f;
     float stored_raw_food     = 0.0f;
     float stored_raw_material = 0.0f;
+    float stored_construction_material = 0.0f;  // from MaterialsMachine
     float storage_capacity    = 0.0f;
 
     // Conveyor state
@@ -165,6 +237,12 @@ struct TileData {
     float       conveyor_condition = 1.0f;           // [0, 1], 0 = broken
     ResourceType conveyor_contents_type = ResourceType::FOOD;
     float       conveyor_contents     = 0.0f;       // amount sitting on belt
+
+    // Dismantle tracking — who tore down a conveyor here, and when.
+    // Used for social penalty if not rebuilt promptly.
+    int   dismantled_by     = -1;    // agent id who dismantled, -1 = never
+    int   dismantled_at_tick = -1;   // when it was dismantled
+    int   original_type     = 0;     // 0=conveyor frame, for rebuild tracking
 
     bool has_data() const {
         return resource_max > 0.0f || build_cost > 0.0f || storage_capacity > 0.0f;

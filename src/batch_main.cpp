@@ -11,6 +11,7 @@ int main(int argc, char* argv[]) {
 
     std::string config_path = "config/default.toml";
     Config cfg = load_config(config_path);
+    if (argc > 2) cfg.seed = std::atoi(argv[2]);
 
     Simulation sim(cfg);
 
@@ -45,8 +46,9 @@ int main(int argc, char* argv[]) {
     for (auto e : agents) {
         auto& agent = sim.registry().get<AgentComponent>(e);
         auto& pers = sim.registry().get<PersonalityComponent>(e);
-        std::printf("Agent[%2d] comp=%.2f lazy=%.2f art=%.2f greg=%.2f res=%.2f cur=%.2f\n",
-            agent.id, pers.compliance, pers.laziness, pers.artistry,
+        std::printf("Agent[%2d] %-9s comp=%.2f lazy=%.2f art=%.2f greg=%.2f res=%.2f cur=%.2f\n",
+            agent.id, archetype_name(pers.archetype),
+            pers.compliance, pers.laziness, pers.artistry,
             pers.gregariousness, pers.resilience, pers.curiosity);
     }
 
@@ -60,7 +62,7 @@ int main(int argc, char* argv[]) {
         sim.advance();
         if ((t + 1) % sample_interval == 0 || t == 0) {
             int alive = sim.alive_count();
-            int act_counts[10] = {};
+            int act_counts[12] = {};
             float inv_rf = 0, inv_rm = 0, inv_f = 0;
             auto av = sim.alive_agents();
             for (auto e : av) {
@@ -74,6 +76,8 @@ int main(int argc, char* argv[]) {
             int other = act_counts[(int)ActionType::CREATE]
                       + act_counts[(int)ActionType::EXPLORE]
                       + act_counts[(int)ActionType::GET_FOOD]
+                      + act_counts[(int)ActionType::MAINTAIN]
+                      + act_counts[(int)ActionType::DISMANTLE]
                       + act_counts[(int)ActionType::IDLE];
             std::printf("%6d %5d %5d %5d %5d %5d %5d %5d %5d | %5.1f %5.1f %5.1f | %4d %4.0f\n",
                 t + 1, alive,
@@ -96,8 +100,8 @@ int main(int argc, char* argv[]) {
     std::printf("\n");
 
     // Count action distribution and deaths
-    int action_counts[11] = {};
-    int deaths_by[3] = {};  // starvation, exhaustion, breakdown
+    int action_counts[12] = {};
+    int deaths_by[4] = {};  // starvation, exhaustion, breakdown, collapse
 
     // Count dead
     auto all_view = sim.registry().view<const AgentComponent>();
@@ -107,6 +111,7 @@ int main(int argc, char* argv[]) {
             if (agent.cause_of_death == "starvation") deaths_by[0]++;
             else if (agent.cause_of_death == "exhaustion") deaths_by[1]++;
             else if (agent.cause_of_death == "breakdown") deaths_by[2]++;
+            else if (agent.cause_of_death == "collapse") deaths_by[3]++;
         }
     }
 
@@ -121,7 +126,7 @@ int main(int argc, char* argv[]) {
         action_counts[(int)action.current]++;
 
         const char* action_names[] = {
-            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "IDLE"
+            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "DSMNTL", "IDLE"
         };
 
         std::printf("Agent[%2d] action=%-8s stress=%.2f | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
@@ -133,12 +138,13 @@ int main(int argc, char* argv[]) {
             pers.compliance, pers.artistry, pers.laziness);
     }
 
-    // Action distribution
+    // Action distribution (counts already accumulated in action_counts above)
     const char* action_names[] = {
-        "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE"
+        "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE",
+        "GETFOOD", "MAINT", "DSMNTL", "IDLE"
     };
     std::printf("\n--- ACTION DISTRIBUTION ---\n");
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 12; i++) {
         if (action_counts[i] > 0) {
             std::printf("  %-8s: %2d ", action_names[i], action_counts[i]);
             for (int j = 0; j < action_counts[i]; j++) std::printf("#");
@@ -146,15 +152,21 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Deaths
-    std::printf("\n--- DEATHS (%d total) ---\n",
-        deaths_by[0] + deaths_by[1] + deaths_by[2]);
-    if (deaths_by[0]) std::printf("  starvation: %d\n", deaths_by[0]);
-    if (deaths_by[1]) std::printf("  exhaustion: %d\n", deaths_by[1]);
-    if (deaths_by[2]) std::printf("  breakdown:  %d\n", deaths_by[2]);
+    // Deaths (framed as natural turnover — this is a stressful factory environment)
+    int total_dead = deaths_by[0] + deaths_by[1] + deaths_by[2] + deaths_by[3];
+    if (total_dead > 0) {
+        std::printf("\nTURNOVER:\n");
+        if (deaths_by[0]) std::printf("  burnout (hunger):   %d\n", deaths_by[0]);
+        if (deaths_by[1]) std::printf("  collapse (fatigue): %d\n", deaths_by[1]);
+        if (deaths_by[2]) std::printf("  breakdown (stress): %d\n", deaths_by[2]);
+        if (deaths_by[3]) std::printf("  factory collapse:   %d\n", deaths_by[3]);
+    } else {
+        std::printf("\nTURNOVER: (none — stable shift)\n");
+    }
 
     // Production stats
     std::printf("\n--- PRODUCTION ---\n");
+    std::printf("  Factory health:   %.2f\n", sim.factory_health());
     std::printf("  Machines built:   %d / %d\n", sim.total_machines_built(), machines);
     std::printf("  Food produced:    %.1f\n", sim.total_food_produced());
     std::printf("  Raw gathered:     %.1f\n", sim.total_raw_gathered());

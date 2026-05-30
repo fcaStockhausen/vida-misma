@@ -36,6 +36,8 @@ public:
         });
 
         std::thread tick_thread([this, &screen]() {
+            // Emit initial refresh so the first frame renders immediately
+            screen.PostEvent(Event::Custom);
             while (!quit_) {
                 if (running_) {
                     sim_.advance();
@@ -441,7 +443,7 @@ private:
         auto& soc = sim_.registry().get<SocialComponent>(e);
 
         static const char* aname[] = {
-            "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","IDLE"
+            "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","MAINTAIN","DSMNTL","IDLE"
         };
 
         // Death-countdown lines: only show when the agent is actually in danger.

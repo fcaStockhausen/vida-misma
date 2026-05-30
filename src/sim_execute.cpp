@@ -60,12 +60,51 @@ void Simulation::system_execute_actions() {
             }
 
             case ActionType::BUILD: {
-                // Floor tile: agent initiates a new EatingZone here if the distance
-                // constraint holds. Otherwise (on Machine / EatingZone frame), continue building.
+                // Agent stands on their own tile and builds whatever is here.
+                // Special case for Floor: may create a new EatingZone or build an adjacent conveyor.
                 if (here == TileType::Floor) {
+                    // Check for adjacent unbuilt conveyor to build from beside
+                    int conv_x = -1, conv_y = -1;
+                    float conv_progress = -1.0f;
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++) {
+                            if (dx == 0 && dy == 0) continue;
+                            int nx = pos.x + dx, ny = pos.y + dy;
+                            if (grid_.at(nx, ny) == TileType::Conveyor) {
+                                const auto& cd = grid_.data_at(nx, ny);
+                                if (!cd.built && cd.build_progress > conv_progress) {
+                                    conv_x = nx; conv_y = ny;
+                                    conv_progress = cd.build_progress;
+                                }
+                            }
+                        }
+                    if (conv_x >= 0) {
+                        auto& td = grid_.data_at(conv_x, conv_y);
+                        float needed = td.build_cost - td.build_progress;
+                        float use = std::min({config_.build_rate, needed, inv.raw_material});
+                        if (use > 0.0f) {
+                            inv.raw_material -= use;
+                            td.build_progress += use;
+                            if (td.build_progress >= td.build_cost) {
+                                td.built = true;
+                                emit_log(agent.id, "BUILT a conveyor at (" +
+                                         std::to_string(conv_x) + "," + std::to_string(conv_y) + ")");
+                            } else {
+                                emit_log(agent.id, "building conveyor at (" +
+                                         std::to_string(conv_x) + "," + std::to_string(conv_y) +
+                                         ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                            }
+                        }
+                        break;
+                    }
+
+                    // No adjacent conveyor — try starting a new EatingZone (max 1)
+                    if (grid_.built_eatingzone_count() >= 1) {
+                        emit_log(agent.id, "no need for another eating zone");
+                        break;
+                    }
                     if (grid_.min_distance_to_any_machine(pos.x, pos.y)
                             < config_.eatingzone_min_dist_machine) {
-                        // too close to machinery — refuse to build the eating zone here
                         emit_log(agent.id, "rejected eating-zone site (too close to a machine)");
                         break;
                     }
@@ -78,10 +117,38 @@ void Simulation::system_execute_actions() {
                              std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                     // Fall through into the regular BUILD-progress block below.
                 }
+
+                // Build Machine / EatingZone / Conveyor the agent is standing ON.
+                // (Unbuilt conveyor frames are walkable — agent walks onto them to build.)
+                // COLLABORATIVE BUILD: nearby agents also building boost the rate.
                 auto& td = grid_.data_at(pos.x, pos.y);
                 if (!td.built && td.build_progress < td.build_cost) {
                     float needed = td.build_cost - td.build_progress;
-                    float use = std::min({config_.build_rate, needed, inv.raw_material});
+                    float collab_rate = config_.build_rate;
+                    // Check if other agents are building the same tile or adjacent tiles
+                    {
+                        auto builders = alive_agents();
+                        int co_builders = 0;
+                        for (auto ob : builders) {
+                            if (ob == e) continue;
+                            auto& oact = registry_.get<ActionComponent>(ob);
+                            if (oact.current != ActionType::BUILD) continue;
+                            auto& opos = registry_.get<PositionComponent>(ob);
+                            // Same tile or adjacent to the same build target
+                            int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                            if (d <= 2) {
+                                auto& oag = registry_.get<AgentComponent>(ob);
+                                const auto& rel = social_.get_rel(agent.id, oag.id);
+                                // Trust amplifies collaboration
+                                float trust_mod = 0.5f + 0.5f * std::max(0.0f, rel.trust);
+                                co_builders++;
+                                collab_rate += config_.build_rate * 0.3f * trust_mod;
+                            }
+                        }
+                        // Cap at 2.5x solo build rate (prevents runaway)
+                        collab_rate = std::min(collab_rate, config_.build_rate * 2.5f);
+                    }
+                    float use = std::min({collab_rate, needed, inv.raw_material});
                     if (use > 0.0f) {
                         inv.raw_material -= use;
                         td.build_progress += use;
@@ -112,21 +179,79 @@ void Simulation::system_execute_actions() {
                     auto alive_list = alive_agents();
                     float collab = social_.collaboration_bonus(
                         agent.id, registry_, alive_list, e);
-                    float produced = config_.machine_output * collab;
 
-                    // Try storage first, then conveyor
-                    float deposited = deposit_to_adjacent_storage(pos.x, pos.y,
-                        ResourceType::FOOD, produced);
-                    float leftover = produced - deposited;
-                    if (leftover > 0.01f) {
-                        deposited += deposit_to_adjacent_conveyor(pos.x, pos.y,
-                            ResourceType::FOOD, leftover);
+                    float deposited = 0.0f;
+                    std::string log_detail;
+
+                    switch (td.machine_type) {
+                        case MachineType::Food: {
+                            // FoodMachine: raw_food → processed_food
+                            float food_produced = config_.machine_output * collab;
+                            float food_dep = deposit_to_adjacent_storage(pos.x, pos.y,
+                                ResourceType::FOOD, food_produced);
+                            float food_left = food_produced - food_dep;
+                            if (food_left > 0.01f) {
+                                food_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                                    ResourceType::FOOD, food_left);
+                            }
+                            deposited = food_dep;
+                            total_food_produced_ += food_dep;
+                            log_detail = "+" + ff2(food_dep) + " food";
+                            break;
+                        }
+                        case MachineType::Materials: {
+                            // MaterialsMachine: raw_material → construction_material + scrap byproduct
+                            float mat_produced = config_.machine_mat_output * collab;
+                            float mat_dep = deposit_to_adjacent_storage(pos.x, pos.y,
+                                ResourceType::CONSTRUCTION_MATERIAL, mat_produced);
+                            float mat_left = mat_produced - mat_dep;
+                            if (mat_left > 0.01f) {
+                                mat_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                                    ResourceType::CONSTRUCTION_MATERIAL, mat_left);
+                            }
+
+                            // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
+                            float scrap = config_.machine_mat_output * 0.3f * collab;
+                            for (int dy = -3; dy <= 3; dy++)
+                                for (int dx = -3; dx <= 3; dx++) {
+                                    int nx = pos.x + dx, ny = pos.y + dy;
+                                    if (grid_.at(nx, ny) == TileType::ScrapPile) {
+                                        auto& sd = grid_.data_at(nx, ny);
+                                        float add = std::min(scrap, sd.resource_max - sd.resource_amount);
+                                        sd.resource_amount += add;
+                                        scrap -= add;
+                                        if (scrap < 0.001f) break;
+                                    }
+                                    if (scrap < 0.001f) break;
+                                }
+
+                            deposited = mat_dep;
+                            log_detail = "+" + ff2(mat_dep) + " constr_mat";
+                            break;
+                        }
+                        case MachineType::Output: {
+                            // OutputMachine: construction_material → factory health restoration
+                            // Pull construction_material from adjacent storage
+                            float pulled = pull_construction_material_from_adjacent_storage(
+                                pos.x, pos.y, 0.05f);
+                            if (pulled > 0.001f) {
+                                float health_gain = pulled * 8.0f; // amplify: small mat → meaningful health
+                                factory_health_ = std::min(1.0f, factory_health_ + health_gain);
+                                deposited = pulled;
+                                log_detail = "+" + ff2(health_gain) + " hp (used " + ff2(pulled) + " mat)";
+                            } else {
+                                log_detail = "no mat available";
+                            }
+                            break;
+                        }
                     }
 
-                    if (deposited > 0.0f) {
-                        total_food_produced_ += deposited;
-                        emit_log(agent.id, "worked, +" + ff2(deposited) + " food"
-                                 + (collab > 1.01f ? " (collab x" + ff2(collab) + ")" : ""));
+                    if (deposited > 0.0f || !log_detail.empty()) {
+                        emit_log(agent.id, "worked [" + std::string(
+                            td.machine_type == MachineType::Food ? "FOOD" :
+                            td.machine_type == MachineType::Materials ? "MAT" : "OUT") +
+                            "] " + log_detail +
+                            (collab > 1.01f ? " (collab x" + ff2(collab) + ")" : ""));
                     }
 
                     // Work satisfies purpose slightly and tires the worker.
@@ -203,14 +328,24 @@ void Simulation::system_execute_actions() {
             }
 
             case ActionType::GET_FOOD: {
-                // Grab a snack from 8-adjacent Storage (no eating, no hunger change).
-                // Capped at inv_food_cap.
+                // Grab food and/or raw_material from 8-adjacent Storage.
                 float room = config_.inv_food_cap - inv.food;
                 if (room > 0.001f) {
                     float pulled = pull_food_from_adjacent_storage(pos.x, pos.y, room);
                     if (pulled > 0.0f) {
                         inv.food += pulled;
                         emit_log(agent.id, "grabbed " + ff2(pulled) + " food (snack to-go)");
+                    }
+                }
+                // Also pick up raw_material from storage if needed for building.
+                {
+                    float mat_room = InventoryComponent::CAPACITY - inv.total();
+                    if (mat_room > 0.5f) {
+                        float mat_pulled = pull_raw_material_from_adjacent_storage(
+                            pos.x, pos.y, std::min(mat_room, 2.0f));
+                        if (mat_pulled > 0.0f) {
+                            inv.raw_material += mat_pulled;
+                        }
                     }
                 }
                 break;
@@ -244,6 +379,24 @@ void Simulation::system_execute_actions() {
                     needs.social = std::max(0.0f, needs.social - satisfaction);
                     // Process social interaction
                     social_.process_interaction(agent.id, neighbor_id, tick_);
+
+                    // FOOD SHARING: if this agent has excess food and the neighbor is hungry,
+                    // share some. Trust grows from generosity.
+                    {
+                        auto& oinv = registry_.get<InventoryComponent>(neighbor);
+                        auto& oneeds = registry_.get<NeedsComponent>(neighbor);
+                        float excess = inv.food - 0.5f;  // keep at least 0.5 for self
+                        float neighbor_need = config_.inv_food_cap - oinv.food;
+                        if (excess > 0.3f && neighbor_need > 0.3f && oneeds.hunger > 0.4f) {
+                            float share = std::min({excess * 0.5f, neighbor_need, 1.0f});
+                            inv.food -= share;
+                            oinv.food += share;
+                            // Generosity builds trust
+                            social_.process_interaction(agent.id, neighbor_id, tick_);
+                            emit_log(agent.id, "shared " + ff2(share) + " food with A" +
+                                     std::to_string(neighbor_id));
+                        }
+                    }
                 } else {
                     needs.social = std::max(0.0f, needs.social - 0.002f);
                 }
@@ -262,14 +415,87 @@ void Simulation::system_execute_actions() {
                 break;
 
             case ActionType::MAINTAIN: {
-                auto& td = grid_.data_at(pos.x, pos.y);
-                if (grid_.at(pos.x, pos.y) == TileType::Conveyor && td.built) {
+                // Agent stands ADJACENT to the conveyor (conveyors not walkable).
+                // Scan 8-neighborhood for a built conveyor needing maintenance.
+                int maint_x = -1, maint_y = -1;
+                float worst_condition = 1.0f;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = pos.x + dx, ny = pos.y + dy;
+                        if (grid_.at(nx, ny) == TileType::Conveyor) {
+                            const auto& cd = grid_.data_at(nx, ny);
+                            if (cd.built && cd.conveyor_condition < worst_condition) {
+                                worst_condition = cd.conveyor_condition;
+                                maint_x = nx; maint_y = ny;
+                            }
+                        }
+                    }
+                if (maint_x >= 0) {
+                    auto& td = grid_.data_at(maint_x, maint_y);
                     float restored = std::min(config_.maintain_rate, 1.0f - td.conveyor_condition);
                     td.conveyor_condition += restored;
                     needs.purpose = std::max(0.0f,
                         needs.purpose - config_.work_purpose_gain * 0.5f);
                     if (restored > 0.001f)
-                        emit_log(agent.id, "maintained conveyor (" + ff2(td.conveyor_condition) + ")");
+                        emit_log(agent.id, "maintained conveyor at (" +
+                                 std::to_string(maint_x) + "," + std::to_string(maint_y) +
+                                 ") cond=" + ff2(td.conveyor_condition));
+                }
+                break;
+            }
+
+            case ActionType::DISMANTLE: {
+                // Agent stands ADJACENT to the conveyor.
+                // Scan 8-neighborhood for a built conveyor that is either:
+                //  a) a dead-end (flow goes nowhere useful), or
+                //  b) blocking a path (walkable tiles on opposite sides).
+                // If found, tear it down: return partial material to inventory,
+                // convert tile to Floor, record who dismantled it and when.
+                int dism_x = -1, dism_y = -1;
+                float best_score = 0.0f;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = pos.x + dx, ny = pos.y + dy;
+                        if (grid_.at(nx, ny) != TileType::Conveyor) continue;
+                        const auto& cd = grid_.data_at(nx, ny);
+                        if (!cd.built) continue;
+                        float score = 0.0f;
+                        if (grid_.is_conveyor_blocking_path(nx, ny))
+                            score += 2.0f;  // strong reason: blocks passage
+                        // Check dead-end
+                        auto [tx, ty] = grid_.conveyor_target(nx, ny);
+                        if (tx >= 0 && tx < grid_.width() && ty >= 0 && ty < grid_.height()) {
+                            TileType tt = grid_.at(tx, ty);
+                            bool useful = (tt == TileType::Storage || tt == TileType::Exit ||
+                                          (tt == TileType::Conveyor && grid_.data_at(tx, ty).built));
+                            if (!useful) score += 1.0f;  // dead-end
+                        }
+                        if (score > best_score) {
+                            best_score = score;
+                            dism_x = nx; dism_y = ny;
+                        }
+                    }
+                if (dism_x >= 0 && best_score > 0.0f) {
+                    float cost = grid_.dismantle_conveyor(dism_x, dism_y);
+                    if (cost > 0.0f) {
+                        // Return partial material
+                        float refund = cost * config_.dismantle_return;
+                        inv.raw_material = std::min(10.0f,
+                                                    inv.raw_material + refund);
+                        // Record who dismantled and when
+                        auto& td = grid_.data_at(dism_x, dism_y);
+                        td.dismantled_by = agent.id;
+                        td.dismantled_at_tick = tick_;
+                        td.original_type = 0;  // was conveyor
+                        // Small purpose boost — they're improving the factory
+                        needs.purpose = std::max(0.0f,
+                            needs.purpose - config_.work_purpose_gain * 0.3f);
+                        emit_log(agent.id, "DISMANTLED conveyor at (" +
+                                 std::to_string(dism_x) + "," + std::to_string(dism_y) +
+                                 ") refund=" + ff2(refund));
+                    }
                 }
                 break;
             }
@@ -338,7 +564,8 @@ float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type,
             int nx = px + dx, ny = py + dy;
             if (grid_.at(nx, ny) == TileType::Storage) {
                 auto& d = grid_.data_at(nx, ny);
-                float stored_total = d.stored_food + d.stored_raw_food + d.stored_raw_material;
+                float stored_total = d.stored_food + d.stored_raw_food
+                                   + d.stored_raw_material + d.stored_construction_material;
                 float space = d.storage_capacity - stored_total;
                 if (space > 0.001f) {
                     float deposit = std::min(remaining, space);
@@ -346,6 +573,8 @@ float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type,
                         d.stored_food += deposit;
                     } else if (type == ResourceType::RAW_FOOD) {
                         d.stored_raw_food += deposit;
+                    } else if (type == ResourceType::CONSTRUCTION_MATERIAL) {
+                        d.stored_construction_material += deposit;
                     } else {
                         d.stored_raw_material += deposit;
                     }
@@ -412,6 +641,40 @@ float Simulation::pull_food_from_adjacent_storage(int px, int py, float max_amou
             float take = std::min(remaining, d.stored_food);
             if (take > 0.0f) {
                 d.stored_food -= take;
+                remaining -= take;
+            }
+        }
+    return max_amount - remaining;
+}
+
+float Simulation::pull_raw_material_from_adjacent_storage(int px, int py, float max_amount) {
+    float remaining = max_amount;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++) {
+            if (remaining <= 0.001f) return max_amount - remaining;
+            int nx = px + dx, ny = py + dy;
+            if (grid_.at(nx, ny) != TileType::Storage) continue;
+            auto& d = grid_.data_at(nx, ny);
+            float take = std::min(remaining, d.stored_raw_material);
+            if (take > 0.0f) {
+                d.stored_raw_material -= take;
+                remaining -= take;
+            }
+        }
+    return max_amount - remaining;
+}
+
+float Simulation::pull_construction_material_from_adjacent_storage(int px, int py, float max_amount) {
+    float remaining = max_amount;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++) {
+            if (remaining <= 0.001f) return max_amount - remaining;
+            int nx = px + dx, ny = py + dy;
+            if (grid_.at(nx, ny) != TileType::Storage) continue;
+            auto& d = grid_.data_at(nx, ny);
+            float take = std::min(remaining, d.stored_construction_material);
+            if (take > 0.0f) {
+                d.stored_construction_material -= take;
                 remaining -= take;
             }
         }

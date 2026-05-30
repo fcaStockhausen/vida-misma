@@ -32,7 +32,11 @@ public:
 
     bool is_walkable(int x, int y) const {
         TileType t = at(x, y);
-        return t != TileType::Wall;  // Conveyor is walkable
+        if (t == TileType::Wall) return false;
+        // Unbuilt conveyor frames are walkable (construction markers).
+        // Only built conveyors block movement (physical infrastructure).
+        if (t == TileType::Conveyor && data_at(x, y).built) return false;
+        return true;
     }
 
     // --- Tile data access ---
@@ -285,6 +289,28 @@ public:
         return n;
     }
 
+    // Find a walkable tile in the 4-neighborhood of (target_x, target_y)
+    // closest to (from_x, from_y). Used when the target tile itself is not walkable
+    // (e.g., Conveyor) and the agent needs to stand beside it.
+    std::pair<int,int> find_walkable_adjacent_to(
+        int target_x, int target_y, int from_x, int from_y) const
+    {
+        constexpr int dx[] = {1, -1, 0, 0};
+        constexpr int dy[] = {0, 0, 1, -1};
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int d = 0; d < 4; d++) {
+            int nx = target_x + dx[d], ny = target_y + dy[d];
+            if (!is_walkable(nx, ny)) continue;
+            int dist = std::abs(nx - from_x) + std::abs(ny - from_y);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = {nx, ny};
+            }
+        }
+        return best;
+    }
+
     // Find nearest storage with food
     std::pair<int,int> find_nearest_storage_with_food(int fx, int fy) const {
         int best_dist = 999999;
@@ -301,6 +327,83 @@ public:
                 }
             }
         return best;
+    }
+
+    // Find the nearest built conveyor that is a "dead end" — its flow target
+    // is not a useful tile (not Storage, Exit, or another built conveyor).
+    // Agents may want to dismantle these to reuse the material elsewhere.
+    std::pair<int,int> find_nearest_dead_end_conveyor(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Conveyor) continue;
+                const auto& d = data_at(x, y);
+                if (!d.built) continue;
+                // Check if this conveyor's flow target is useful
+                auto [tx, ty] = conveyor_target(x, y);
+                if (tx < 0 || tx >= width_ || ty < 0 || ty >= height_) continue; // edge of map
+                TileType tt = at(tx, ty);
+                bool useful = (tt == TileType::Storage || tt == TileType::Exit ||
+                              (tt == TileType::Conveyor && data_at(tx, ty).built));
+                if (useful) continue; // this conveyor flows somewhere useful
+                // Dead end! Check distance
+                int dist = std::abs(x - fx) + std::abs(y - fy);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
+    // Convert a built conveyor back to Floor (dismantle).
+    // Returns the build_cost for material refund calculation, or -1 if invalid.
+    float dismantle_conveyor(int x, int y) {
+        if (x < 0 || x >= width_ || y < 0 || y >= height_) return -1.0f;
+        if (at(x, y) != TileType::Conveyor) return -1.0f;
+        auto& d = data_at(x, y);
+        if (!d.built) return -1.0f;
+        float cost = d.build_cost;
+        // Convert back to floor
+        tiles_[y * width_ + x] = TileType::Floor;
+        // Preserve dismantle tracking in data
+        d.built = false;
+        d.build_progress = 0.0f;
+        d.conveyor_condition = 1.0f;
+        d.conveyor_contents = 0.0f;
+        return cost;
+    }
+
+    // Place a new conveyor frame at a floor tile (for rearranging).
+    bool place_new_conveyor(int x, int y, ConveyorDir dir, float cost = 1.5f) {
+        if (x < 0 || x >= width_ || y < 0 || y >= height_) return false;
+        if (at(x, y) != TileType::Floor) return false;
+        tiles_[y * width_ + x] = TileType::Conveyor;
+        auto& d = data_at(x, y);
+        d.built = false;
+        d.build_progress = 0.0f;
+        d.build_cost = cost;
+        d.conveyor_dir = dir;
+        d.conveyor_condition = 1.0f;
+        d.conveyor_contents = 0.0f;
+        return true;
+    }
+
+    // Check if a built conveyor at (x,y) is blocking a path — specifically,
+    // if removing it would connect two walkable regions that are currently separated.
+    // Simple heuristic: a built conveyor is "blocking" if it has walkable neighbors
+    // on opposite sides (N/S or E/W) that can't reach each other except through it.
+    bool is_conveyor_blocking_path(int x, int y) const {
+        if (at(x, y) != TileType::Conveyor || !data_at(x, y).built) return false;
+        // Check N-S passage: walkable N and walkable S of conveyor
+        bool walk_n = (y > 0 && is_walkable(x, y - 1));
+        bool walk_s = (y < height_ - 1 && is_walkable(x, y + 1));
+        // Check E-W passage
+        bool walk_e = (x < width_ - 1 && is_walkable(x + 1, y));
+        bool walk_w = (x > 0 && is_walkable(x - 1, y));
+        // If walkable on opposite sides, this conveyor blocks passage
+        return (walk_n && walk_s) || (walk_e && walk_w);
     }
 
     // --- Factory Layout ---
@@ -333,6 +436,10 @@ public:
         set(width_ - 1, mid_y,     TileType::Exit);
         set(width_ - 1, mid_y + 1, TileType::Exit);
 
+        // Storage adjacent to Exit — required for quota system to drain food.
+        // Without this, factory health can never be maintained.
+        place_storage(width_ - 2, mid_y);
+
         // NOTE: FoodSource tiles intentionally removed. In this model, food is only
         // produced by Machines (industrial pathway). Agents who don't operate machines
         // can't sustain themselves — that is what creates the cooperation pressure.
@@ -357,37 +464,37 @@ public:
         place_scrap_pile(width_ - 4, mid_y + 5);
 
         // === MACHINE FRAMES (unbuilt, need construction) ===
-        // North factory cluster
+        // North-west cluster: FOOD machines (4)
         int m1x = width_ / 4;
         int m1y = height_ / 4;
-        place_machine(m1x - 1, m1y - 1);
-        place_machine(m1x + 1, m1y - 1);
-        place_machine(m1x - 1, m1y + 1);
-        place_machine(m1x + 1, m1y + 1);
+        place_machine(m1x - 1, m1y - 1, MachineType::Food);
+        place_machine(m1x + 1, m1y - 1, MachineType::Food);
+        place_machine(m1x - 1, m1y + 1, MachineType::Food);
+        place_machine(m1x + 1, m1y + 1, MachineType::Food);
 
-        // South factory cluster
+        // South-west cluster: FOOD machines (4)
         int m2x = width_ / 4;
         int m2y = 3 * height_ / 4;
-        place_machine(m2x - 1, m2y - 1);
-        place_machine(m2x + 1, m2y - 1);
-        place_machine(m2x - 1, m2y + 1);
-        place_machine(m2x + 1, m2y + 1);
+        place_machine(m2x - 1, m2y - 1, MachineType::Food);
+        place_machine(m2x + 1, m2y - 1, MachineType::Food);
+        place_machine(m2x - 1, m2y + 1, MachineType::Food);
+        place_machine(m2x + 1, m2y + 1, MachineType::Food);
 
-        // NE factory cluster
+        // North-east cluster: MATERIALS machines (4)
         int m3x = 3 * width_ / 4;
         int m3y = height_ / 4;
-        place_machine(m3x - 1, m3y - 1);
-        place_machine(m3x + 1, m3y - 1);
-        place_machine(m3x - 1, m3y + 1);
-        place_machine(m3x + 1, m3y + 1);
+        place_machine(m3x - 1, m3y - 1, MachineType::Materials);
+        place_machine(m3x + 1, m3y - 1, MachineType::Materials);
+        place_machine(m3x - 1, m3y + 1, MachineType::Materials);
+        place_machine(m3x + 1, m3y + 1, MachineType::Materials);
 
-        // SE factory cluster
+        // South-east cluster: OUTPUT machines (4)
         int m4x = 3 * width_ / 4;
         int m4y = 3 * height_ / 4;
-        place_machine(m4x - 1, m4y - 1);
-        place_machine(m4x + 1, m4y - 1);
-        place_machine(m4x - 1, m4y + 1);
-        place_machine(m4x + 1, m4y + 1);
+        place_machine(m4x - 1, m4y - 1, MachineType::Output);
+        place_machine(m4x + 1, m4y - 1, MachineType::Output);
+        place_machine(m4x - 1, m4y + 1, MachineType::Output);
+        place_machine(m4x + 1, m4y + 1, MachineType::Output);
 
         // === STORAGE BAYS — placed at (mx, my±2) so they are 8-adjacent to
         // all 4 machines in a cluster. This is what makes WORK/EAT actually
@@ -455,6 +562,15 @@ public:
         place_conveyor(m2x, m2y - 3, ConveyorDir::N);
         place_conveyor(m2x, m2y - 4, ConveyorDir::N);
         place_conveyor(m2x, m2y - 5, ConveyorDir::N);
+
+        // === PRE-BUILT BOOTSTRAP ===
+        // The factory starts with 2 Food machines already built.
+        // This represents a minimally operational factory — without it,
+        // agents die before building anything (chicken-and-egg problem).
+        auto& pb1 = data_at(m1x - 1, m1y - 1);
+        pb1.built = true; pb1.build_progress = pb1.build_cost;
+        auto& pb2 = data_at(m1x + 1, m1y + 1);
+        pb2.built = true; pb2.build_progress = pb2.build_cost;
     }
 
 private:
@@ -479,14 +595,13 @@ private:
         d.resource_regen  = 0.001f;  // very slow regen
     }
 
-    void place_machine(int x, int y) {
+    void place_machine(int x, int y, MachineType mtype = MachineType::Food) {
         set(x, y, TileType::Machine);
         auto& d = data_at(x, y);
         d.built          = false;
         d.build_progress = 0.0f;
-        d.build_cost     = 3.0f;  // solo: ~25 ticks; two builders: ~12; four: ~6.
-                                  // Build is NOT instantaneous so collaboration matters
-                                  // and agents can pause to attend survival needs.
+        d.build_cost     = 2.0f;
+        d.machine_type   = mtype;
     }
 
     void place_storage(int x, int y) {
