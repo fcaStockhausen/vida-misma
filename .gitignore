@@ -1,0 +1,15 @@
+# Build
+build/
+_deps/
+
+# macOS
+.DS_Store
+
+# Generated outputs (rebuildable with build.sh)
+bases_matematicas.pdf
+bases_matematicas.html
+bases_matematicas.md
+bases_matematicas.zip
+
+# Debug
+/tmp/

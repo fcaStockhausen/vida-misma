@@ -1,0 +1,75 @@
+# La Vida Misma - Simulation Configuration
+#
+# PRODUCTION CHAIN:
+#   FoodSource tiles → GATHER → raw_food in inventory
+#   ScrapPile tiles  → GATHER → raw_material in inventory
+#   Unbuilt Machine  → BUILD (costs raw_material) → operational Machine
+#   Operational Machine + WORK → consumes raw_food → produces food
+#   Storage tiles hold communal resources (any adjacent agent can deposit/withdraw)
+#
+# EATING:
+#   raw_food: 50% efficiency (survival mode)
+#   food:     100% efficiency (proper meals from machines)
+#   Sources: inventory or adjacent Storage tile
+#
+# TENSION:
+#   Phase 1 (ticks 0-200):   Agents gather raw food to survive. Barely sustainable.
+#   Phase 2 (ticks 200-500): Some agents invest in gathering materials + building.
+#                             Risk: builders don't eat. Reward: machines.
+#   Phase 3 (ticks 500+):    Machines operational. Workers feed community.
+#                             Some agents freed for higher pursuits.
+
+[grid]
+width = 60
+height = 40
+
+[simulation]
+initial_population = 24
+max_population = 200
+seed = 0
+
+[needs]
+hunger_decay      = 0.005   # critical: ~200 ticks to max
+rest_decay        = 0.006   # critical: ~167 ticks to max
+social_decay      = 0.003   # moderate
+expression_decay  = 0.003   # moderate
+purpose_decay     = 0.002   # slow
+
+[actions]
+eat_satisfaction     = 0.018  # hunger reduction per tick (from processed food)
+eat_raw_efficiency   = 0.7    # raw_food gives this fraction of eat_satisfaction
+eat_food_per_tick    = 0.02   # food units consumed per eat tick
+rest_recovery        = 0.015
+social_satisfaction  = 0.012
+create_satisfaction  = 0.012
+explore_satisfaction = 0.008
+work_purpose_gain    = 0.004
+
+[production]
+gather_rate    = 0.05   # resources collected per GATHER tick
+build_rate     = 0.02   # build progress per BUILD tick (build_cost=3 → 150 ticks)
+machine_output = 0.025  # food produced per WORK tick
+machine_input  = 0.02   # raw_food consumed per WORK tick
+
+[urgency]
+alpha = 2.0
+
+[death]
+starvation_ticks = 120
+exhaustion_ticks = 160
+
+[stress]
+high_need = 0.008
+decay = 0.005
+breakdown_threshold = 0.92
+
+[personality]
+compliance_range     = [0.1, 0.95]
+laziness_range       = [0.1, 0.90]
+artistry_range       = [0.05, 0.85]
+gregariousness_range = [0.1, 0.90]
+resilience_range     = [0.2, 0.90]
+curiosity_range      = [0.1, 0.80]
+
+[movement]
+noise = 0.05  # chance of random step instead of toward target

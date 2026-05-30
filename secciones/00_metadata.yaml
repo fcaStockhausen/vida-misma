@@ -1,0 +1,36 @@
+---
+title: "Mathematical Foundations and Design Specification for Community Simulation Engines"
+subtitle: "From Conway to Dwarf Fortress to La Vida Misma"
+author: "Project Vida Misma"
+date: "2026-05-29"
+lang: en
+numbersections: true
+secPrefix:
+  - "section"
+  - "sections"
+eqnPrefix:
+  - "equation"
+  - "equations"
+figPrefix:
+  - "figure"
+  - "figures"
+tblPrefix:
+  - "table"
+  - "tables"
+lstPrefix:
+  - "listing"
+  - "listings"
+loftTitle: "List of Tables"
+lolTitle: "List of Listings"
+toc: true
+lof: true
+lot: true
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{unicode-math}
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{hyperref}
+  - \hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+---

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>La Vida Misma — Project Dependency Graph</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', monospace; overflow: hidden; }
+#controls {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(10,10,15,0.92); border-bottom: 1px solid #333;
+  padding: 12px 24px; display: flex; gap: 16px; align-items: center;
+}
+#controls h1 { font-size: 14px; color: #7aa2f7; font-weight: 600; }
+.btn {
+  background: #1a1a2e; border: 1px solid #333; color: #7aa2f7;
+  padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  font-family: inherit; transition: all 0.2s;
+}
+.btn:hover { background: #252540; border-color: #7aa2f7; }
+.btn.active { background: #7aa2f7; color: #0a0a0f; border-color: #7aa2f7; }
+#info-panel {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(10,10,15,0.95); border-top: 1px solid #333;
+  padding: 10px 24px; font-size: 12px; min-height: 40px;
+  display: flex; gap: 24px; align-items: center;
+}
+#info-panel span { color: #888; }
+#info-panel .val { color: #e0e0e0; }
+.legend { display: flex; gap: 12px; margin-left: auto; }
+.legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #888; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+svg { width: 100vw; height: 100vh; }
+.node-label { font-size: 11px; fill: #c0c0c0; pointer-events: none; font-family: inherit; }
+.node-label.highlighted { fill: #fff; font-weight: 600; }
+.node { cursor: pointer; }
+.edge { fill: none; stroke-width: 1.5; opacity: 0.3; }
+.edge.highlighted { opacity: 1; stroke-width: 2.5; }
+.edge.dimmed { opacity: 0.05; }
+.node.dimmed circle { opacity: 0.15; }
+.node.dimmed .node-label { opacity: 0.15; }
+.node circle { transition: r 0.2s, opacity 0.2s; }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <h1>LA VIDA MISMA</h1>
+  <button class="btn active" onclick="setView('document')">Document Sections</button>
+  <button class="btn" onclick="setView('systems')">Simulation Systems</button>
+  <button class="btn" onclick="setView('combined')">Combined</button>
+  <button class="btn" onclick="resetZoom()">Reset View</button>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#7aa2f7"></div> Part I: Foundations</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f7768e"></div> Part II: Design</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#9ece6a"></div> Simulation Systems</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e0af68"></div> Equation Ref</div>
+  </div>
+</div>
+
+<div id="info-panel">
+  <span>Node: <span class="val" id="info-node">—</span></span>
+  <span>Refs out: <span class="val" id="info-out">—</span></span>
+  <span>Refs in: <span class="val" id="info-in">—</span></span>
+  <span>File: <span class="val" id="info-file">—</span></span>
+</div>
+
+<svg id="graph"></svg>
+
+<script>
+const DATA = {
+  "nodes": [
+    {"id":"sec:ca","label":"Cellular Automata","file":"01_automatas_celular.md","part":"I","weight":0,"group":"doc"},
+    {"id":"sec:procedural","label":"Procedural Generation","file":"02_generacion_procedimental.md","part":"I","weight":0,"group":"doc"},
+    {"id":"sec:agentes","label":"Agent-Based Modeling","file":"03_agentes_ia.md","part":"I","weight":5,"group":"doc"},
+    {"id":"sec:pathfinding","label":"Pathfinding","file":"04_pathfinding.md","part":"I","weight":1,"group":"doc"},
+    {"id":"sec:fisicos","label":"Physical Systems","file":"05_sistemas_fisicos.md","part":"I","weight":1,"group":"doc"},
+    {"id":"sec:social","label":"Social Simulation","file":"06_simulacion_social.md","part":"I","weight":4,"group":"doc"},
+    {"id":"sec:diseno","label":"Design Principles","file":"07_principios_diseno.md","part":"I","weight":4,"group":"doc"},
+    {"id":"sec:complementarios","label":"Complementary Algo","file":"08_algoritmos_complementarios.md","part":"I","weight":1,"group":"doc"},
+    {"id":"sec:stack","label":"Impl. Roadmap","file":"09_stack_tecnologico.md","part":"I","weight":16,"group":"doc"},
+    {"id":"sec:papers","label":"Verified References","file":"10_papers_arxiv.md","part":"I","weight":0,"group":"doc"},
+    {"id":"sec:part2","label":"Part II Intro","file":"12_part2_intro.md","part":"II","weight":0,"group":"doc"},
+    {"id":"sec:factory","label":"The Factory","file":"13_factory.md","part":"II","weight":9,"group":"doc"},
+    {"id":"sec:director","label":"The Director","file":"14_director.md","part":"II","weight":7,"group":"doc"},
+    {"id":"sec:inhabitants","label":"The Inhabitants","file":"15_inhabitants.md","part":"II","weight":8,"group":"doc"},
+    {"id":"sec:spaces","label":"Emergent Spaces","file":"16_spaces.md","part":"II","weight":2,"group":"doc"},
+    {"id":"sec:social-fabric","label":"Social Fabric","file":"17_social_fabric.md","part":"II","weight":10,"group":"doc"},
+    {"id":"sec:birth-death","label":"Life, Death & Gen.","file":"18_life_death.md","part":"II","weight":4,"group":"doc"},
+    {"id":"sec:tick-loop","label":"Systems Architecture","file":"19_architecture.md","part":"II","weight":5,"group":"doc"},
+    {"id":"sys:decay","label":"DecaySystem","phase":1,"group":"sys"},
+    {"id":"sys:event","label":"EventSystem","phase":2,"group":"sys"},
+    {"id":"sys:utility","label":"UtilitySystem","phase":2,"group":"sys"},
+    {"id":"sys:action","label":"ActionSystem","phase":2,"group":"sys"},
+    {"id":"sys:production","label":"ProductionSystem","phase":4,"group":"sys"},
+    {"id":"sys:stress","label":"StressSystem","phase":5,"group":"sys"},
+    {"id":"sys:relationship","label":"RelationshipSys","phase":5,"group":"sys"},
+    {"id":"sys:environment","label":"EnvironmentSystem","phase":1,"group":"sys"},
+    {"id":"sys:narrative","label":"NarrativeSystem","phase":7,"group":"sys"},
+    {"id":"sys:pathfinding","label":"PathfindingSystem","phase":3,"group":"sys"},
+    {"id":"sys:birth","label":"BirthDeathSystem","phase":7,"group":"sys"}
+  ],
+  "doc_edges": [
+    {"source":"sec:factory","target":"sec:diseno","type":"section"},
+    {"source":"sec:factory","target":"sec:tick-loop","type":"section"},
+    {"source":"sec:factory","target":"sec:director","type":"section"},
+    {"source":"sec:factory","target":"sec:social","type":"section"},
+    {"source":"sec:factory","target":"sec:agentes","type":"section"},
+    {"source":"sec:factory","target":"sec:fisicos","type":"section"},
+    {"source":"sec:director","target":"sec:diseno","type":"section"},
+    {"source":"sec:director","target":"sec:tick-loop","type":"section"},
+    {"source":"sec:director","target":"sec:social","type":"section"},
+    {"source":"sec:director","target":"sec:pathfinding","type":"section"},
+    {"source":"sec:director","target":"sec:factory","type":"section"},
+    {"source":"sec:director","target":"sec:agentes","type":"section"},
+    {"source":"sec:inhabitants","target":"sec:social-fabric","type":"section"},
+    {"source":"sec:inhabitants","target":"sec:diseno","type":"section"},
+    {"source":"sec:inhabitants","target":"sec:birth-death","type":"section"},
+    {"source":"sec:inhabitants","target":"sec:social","type":"section"},
+    {"source":"sec:inhabitants","target":"sec:agentes","type":"section"},
+    {"source":"sec:spaces","target":"sec:agentes","type":"section"},
+    {"source":"sec:social-fabric","target":"sec:complementarios","type":"section"},
+    {"source":"sec:social-fabric","target":"sec:birth-death","type":"section"},
+    {"source":"sec:social-fabric","target":"sec:spaces","type":"section"},
+    {"source":"sec:social-fabric","target":"sec:social","type":"section"},
+    {"source":"sec:social-fabric","target":"sec:agentes","type":"section"},
+    {"source":"sec:birth-death","target":"sec:social-fabric","type":"section"},
+    {"source":"sec:tick-loop","target":"sec:diseno","type":"section"},
+    {"source":"sec:tick-loop","target":"sec:stack","type":"section"}
+  ],
+  "sys_edges": [
+    {"source":"sys:decay","target":"sys:utility","type":"tick"},
+    {"source":"sys:event","target":"sys:stress","type":"tick"},
+    {"source":"sys:utility","target":"sys:action","type":"tick"},
+    {"source":"sys:action","target":"sys:production","type":"tick"},
+    {"source":"sys:action","target":"sys:environment","type":"tick"},
+    {"source":"sys:production","target":"sys:stress","type":"tick"},
+    {"source":"sys:stress","target":"sys:relationship","type":"tick"},
+    {"source":"sys:relationship","target":"sys:environment","type":"tick"},
+    {"source":"sys:stress","target":"sys:narrative","type":"tick"},
+    {"source":"sys:utility","target":"sys:pathfinding","type":"tick"},
+    {"source":"sys:pathfinding","target":"sys:action","type":"tick"},
+    {"source":"sys:event","target":"sys:birth","type":"tick"}
+  ]
+};
+
+// Add cross-edges: which doc sections define which systems
+DATA.cross_edges = [
+  {"source":"sec:inhabitants","target":"sys:utility","type":"defines"},
+  {"source":"sec:inhabitants","target":"sys:action","type":"defines"},
+  {"source":"sec:inhabitants","target":"sys:stress","type":"defines"},
+  {"source":"sec:inhabitants","target":"sys:relationship","type":"defines"},
+  {"source":"sec:factory","target":"sys:environment","type":"defines"},
+  {"source":"sec:factory","target":"sys:production","type":"defines"},
+  {"source":"sec:tick-loop","target":"sys:decay","type":"defines"},
+  {"source":"sec:tick-loop","target":"sys:event","type":"defines"},
+  {"source":"sec:tick-loop","target":"sys:narrative","type":"defines"},
+  {"source":"sec:tick-loop","target":"sys:birth","type":"defines"},
+  {"source":"sec:pathfinding","target":"sys:pathfinding","type":"defines"},
+  {"source":"sec:factory","target":"sys:decay","type":"defines"}
+];
+
+const colors = {
+  doc_part1: '#7aa2f7',
+  doc_part2: '#f7768e',
+  sys: '#9ece6a',
+  cross: '#e0af68',
+  tick: '#9ece6a',
+  section: '#7aa2f7'
+};
+
+let currentView = 'document';
+let simulation, svg, g, link, node, label;
+let width, height;
+
+function init() {
+  svg = d3.select('#graph');
+  width = window.innerWidth;
+  height = window.innerHeight;
+
+  svg.attr('viewBox', [0, 0, width, height]);
+
+  g = svg.append('g');
+
+  // Zoom
+  const zoom = d3.zoom()
+    .scaleExtent([0.3, 4])
+    .on('zoom', (event) => g.attr('transform', event.transform));
+  svg.call(zoom);
+
+  // Store zoom for reset
+  svg._zoom = zoom;
+
+  render('document');
+}
+
+function getColor(d) {
+  if (d.group === 'sys') return colors.sys;
+  return d.part === 'I' ? colors.doc_part1 : colors.doc_part2;
+}
+
+function getRadius(d) {
+  if (d.group === 'sys') return 8;
+  const base = d.weight || 1;
+  return Math.max(8, Math.min(22, 8 + base * 1.2));
+}
+
+function getVisibleData(view) {
+  let nodes, edges;
+  if (view === 'document') {
+    nodes = DATA.nodes.filter(n => n.group === 'doc');
+    edges = DATA.doc_edges;
+  } else if (view === 'systems') {
+    nodes = DATA.nodes.filter(n => n.group === 'sys');
+    edges = DATA.sys_edges;
+  } else {
+    nodes = DATA.nodes;
+    edges = [...DATA.doc_edges, ...DATA.sys_edges, ...DATA.cross_edges];
+  }
+
+  const nodeIds = new Set(nodes.map(n => n.id));
+  edges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+  return { nodes, edges };
+}
+
+function render(view) {
+  g.selectAll('*').remove();
+
+  const { nodes, edges } = getVisibleData(view);
+
+  // Arrow marker
+  const defs = g.append('defs');
+  ['section', 'tick', 'defines'].forEach(type => {
+    const color = type === 'tick' ? colors.tick : type === 'defines' ? colors.cross : colors.section;
+    defs.append('marker')
+      .attr('id', `arrow-${type}`)
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 20)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('fill', color)
+      .attr('d', 'M0,-5L10,0L0,5');
+  });
+
+  link = g.append('g')
+    .selectAll('line')
+    .data(edges)
+    .join('line')
+    .attr('class', 'edge')
+    .attr('stroke', d => {
+      if (d.type === 'tick') return colors.tick;
+      if (d.type === 'defines') return colors.cross;
+      return colors.section;
+    })
+    .attr('marker-end', d => `url(#arrow-${d.type})`);
+
+  node = g.append('g')
+    .selectAll('.node')
+    .data(nodes)
+    .join('g')
+    .attr('class', 'node')
+    .on('mouseover', handleMouseOver)
+    .on('mouseout', handleMouseOut);
+
+  node.append('circle')
+    .attr('r', d => getRadius(d))
+    .attr('fill', d => getColor(d))
+    .attr('fill-opacity', 0.7)
+    .attr('stroke', d => getColor(d))
+    .attr('stroke-width', 2)
+    .attr('stroke-opacity', 0.3);
+
+  label = g.append('g')
+    .selectAll('text')
+    .data(nodes)
+    .join('text')
+    .attr('class', 'node-label')
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => getRadius(d) + 14)
+    .text(d => d.label);
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).distance(d => {
+      if (d.type === 'defines') return 200;
+      return 120;
+    }).strength(0.4))
+    .force('charge', d3.forceManyBody().strength(-400))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(d => getRadius(d) + 10))
+    .force('x', d3.forceX(width / 2).strength(0.03))
+    .force('y', d3.forceY(height / 2).strength(0.03))
+    .on('tick', () => {
+      link
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+      node.attr('transform', d => `translate(${d.x},${d.y})`);
+      label.attr('x', d => d.x).attr('y', d => d.y);
+    });
+}
+
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  if (simulation) simulation.stop();
+  render(view);
+}
+
+function resetZoom() {
+  svg.transition().duration(500).call(svg._zoom.transform, d3.zoomIdentity);
+}
+
+function handleMouseOver(event, d) {
+  const connectedNodes = new Set();
+  connectedNodes.add(d.id);
+
+  link.each(e => {
+    if (e.source.id === d.id) connectedNodes.add(e.target.id);
+    if (e.target.id === d.id) connectedNodes.add(e.source.id);
+  });
+
+  node.classed('dimmed', n => !connectedNodes.has(n.id));
+  label.classed('highlighted', n => n.id === d.id);
+  link.classed('highlighted', e => e.source.id === d.id || e.target.id === d.id)
+      .classed('dimmed', e => e.source.id !== d.id && e.target.id !== d.id);
+
+  const outCount = DATA.doc_edges.filter(e => e.source === d.id).length +
+                   DATA.sys_edges.filter(e => e.source === d.id).length +
+                   DATA.cross_edges.filter(e => e.source === d.id).length;
+  const inCount = DATA.doc_edges.filter(e => e.target === d.id).length +
+                  DATA.sys_edges.filter(e => e.target === d.id).length +
+                  DATA.cross_edges.filter(e => e.target === d.id).length;
+
+  document.getElementById('info-node').textContent = d.label;
+  document.getElementById('info-out').textContent = outCount;
+  document.getElementById('info-in').textContent = inCount;
+  document.getElementById('info-file').textContent = d.file || `Phase ${d.phase}`;
+}
+
+function handleMouseOut() {
+  node.classed('dimmed', false);
+  label.classed('highlighted', false);
+  link.classed('highlighted', false).classed('dimmed', false);
+  document.getElementById('info-node').textContent = '—';
+  document.getElementById('info-out').textContent = '—';
+  document.getElementById('info-in').textContent = '—';
+  document.getElementById('info-file').textContent = '—';
+}
+
+window.addEventListener('resize', () => {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  svg.attr('viewBox', [0, 0, width, height]);
+  if (simulation) {
+    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    simulation.alpha(0.3).restart();
+  }
+});
+</script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>window.onload = init;</script>
+</body>
+</html>

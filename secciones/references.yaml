@@ -1,0 +1,395 @@
+---
+references:
+  # === Section 1: Cellular Automata ===
+  - id: wolfram1984
+    author:
+      - family: Wolfram
+        given: Stephen
+    title: "Universality and complexity in cellular automata"
+    container-title: "Physica D: Nonlinear Phenomena"
+    volume: 10
+    issue: 1-2
+    page: "1-35"
+    DOI: "10.1016/0167-2789(84)90245-8"
+    issued:
+      year: 1984
+
+  - id: burks1970
+    author:
+      - family: Burks
+        given: "Arthur W."
+    title: "Essays on cellular automata"
+    container-title: "University of Illinois Press"
+    issued:
+      year: 1970
+
+  - id: langton1990
+    author:
+      - family: Langton
+        given: "Chris G."
+    title: "Computation at the edge of chaos: Phase transitions and emergent computation"
+    container-title: "Physica D: Nonlinear Phenomena"
+    volume: 42
+    issue: 1-3
+    page: "12-37"
+    DOI: "10.1016/0167-2789(90)90064-V"
+    issued:
+      year: 1990
+
+  - id: rafler2011
+    author:
+      - family: Rafler
+        given: Stephan
+    title: "Generalization of Conway's 'Game of Life' to a continuous domain --- SmoothLife"
+    arxiv: "1111.1567"
+    issued:
+      year: 2011
+      month: 11
+
+  - id: chan2019
+    author:
+      - family: Chan
+        given: "Bert Wang-Chak"
+    title: "Lenia --- Biology of Artificial Life"
+    container-title: "Complex Systems"
+    volume: 28
+    issue: 3
+    page: "251-286"
+    arxiv: "1812.05433"
+    issued:
+      year: 2019
+
+  - id: davis2022
+    author:
+      - family: Davis
+        given: "Q. Tyrell"
+    title: "Intention to explore the role of discretization in the emergence of self-organization in certain approximations of continuous cellular automata and other complex dynamic systems"
+    arxiv: "2208.09444"
+    issued:
+      year: 2022
+      month: 8
+
+  - id: sandler2020
+    author:
+      - family: Sandler
+        given: Mark
+      - family: Zhmoginov
+        given: Andrey
+      - family: Luo
+        given: Liangcheng
+      - family: Mordvintsev
+        given: Alexander
+      - family: Randazzo
+        given: Ettore
+      - family: "Agüera y Arcas"
+        given: Blaise
+    title: "Image segmentation via Cellular Automata"
+    arxiv: "2008.04965"
+    issued:
+      year: 2020
+      month: 8
+
+  - id: adamatzky2010
+    author:
+      - family: Adamatzky
+        given: Andrew
+    title: "Game of Life Cellular Automata"
+    publisher: "Springer"
+    ISBN: "978-1-84996-217-9"
+    issued:
+      year: 2010
+
+  # === Section 2: Procedural Generation ===
+  - id: perlin1985
+    author:
+      - family: Perlin
+        given: Ken
+    title: "An image synthesizer"
+    container-title: "ACM SIGGRAPH Computer Graphics"
+    volume: 19
+    issue: 3
+    page: "287-296"
+    DOI: "10.1145/325165.325247"
+    issued:
+      year: 1985
+
+  - id: gumin2017
+    author:
+      - family: Gumin
+        given: Maxim
+    title: "WaveFunctionCollapse"
+    URL: "https://github.com/mxgmn/WaveFunctionCollapse"
+    issued:
+      year: 2017
+
+  - id: karth2017
+    author:
+      - family: Karth
+        given: Isaac
+      - family: Smith
+        given: Adam
+    title: "WaveFunctionCollapse is constraint solving in the wild"
+    container-title: "Proceedings of the 12th International Conference on the Foundations of Digital Games (FDG)"
+    DOI: "10.1145/3102071.3102087"
+    issued:
+      year: 2017
+
+  - id: maleki2024
+    author:
+      - family: Maleki
+        given: "Seyyed A."
+      - family: Zhao
+        given: Xia
+    title: "Procedural content generation in games: A survey with insights on emerging LLM integration"
+    container-title: "Proceedings of the AAAI Conference on Artificial Intelligence and Interactive Digital Entertainment (AIIDE)"
+    arxiv: "2410.15644"
+    issued:
+      year: 2024
+
+  # === Section 3: AI and Agents ===
+  - id: vonneumann1944
+    author:
+      - family: "von Neumann"
+        given: John
+      - family: Morgenstern
+        given: Oskar
+    title: "Theory of Games and Economic Behavior"
+    publisher: "Princeton University Press"
+    issued:
+      year: 1944
+
+  - id: maslow1943
+    author:
+      - family: Maslow
+        given: "Abraham H."
+    title: "A theory of human motivation"
+    container-title: "Psychological Review"
+    volume: 50
+    issue: 4
+    page: "370-396"
+    DOI: "10.1037/h0054346"
+    issued:
+      year: 1943
+
+  - id: mark2015
+    author:
+      - family: Mark
+        given: Dave
+    title: "Behavioral Mathematics for Game AI"
+    publisher: "Cengage Learning PTR"
+    ISBN: "978-1584506843"
+    issued:
+      year: 2009
+
+  - id: sylvester2013
+    author:
+      - family: Sylvester
+        given: Tynan
+    title: "Designing Games: A Guide to Engineering Experiences"
+    publisher: "O'Reilly Media"
+    ISBN: "978-1449337933"
+    issued:
+      year: 2013
+
+  # === Section 3.7: Agent-Based Modeling ===
+  - id: epstein1996
+    author:
+      - family: Epstein
+        given: "Joshua M."
+      - family: Axtell
+        given: Robert
+    title: "Growing Artificial Societies: Social Science from the Bottom Up"
+    publisher: "MIT Press / Brookings Institution Press"
+    ISBN: "978-0262550253"
+    issued:
+      year: 1996
+
+  - id: schelling1971
+    author:
+      - family: Schelling
+        given: "Thomas C."
+    title: "Dynamic models of segregation"
+    container-title: "Journal of Mathematical Sociology"
+    volume: 1
+    issue: 2
+    page: "143-186"
+    DOI: "10.1080/0022250X.1971.9989794"
+    issued:
+      year: 1971
+
+  - id: grimm2020
+    author:
+      - family: Grimm
+        given: Volker
+      - family: Railsback
+        given: "Steven F."
+      - family: Vincenot
+        given: "Cédric E."
+      - family: Berger
+        given: Uta
+      - family: Gallagher
+        given: "Caitlin"
+      - family: DeAngelis
+        given: "Donald L."
+      - family: Groeneveld
+        given: Jürgen
+      - family: Johnston
+        given: "Adam S. A."
+      - family: Liu
+        given: "Cang"
+      - family: May
+        given: "Federico"
+      - family: Ayllón
+        given: "Dudte"
+      - family: Lonsdorf
+        given: "Eric V."
+    title: "The ODD protocol for describing agent-based and other simulation models: A second update to improve clarity, replication, and structural realism"
+    container-title: "Journal of Artificial Societies and Social Simulation"
+    volume: 23
+    issue: 2
+    page: "7"
+    URL: "https://www.jasss.org/23/2/7.html"
+    issued:
+      year: 2020
+
+  # === Section 4: Pathfinding ===
+  - id: dijkstra1959
+    author:
+      - family: Dijkstra
+        given: "Edsger W."
+    title: "A note on two problems in connexion with graphs"
+    container-title: "Numerische Mathematik"
+    volume: 1
+    page: "269-271"
+    DOI: "10.1007/BF01386390"
+    issued:
+      year: 1959
+
+  - id: hart1968
+    author:
+      - family: Hart
+        given: "Peter E."
+      - family: Nilsson
+        given: "Nils J."
+      - family: Raphael
+        given: Bertram
+    title: "A formal basis for the heuristic determination of minimum cost paths"
+    container-title: "IEEE Transactions on Systems Science and Cybernetics"
+    volume: 4
+    issue: 2
+    page: "100-107"
+    DOI: "10.1109/TSSC.1968.300136"
+    issued:
+      year: 1968
+
+  - id: harabor2012
+    author:
+      - family: Harabor
+        given: "Daniel Damir"
+      - family: Grastien
+        given: Alban
+    title: "The JPS pathfinding system"
+    container-title: "Proceedings of the 5th Annual Symposium on Combinatorial Search (SOCS)"
+    URL: "https://ojs.aaai.org/index.php/SOCS/article/view/18254"
+    issued:
+      year: 2012
+
+  # === Section 5: Physical Systems ===
+  - id: fourier1822
+    author:
+      - family: Fourier
+        given: Joseph
+    title: "Théorie analytique de la chaleur"
+    publisher: "Firmin Didot, Paris"
+    issued:
+      year: 1822
+
+  # === Section 6: Social Simulation ===
+  - id: nowak1992
+    author:
+      - family: Nowak
+        given: "Martin A."
+      - family: May
+        given: "Robert M."
+    title: "Evolutionary games and spatial chaos"
+    container-title: "Nature"
+    volume: 359
+    page: "826-829"
+    DOI: "10.1038/359826a0"
+    issued:
+      year: 1992
+
+  # === Section 7: Design Principles ===
+  - id: adams2014
+    author:
+      - family: Adams
+        given: Tarn
+    title: "Simulation Principles from Dwarf Fortress"
+    container-title: "Game AI Pro 2"
+    page: "Chapter 41"
+    URL: "http://www.gameaipro.com/GameAIPro2/GameAIPro2_Chapter41_Simulation_Principles_from_Dwarf_Fortress.pdf"
+    issued:
+      year: 2014
+
+  - id: adams2021
+    author:
+      - family: Adams
+        given: Tarn
+    title: "700,000 lines of code, 20 years, and one developer: How Dwarf Fortress is built"
+    container-title: "StackOverflow Blog"
+    URL: "https://stackoverflow.blog/2021/12/31/700000-lines-of-code-20-years-and-one-developer-how-dwarf-fortress-is-built/"
+    issued:
+      year: 2021
+      month: 12
+
+  - id: nystrom2014
+    author:
+      - family: Nystrom
+        given: Robert
+    title: "Game Programming Patterns"
+    publisher: "Genever Benning"
+    ISBN: "978-0990582908"
+    URL: "https://gameprogrammingpatterns.com/"
+    issued:
+      year: 2014
+
+  # === Section 8: Complementary Algorithms ===
+  - id: reynolds1987
+    author:
+      - family: Reynolds
+        given: "Craig W."
+    title: "Flocks, herds and schools: A distributed behavioral model"
+    container-title: "ACM SIGGRAPH Computer Graphics"
+    volume: 21
+    issue: 4
+    page: "25-34"
+    DOI: "10.1145/37402.37406"
+    issued:
+      year: 1987
+
+  - id: turing1952
+    author:
+      - family: Turing
+        given: "Alan M."
+    title: "The chemical basis of morphogenesis"
+    container-title: "Philosophical Transactions of the Royal Society of London B"
+    volume: 237
+    issue: 641
+    page: "37-72"
+    DOI: "10.1098/rstb.1952.0012"
+    issued:
+      year: 1952
+
+  - id: lindenmayer1968
+    author:
+      - family: Lindenmayer
+        given: Aristid
+    title: "Mathematical models for cellular interactions in development"
+    container-title: "Journal of Theoretical Biology"
+    volume: 18
+    issue: 3
+    page: "280-315"
+    DOI: "10.1016/0022-5193(68)90079-9"
+    issued:
+      year: 1968
+---
