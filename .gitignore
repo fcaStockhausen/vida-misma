@@ -6,10 +6,10 @@ _deps/
 .DS_Store
 
 # Generated outputs (rebuildable with build.sh)
-bases_matematicas.pdf
-bases_matematicas.html
-bases_matematicas.md
-bases_matematicas.zip
+doc/bases_matematicas.pdf
+doc/bases_matematicas.html
+doc/bases_matematicas.md
+doc/bases_matematicas.zip
 
 # Debug
 /tmp/

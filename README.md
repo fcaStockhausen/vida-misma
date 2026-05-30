@@ -6,7 +6,7 @@ The simulation runs a 2D grid with ECS architecture and utility-based AI. Each t
 
 ## Status
 
-Working baseline. 19/24 agents survive 5000 ticks with diversified behavior (gather, eat, rest, socialize). The production chain (gather → build → work) is implemented but the full factory cycle (agents building machines to produce processed food) is not yet active.
+Full factory cycle operational. 24/24 agents survive 5000 ticks. All 16 machines are built by tick ~1000, and the production chain (gather → build → work → storage → eat) sustains itself: ~55 units of processed food accumulate in communal storage while agents diversify into social and creative actions during Phase 3.
 
 ## Production Chain
 
@@ -76,18 +76,26 @@ src/
   components.h    # ECS components: TileType, ActionType, Needs, Personality, Position, Inventory...
   config.h/cpp    # TOML config loader
   grid.h          # 2D factory grid (60×40) with tile data
-  simulation.h    # Core simulation loop: decay → utility → target → execute → death
+  simulation.h    # Simulation class declaration
+  simulation.cpp  # advance(), spawn, regen, decay, stress, death
+  sim_utility.cpp # Utility AI: per-tick action scoring
+  sim_targets.cpp # Per-action target selection
+  sim_movement.cpp # Greedy movement + helpers
+  sim_execute.cpp # Action execution + adjacent-storage helpers
   renderer.h/cpp  # Terminal TUI with ANSI colors
   main.cpp        # Interactive entry point
   batch_main.cpp  # Headless runner
 config/
   default.toml    # All tunable parameters
-secciones/        # Academic document source (Pandoc markdown)
-  00_metadata.yaml through 19_architecture.md
-  references.yaml # CSL YAML bibliography
 doc/
-  design_spec.md  # Practical design crystallization
-  vida_misma.md   # Original narrative seed
+  design_spec.md            # Practical design crystallization
+  vida_misma.md             # Original narrative seed
+  bases_matematicas.{md,html,pdf,zip}  # Compiled academic document (output of build.sh)
+  adversarial_utility_agents.md         # Notes on adversarial utility agents
+  dependency_graph.html                  # Dependency graph visualization
+  secciones/                # Academic document source (Pandoc markdown)
+    00_metadata.yaml through 19_architecture.md
+    references.yaml         # CSL YAML bibliography
 ```
 
 ## Key Design Decisions
@@ -101,7 +109,7 @@ doc/
 
 ### Phase 1 — Core loop completion
 1. ~~Production system (GATHER, BUILD, WORK)~~ ✓
-2. Spatial constraints (actions require correct tile type)
+2. ~~Spatial constraints (actions require correct tile type)~~ ✓
 3. A* pathfinding (replace greedy movement, restore internal walls)
 4. Proximity requirements (SOCIALIZE needs adjacent agent)
 
@@ -117,12 +125,12 @@ doc/
 
 ## Academic Document
 
-The `secciones/` directory contains a two-part document built with Pandoc:
+The `doc/secciones/` directory contains a two-part document built with Pandoc:
 
 - **Part I**: Mathematical foundations — cellular automata, procedural generation, utility theory, pathfinding, social simulation, spatial games
 - **Part II**: Design specification — factory metaphor, director AI, inhabitants, spaces, social fabric, life/death mechanics
 
-Build with: `./build.sh` (requires `pandoc` and `pandoc-crossref`)
+Build with: `./build.sh` (requires `pandoc` and `pandoc-crossref`). Outputs land in `doc/`.
 
 ## License
 

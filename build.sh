@@ -2,8 +2,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SECTIONS_DIR="$SCRIPT_DIR/secciones"
-OUTPUT_DIR="$SCRIPT_DIR"
+SECTIONS_DIR="$SCRIPT_DIR/doc/secciones"
+OUTPUT_DIR="$SCRIPT_DIR/doc"
+mkdir -p "$OUTPUT_DIR"
 
 # Use brew pandoc (3.9.0.2) over anaconda's older version
 PANDOC="/opt/homebrew/bin/pandoc"
