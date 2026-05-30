@@ -5,9 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SECTIONS_DIR="$SCRIPT_DIR/secciones"
 OUTPUT_DIR="$SCRIPT_DIR"
 
+# Use brew pandoc (3.9.0.2) over anaconda's older version
+PANDOC="/opt/homebrew/bin/pandoc"
+
 echo "=== Compiling document with pandoc + crossref ==="
 
-pandoc \
+"$PANDOC" \
   "$SECTIONS_DIR/00_metadata.yaml" \
   "$SECTIONS_DIR/01_automatas_celulares.md" \
   "$SECTIONS_DIR/02_generacion_procedimental.md" \
@@ -19,7 +22,6 @@ pandoc \
   "$SECTIONS_DIR/08_algoritmos_complementarios.md" \
   "$SECTIONS_DIR/09_stack_tecnologico.md" \
   "$SECTIONS_DIR/10_papers_arxiv.md" \
-  "$SECTIONS_DIR/11_referencias.md" \
   "$SECTIONS_DIR/12_part2_intro.md" \
   "$SECTIONS_DIR/13_factory.md" \
   "$SECTIONS_DIR/14_director.md" \
@@ -41,7 +43,7 @@ pandoc \
 
 echo "=== PDF generated: $OUTPUT_DIR/bases_matematicas.pdf ==="
 
-pandoc \
+"$PANDOC" \
   "$SECTIONS_DIR/00_metadata.yaml" \
   "$SECTIONS_DIR/01_automatas_celulares.md" \
   "$SECTIONS_DIR/02_generacion_procedimental.md" \
@@ -53,7 +55,6 @@ pandoc \
   "$SECTIONS_DIR/08_algoritmos_complementarios.md" \
   "$SECTIONS_DIR/09_stack_tecnologico.md" \
   "$SECTIONS_DIR/10_papers_arxiv.md" \
-  "$SECTIONS_DIR/11_referencias.md" \
   "$SECTIONS_DIR/12_part2_intro.md" \
   "$SECTIONS_DIR/13_factory.md" \
   "$SECTIONS_DIR/14_director.md" \
