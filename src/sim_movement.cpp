@@ -1,9 +1,10 @@
 #include "simulation.h"
+#include "pathfinding.h"
 #include <algorithm>
 #include <cstdlib>
 
 // ============================================================
-// SYSTEM: Move to Targets
+// SYSTEM: Move to Targets (with A* pathfinding)
 // ============================================================
 
 void Simulation::system_move_to_targets() {
@@ -30,8 +31,14 @@ void Simulation::system_move_to_targets() {
             continue;
         }
 
-        // Greedy step toward target
-        move_toward(pos, action.target_x, action.target_y);
+        // A* pathfinding: get next step
+        auto [nx, ny] = astar_next_step(grid_, pos.x, pos.y,
+                                         action.target_x, action.target_y);
+
+        if (nx != pos.x || ny != pos.y) {
+            pos.x = nx;
+            pos.y = ny;
+        }
 
         if (pos.x == action.target_x && pos.y == action.target_y) {
             action.at_target = true;
@@ -44,39 +51,11 @@ void Simulation::system_move_to_targets() {
 // ============================================================
 
 void Simulation::move_toward(PositionComponent& pos, int tx, int ty) {
-    int dx = tx - pos.x;
-    int dy = ty - pos.y;
-    if (dx == 0 && dy == 0) return;
-
-    int current_dist = std::abs(dx) + std::abs(dy);
-
-    // Try all 4 cardinal directions, pick the one that reduces Manhattan distance most
-    struct Dir { int x; int y; };
-    Dir dirs[] = {{1,0}, {-1,0}, {0,1}, {0,-1}};
-
-    int best_dist = current_dist;
-    int best_nx = pos.x, best_ny = pos.y;
-    bool found = false;
-
-    for (auto& d : dirs) {
-        int nx = pos.x + d.x;
-        int ny = pos.y + d.y;
-        if (!grid_.is_walkable(nx, ny)) continue;
-        int nd = std::abs(tx - nx) + std::abs(ty - ny);
-        if (nd < best_dist) {
-            best_dist = nd;
-            best_nx = nx;
-            best_ny = ny;
-            found = true;
-        }
-    }
-
-    if (found) {
-        pos.x = best_nx;
-        pos.y = best_ny;
-    } else {
-        // No progress possible -- try random move
-        random_move(pos);
+    // Now uses A* -- kept as fallback / direct call
+    auto [nx, ny] = astar_next_step(grid_, pos.x, pos.y, tx, ty);
+    if (nx != pos.x || ny != pos.y) {
+        pos.x = nx;
+        pos.y = ny;
     }
 }
 
