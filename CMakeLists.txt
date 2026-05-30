@@ -24,12 +24,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
+# FTXUI (terminal UI)
+FetchContent_Declare(
+  ftxui
+  GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui.git
+  GIT_TAG v6.0.1
+)
+FetchContent_MakeAvailable(ftxui)
+
 # --- Main executable (interactive TUI) ---
 add_executable(vida_misma
   src/main.cpp
   src/config.cpp
   src/simulation.cpp
-  src/renderer.cpp
 )
 
 # --- Batch runner (no TUI) ---
@@ -39,7 +46,7 @@ add_executable(vida_batch
   src/simulation.cpp
 )
 
-# Link both targets
+# --- Link both targets ---
 foreach(tgt vida_misma vida_batch)
   target_link_libraries(${tgt} PRIVATE
     EnTT::EnTT
@@ -50,3 +57,6 @@ foreach(tgt vida_misma vida_batch)
     target_compile_options(${tgt} PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
   endif()
 endforeach()
+
+# FTXUI only for interactive target
+target_link_libraries(vida_misma PRIVATE ftxui::screen ftxui::dom ftxui::component)

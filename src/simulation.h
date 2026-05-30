@@ -9,7 +9,19 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <deque>
 #include <cstdio>
+
+// ============================================================
+// Event log (ring buffer)
+// ============================================================
+struct LogEntry {
+    int tick;
+    int agent_id;
+    std::string text;
+};
+
+static constexpr size_t MAX_LOG = 200;
 
 class Simulation {
 public:
@@ -38,6 +50,9 @@ public:
     float total_food_produced() const { return total_food_produced_; }
     float total_raw_gathered() const { return total_raw_gathered_; }
     int   total_machines_built() const { return total_machines_built_; }
+
+    // Event log
+    const std::deque<LogEntry>& log() const { return log_; }
 
     int alive_count() const {
         int count = 0;
@@ -104,6 +119,20 @@ private:
     float total_food_produced_;
     float total_raw_gathered_;
     int   total_machines_built_;
+
+    // Event log
+    std::deque<LogEntry> log_;
+
+    void emit_log(int agent_id, const std::string& text) {
+        log_.push_back({tick_, agent_id, text});
+        if (log_.size() > MAX_LOG) log_.pop_front();
+    }
+
+    static std::string ff2(float v) {
+        char b[16];
+        std::snprintf(b, sizeof(b), "%.2f", v);
+        return b;
+    }
 
     // ==========================================
     // SPAWNING
@@ -523,6 +552,7 @@ private:
             auto& needs  = registry_.get<NeedsComponent>(e);
             auto& inv    = registry_.get<InventoryComponent>(e);
             auto& pos    = registry_.get<PositionComponent>(e);
+            auto& agent  = registry_.get<AgentComponent>(e);
 
             // Only execute if at target (or action doesn't need movement)
             if (!action.at_target) continue;
@@ -541,12 +571,16 @@ private:
                                     inv.raw_food += amount;
                                     td.resource_amount -= amount;
                                     total_raw_gathered_ += amount;
+                                    emit_log(agent.id, "gathered " + ff2(amount) + " raw food at (" +
+                                             std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                                 }
                             } else { // ScrapPile
                                 if (inv.can_carry(amount)) {
                                     inv.raw_material += amount;
                                     td.resource_amount -= amount;
                                     total_raw_gathered_ += amount;
+                                    emit_log(agent.id, "salvaged " + ff2(amount) + " scrap at (" +
+                                             std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                                 }
                             }
                         }
@@ -567,6 +601,8 @@ private:
                                 if (td.build_progress >= td.build_cost) {
                                     td.built = true;
                                     total_machines_built_++;
+                                    emit_log(agent.id, "BUILT a machine at (" +
+                                             std::to_string(pos.x) + "," + std::to_string(pos.y) + ")!");
                                 }
                             }
                         }
@@ -601,6 +637,7 @@ private:
                                 // Produce food into inventory or adjacent storage
                                 float produced = config_.machine_output;
                                 total_food_produced_ += produced;
+                                emit_log(agent.id, "worked a machine, produced " + ff2(produced) + " food");
 
                                 if (inv.can_carry(produced)) {
                                     inv.food += produced;
@@ -736,6 +773,8 @@ private:
                 if (agent.ticks_at_max_hunger >= config_.starvation_ticks) {
                     agent.alive = false;
                     agent.cause_of_death = "starvation";
+                    emit_log(agent.id, "DIED of starvation after " +
+                             std::to_string(config_.starvation_ticks) + " ticks without food");
                 }
             } else {
                 agent.ticks_at_max_hunger = 0;
@@ -747,6 +786,8 @@ private:
                 if (agent.ticks_at_max_rest >= config_.exhaustion_ticks) {
                     agent.alive = false;
                     agent.cause_of_death = "exhaustion";
+                    emit_log(agent.id, "DIED of exhaustion after " +
+                             std::to_string(config_.exhaustion_ticks) + " ticks without rest");
                 }
             } else {
                 agent.ticks_at_max_rest = 0;
@@ -756,6 +797,7 @@ private:
             if (stress.value >= config_.breakdown_threshold) {
                 agent.alive = false;
                 agent.cause_of_death = "breakdown";
+                emit_log(agent.id, "had a BREAKDOWN (stress=" + ff2(stress.value) + ")");
             }
         }
     }

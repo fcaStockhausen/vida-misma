@@ -74,15 +74,22 @@ static inline void ansi_dim()  { std::printf("\033[2m"); }
 
 class Renderer {
 public:
-    Renderer(Simulation& sim) : sim_(sim), selected_idx_(0) {}
+    Renderer(Simulation& sim) : sim_(sim), selected_idx_(0), first_draw_(true) {}
 
     void draw(bool paused, int speed) {
-        std::printf("\033[H\033[2J");  // clear screen
+        if (first_draw_) {
+            // Full clear on first frame to wipe the "Press ENTER" prompt
+            std::printf("\033[2J\033[H");
+            first_draw_ = false;
+        } else {
+            std::printf("\033[H");  // move cursor to top-left
+        }
 
         draw_header(paused, speed);
         draw_grid();
         draw_agent_panel();
 
+        std::printf("\033[J");  // clear from cursor to end of screen
         std::fflush(stdout);
     }
 
@@ -95,6 +102,7 @@ public:
 private:
     Simulation& sim_;
     size_t selected_idx_;
+    bool first_draw_;
 
     void draw_header(bool paused, int speed) {
         ansi_bold();
