@@ -45,8 +45,16 @@ struct Config {
 
     // Stress
     float stress_high_need      = 0.008f;
-    float stress_decay          = 0.005f;
+    float stress_decay          = 0.001f;  // Minimal natural decay — mostly needs expression
     float breakdown_threshold   = 0.92f;
+
+    // Stress trauma system
+    float trauma_accumulation_rate = 0.001f;  // per tick while stress > 0.5
+    float trauma_resilience_impact = 0.5f;     // effective_resilience *= (1 - trauma * this)
+    float trauma_social_impact     = 0.3f;     // effective_gregariousness *= (1 - trauma * this)
+    float redemption_chance        = 0.08f;    // per sabotage tick, chance of epiphany
+    float suicide_chance           = 0.03f;    // per sabotage tick, chance of self-destruction
+    float sabotage_stress_threshold = 0.6f;    // stress must be >= this for SABOTAGE utility
 
     // Personality ranges [min, max]
     float compliance_range[2]     = {0.1f, 0.95f};
@@ -74,6 +82,10 @@ struct Config {
     float machine_break_threshold  = 0.25f;  // below this, machines may revert to unbuilt
     float machine_break_prob       = 0.0003f;// per-tick probability per built machine
     float initial_food_per_agent   = 3.0f;   // bootstrap so agents survive while building
+    float quota_growth_rate         = 0.00002f; // quota increase per tick (factory demands more)
+    int   restructure_interval     = 800;    // ticks between restructure checks
+    float restructure_probability  = 0.2f;   // chance per check
+    float noncompliance_stress     = 0.002f; // stress per tick per noncompliance level
 
     // Eating zones / social pressure
     float inv_food_cap              = 2.0f;  // "una vianda" — max food an agent can carry

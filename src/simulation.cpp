@@ -15,6 +15,7 @@ Simulation::Simulation(const Config& cfg)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
     , social_(cfg.initial_population)
+    , current_quota_per_tick_(cfg.quota_per_tick)
 {
     grid_.generate_default();
     spawn_initial_agents();
@@ -23,6 +24,10 @@ Simulation::Simulation(const Config& cfg)
 void Simulation::advance() {
     system_regen_resources();
     system_decay_needs();
+
+    // A1: Quota escalation — the factory demands more over time
+    current_quota_per_tick_ += config_.quota_growth_rate;
+
     system_compute_utility();
     system_find_targets();
     system_move_to_targets();
@@ -30,6 +35,10 @@ void Simulation::advance() {
     system_conveyor_transport();   // move resources along conveyor chains
     system_ship_out_food();        // external pressure: shipping food through Exit tiles
     system_factory_deterioration();// machine breaks when health is low
+    system_factory_restructure();  // A2: periodic factory reconfiguration
+    system_artifact_effects();     // B1: artifact mood boost + decay
+    system_hidden_space_exposure();// B2: factory seals overused hidden spaces
+    system_faction_formation();    // B3: trust clusters become factions
     system_update_stress();
     system_check_deaths();
 
@@ -184,7 +193,7 @@ void Simulation::spawn_initial_agents() {
 // factory_health drops; meeting it pushes health back up.
 
 void Simulation::system_ship_out_food() {
-    float quota = config_.quota_per_tick;
+    float quota = current_quota_per_tick_;
     float to_ship = quota;
 
     // Drain food from any Storage near an Exit (radius 3 first, then all storages).
@@ -298,6 +307,8 @@ void Simulation::system_decay_needs() {
         needs.social     = std::min(1.0f, needs.social    + config_.social_decay);
         needs.expression = std::min(1.0f, needs.expression + config_.expression_decay);
         needs.purpose    = std::min(1.0f, needs.purpose   + config_.purpose_decay);
+        // B4: Meaning decays every tick — factory work doesn't fill it
+        needs.meaning    = std::min(1.0f, needs.meaning   + 0.001f);
     }
 }
 
@@ -307,14 +318,22 @@ void Simulation::system_decay_needs() {
 
 void Simulation::system_update_stress() {
     auto view = registry_.view<StressComponent, NeedsComponent,
-                               PersonalityComponent, const AgentComponent>();
+                               PersonalityComponent, AgentComponent>();
     for (auto e : view) {
         if (!registry_.get<AgentComponent>(e).alive) continue;
 
         auto& stress = registry_.get<StressComponent>(e);
         auto& needs  = registry_.get<NeedsComponent>(e);
         auto& personality = registry_.get<PersonalityComponent>(e);
+        auto& agent  = registry_.get<AgentComponent>(e);
 
+        // Skip redeemed agents — they are immune to stress accumulation
+        if (stress.state == StressState::REDEEMED) {
+            stress.value = std::max(0.0f, stress.value - 0.01f);
+            continue;
+        }
+
+        // === STRESS INPUT ===
         float stress_input = 0.0f;
         if (needs.hunger > 0.7f)     stress_input += config_.stress_high_need * (needs.hunger - 0.7f);
         if (needs.rest > 0.7f)       stress_input += config_.stress_high_need * (needs.rest - 0.7f);
@@ -322,10 +341,59 @@ void Simulation::system_update_stress() {
         if (needs.expression > 0.7f) stress_input += config_.stress_high_need * (needs.expression - 0.7f) * personality.artistry;
         if (needs.purpose > 0.7f)    stress_input += config_.stress_high_need * (needs.purpose - 0.7f) * 0.5f;
 
-        stress_input *= (1.0f - personality.resilience * 0.7f);
+        // B4: Meaning crisis — being productive but unfulfilled is tragic
+        if (needs.meaning > 0.7f && personality.compliance > 0.7f) {
+            stress_input += 0.003f; // "burnout from meaninglessness"
+        }
 
+        // A3: Noncompliance stress — the factory's gaze weighs on you
+        // DISSOCIATED agents feel this less; HOSTILE_EUPHORIA agents ignore it
+        float noncomp_mult = 1.0f;
+        if (stress.state == StressState::DISSOCIATED) noncomp_mult = 0.5f;
+        if (stress.state == StressState::HOSTILE_EUPHORIA) noncomp_mult = 0.0f;
+        stress_input += config_.noncompliance_stress * agent.noncompliance * noncomp_mult;
+
+        // Trauma reduces effective resilience — the more damaged you are, the faster stress builds
+        float effective_resilience = personality.resilience * (1.0f - stress.trauma * config_.trauma_resilience_impact);
+        stress_input *= (1.0f - effective_resilience * 0.7f);
+
+        // NO natural decay — stress only reduced by expression (CREATE, EXPLORE, high-trust SOCIALIZE)
+        // (handled in sim_execute.cpp)
         stress.value = std::min(1.0f, stress.value + stress_input);
         stress.value = std::max(0.0f, stress.value - config_.stress_decay);
+
+        // === TRAUMA ACCUMULATION ===
+        // Chronic stress (above 0.5) permanently damages the agent
+        if (stress.value > 0.5f) {
+            stress.ticks_in_state++;
+            stress.trauma = std::min(1.0f, stress.trauma + config_.trauma_accumulation_rate);
+        } else {
+            stress.ticks_in_state = 0;
+        }
+
+        // === STRESS STATE TRANSITIONS ===
+        if (stress.state != StressState::REDEEMED) {
+            StressState new_state;
+            if (stress.value < 0.4f)       new_state = StressState::NORMAL;
+            else if (stress.value < 0.7f)  new_state = StressState::DISSOCIATED;
+            else if (stress.value < 0.9f)  new_state = StressState::HOSTILE_EUPHORIA;
+            else                           new_state = StressState::BROKEN;
+            stress.state = new_state;
+        }
+
+        // === HOSTILE EUPHORIA: artificial mood boost ===
+        // The agent appears happy but is disconnected from reality
+        if (stress.state == StressState::HOSTILE_EUPHORIA) {
+            auto& soc = registry_.get<SocialComponent>(e);
+            soc.mood = std::min(1.0f, soc.mood + 0.005f); // fake happiness
+        }
+
+        // === SOCIAL CONTAGION: stressed agents repel others ===
+        // DISSOCIATED agents lose social connections; others avoid them
+        if (stress.state == StressState::DISSOCIATED || stress.state == StressState::BROKEN) {
+            auto& soc = registry_.get<SocialComponent>(e);
+            soc.mood = std::max(0.0f, soc.mood - 0.003f); // internal drain
+        }
     }
 }
 
@@ -372,12 +440,20 @@ void Simulation::system_check_deaths() {
             agent.ticks_at_max_rest = 0;
         }
 
-        // Breakdown
+        // Breakdown: stress kills, but not instantly.
+        // BROKEN agents survive longer — they have time to sabotage or redeem.
+        // Normal agents at breakdown threshold die quickly.
         if (stress.value >= config_.breakdown_threshold) {
-            agent.alive = false;
-            agent.cause_of_death = "breakdown";
-            emit_log(agent.id, "had a BREAKDOWN (stress=" + ff2(stress.value) + ")");
-            newly_dead.push_back(agent.id);
+            float death_chance = 0.02f; // 2% per tick
+            if (stress.state == StressState::BROKEN) death_chance = 0.005f; // BROKEN agents linger
+            if (stress.state == StressState::REDEEMED) death_chance = 0.0f;  // Redeemed are immune
+            std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+            if (roll(rng_) < death_chance) {
+                agent.alive = false;
+                agent.cause_of_death = "breakdown";
+                emit_log(agent.id, "had a BREAKDOWN (stress=" + ff2(stress.value) + ")");
+                newly_dead.push_back(agent.id);
+            }
         }
 
         // Factory collapse: when factory_health == 0, the crumbling factory
@@ -457,4 +533,239 @@ void Simulation::system_check_dismantle_penalties() {
                 st.value = std::clamp(st.value + 0.003f, 0.0f, 1.0f);
             }
         }
+}
+
+// ============================================================
+// A2: SYSTEM: Factory Restructure
+// ============================================================
+// Periodically, the factory reconfigures itself — conveyor directions
+// change, storages are drained, machines are damaged. Agents cannot
+// predict or control this. The factory is indifferent.
+//
+// If factions exist, restructures may target their most-used areas.
+
+void Simulation::system_factory_restructure() {
+    if (tick_ % config_.restructure_interval != 0) return;
+    std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+    if (roll(rng_) > config_.restructure_probability) return;
+
+    std::uniform_int_distribution<int> pick_effect(0, 2);
+    int effect = pick_effect(rng_);
+
+    switch (effect) {
+        case 0: {
+            // Reverse a random built conveyor's direction
+            auto conveyors = grid_.find_all(TileType::Conveyor);
+            if (!conveyors.empty()) {
+                std::uniform_int_distribution<int> pick(0, (int)conveyors.size() - 1);
+                auto [cx, cy] = conveyors[pick(rng_)];
+                auto& d = grid_.data_at(cx, cy);
+                if (d.built) {
+                    // Reverse direction (N<->S, E<->W)
+                    int dir = static_cast<int>(d.conveyor_dir);
+                    d.conveyor_dir = static_cast<ConveyorDir>((dir + 2) % 4);
+                    emit_log(-1, "FACTORY restructured: conveyor at (" +
+                             std::to_string(cx) + "," + std::to_string(cy) + ") reversed");
+                    total_restructures_++;
+                }
+            }
+            break;
+        }
+        case 1: {
+            // Damage a random built machine (reduce build_progress)
+            auto machines = grid_.find_all(TileType::Machine);
+            if (!machines.empty()) {
+                std::uniform_int_distribution<int> pick(0, (int)machines.size() - 1);
+                auto [mx, my] = machines[pick(rng_)];
+                auto& d = grid_.data_at(mx, my);
+                if (d.built) {
+                    d.build_progress = std::max(0.0f, d.build_progress - d.build_cost * 0.3f);
+                    if (d.build_progress <= 0.0f) {
+                        d.built = false;
+                        d.build_progress = 0.0f;
+                    }
+                    emit_log(-1, "FACTORY restructured: machine at (" +
+                             std::to_string(mx) + "," + std::to_string(my) + ") damaged");
+                    total_restructures_++;
+                }
+            }
+            break;
+        }
+        case 2: {
+            // Confiscate food from a random storage
+            auto storages = grid_.find_all(TileType::Storage);
+            if (!storages.empty()) {
+                std::uniform_int_distribution<int> pick(0, (int)storages.size() - 1);
+                auto [sx, sy] = storages[pick(rng_)];
+                auto& d = grid_.data_at(sx, sy);
+                if (d.stored_food > 0.0f) {
+                    float confiscated = d.stored_food * 0.5f;
+                    d.stored_food -= confiscated;
+                    emit_log(-1, "FACTORY confiscated " + ff2(confiscated) +
+                             " food from storage at (" +
+                             std::to_string(sx) + "," + std::to_string(sy) + ")");
+                    total_restructures_++;
+                }
+            }
+            break;
+        }
+    }
+}
+
+// ============================================================
+// A3: Noncompliance is tracked in sim_execute.cpp
+//     Stress from noncompliance is in system_update_stress() below
+// ============================================================
+// (noncompliance field on AgentComponent, accumulated in execute,
+//  applied as stress in system_update_stress)
+
+// ============================================================
+// B1: SYSTEM: Artifact Effects (mood boost + decay)
+// ============================================================
+
+void Simulation::system_artifact_effects() {
+    // Process all artifacts: boost nearby agents' mood, then decay
+    auto artifact_view = registry_.view<PositionComponent, struct ArtifactComponent>();
+    std::vector<entt::entity> to_remove;
+
+    for (auto ae : artifact_view) {
+        auto& apos = registry_.get<PositionComponent>(ae);
+        auto& aart = registry_.get<struct ArtifactComponent>(ae);
+
+        // Boost mood of nearby agents
+        auto alive_view = registry_.view<PositionComponent, SocialComponent, const AgentComponent>();
+        for (auto e : alive_view) {
+            if (!registry_.get<AgentComponent>(e).alive) continue;
+            auto& p = registry_.get<PositionComponent>(e);
+            int d = std::abs(p.x - apos.x) + std::abs(p.y - apos.y);
+            if (d <= 2) {
+                auto& soc = registry_.get<SocialComponent>(e);
+                soc.mood = std::min(1.0f, soc.mood + aart.strength * 0.03f);
+            }
+        }
+
+        // Decay artifact
+        aart.strength -= 0.001f;
+        aart.age++;
+        if (aart.strength <= 0.0f) {
+            to_remove.push_back(ae);
+        }
+    }
+
+    for (auto ae : to_remove) {
+        registry_.destroy(ae);
+        artifacts_active_--;
+    }
+}
+
+// ============================================================
+// B2: SYSTEM: Hidden Space Exposure
+// ============================================================
+// If more than 2 agents stand on the same HiddenSpace for 10+ ticks,
+// the factory notices and seals it (reverts to Floor + stress spike).
+
+void Simulation::system_hidden_space_exposure() {
+    auto hidden = grid_.find_all(TileType::HiddenSpace);
+    for (auto [hx, hy] : hidden) {
+        auto& d = grid_.data_at(hx, hy);
+
+        // Count agents on this tile
+        int agents_here = 0;
+        auto alive_view = registry_.view<PositionComponent, const AgentComponent>();
+        for (auto e : alive_view) {
+            if (!registry_.get<AgentComponent>(e).alive) continue;
+            auto& p = registry_.get<PositionComponent>(e);
+            if (p.x == hx && p.y == hy) agents_here++;
+        }
+
+        if (agents_here > 2) {
+            d.hidden_space_occupancy++;
+        } else {
+            d.hidden_space_occupancy = std::max(0, d.hidden_space_occupancy - 1);
+        }
+
+        if (d.hidden_space_occupancy >= 10) {
+            // Factory seals the space
+            grid_.set(hx, hy, TileType::Floor);
+            emit_log(-1, "FACTORY sealed a hidden space at (" +
+                     std::to_string(hx) + "," + std::to_string(hy) + ")");
+            hidden_spaces_sealed_++;
+
+            // Stress spike for agents on the tile
+            for (auto e : alive_view) {
+                if (!registry_.get<AgentComponent>(e).alive) continue;
+                auto& p = registry_.get<PositionComponent>(e);
+                if (p.x == hx && p.y == hy) {
+                    auto& st = registry_.get<StressComponent>(e);
+                    st.value = std::min(1.0f, st.value + 0.15f);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// B3: SYSTEM: Faction Formation
+// ============================================================
+// A faction forms when 3+ agents all have mutual trust > 0.4.
+// Faction members get collaboration bonus and noncompliance shield.
+// Factory may target large factions during restructure.
+
+void Simulation::system_faction_formation() {
+    // Run every 50 ticks (expensive)
+    if (tick_ % 50 != 0) return;
+
+    auto alive = alive_agents();
+    int n = (int)alive.size();
+    if (n < 3) return;
+
+    // Reset faction IDs
+    for (auto e : alive) {
+        registry_.get<AgentComponent>(e).faction_id = -1;
+    }
+
+    // Find trust clusters: simple connected components where all edges have trust > 0.4
+    int next_faction = 0;
+    std::vector<int> component(n, -1);
+
+    for (int i = 0; i < n; i++) {
+        if (component[i] >= 0) continue;
+        int aid = registry_.get<AgentComponent>(alive[i]).id;
+
+        // BFS: find all agents reachable via mutual trust > 0.4
+        std::vector<int> cluster;
+        std::vector<int> queue;
+        queue.push_back(i);
+        component[i] = next_faction;
+        cluster.push_back(i);
+
+        while (!queue.empty()) {
+            int cur = queue.back();
+            queue.pop_back();
+            int cid = registry_.get<AgentComponent>(alive[cur]).id;
+
+            for (int j = 0; j < n; j++) {
+                if (component[j] >= 0) continue;
+                int oid = registry_.get<AgentComponent>(alive[j]).id;
+                const auto& rel_ab = social_.get_rel(cid, oid);
+                const auto& rel_ba = social_.get_rel(oid, cid);
+                if (rel_ab.trust > 0.4f && rel_ba.trust > 0.4f
+                    && rel_ab.familiarity > 0.3f) {
+                    component[j] = next_faction;
+                    cluster.push_back(j);
+                    queue.push_back(j);
+                }
+            }
+        }
+
+        // If cluster has 3+ members, it's a faction
+        if ((int)cluster.size() >= 3) {
+            for (int idx : cluster) {
+                registry_.get<AgentComponent>(alive[idx]).faction_id = next_faction;
+            }
+            next_faction++;
+        }
+    }
+
+    factions_formed_ = next_faction;
 }

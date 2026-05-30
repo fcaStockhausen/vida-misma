@@ -443,7 +443,7 @@ private:
         auto& soc = sim_.registry().get<SocialComponent>(e);
 
         static const char* aname[] = {
-            "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","MAINTAIN","DSMNTL","IDLE"
+            "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","MAINTAIN","DSMNTL","SABOTAGE","IDLE"
         };
 
         // Death-countdown lines: only show when the agent is actually in danger.
@@ -465,10 +465,16 @@ private:
             }));
         }
         if (st.value >= 0.80f) {
-            float gap = cfg.breakdown_threshold - st.value;
             danger.push_back(hbox({
                 text(" NEAR BREAKDOWN ") | color(Color::Magenta) | bold,
-                text("Δ" + ff(gap)) | color(Color::Magenta),
+                text(stress_state_name(st.state)) | color(Color::Magenta),
+                text(" stress=" + ff(st.value)) | color(Color::Magenta),
+            }));
+        }
+        if (st.state == StressState::REDEEMED) {
+            danger.push_back(hbox({
+                text(" REDEEMED ") | color(Color::Green) | bold,
+                text("collectivist martyr") | color(Color::Green),
             }));
         }
         if (danger.empty()) {
@@ -489,7 +495,10 @@ private:
             need_bar("Social",  nd.social,     Color::Cyan),
             need_bar("Expr",    nd.expression, Color::Magenta),
             need_bar("Purpose", nd.purpose,    Color::Yellow),
+            need_bar("Meaning", nd.meaning,    Color::RGB(180, 120, 255)),
             need_bar("Stress",  st.value,      Color::RGB(255, 80, 80)),
+            hbox({text(" trauma: "), text(ff(st.trauma)) | color(Color::RGB(200, 100, 255))}),
+            hbox({text(" state:  "), text(stress_state_name(st.state)) | (st.state == StressState::REDEEMED ? color(Color::Green) : st.state == StressState::BROKEN ? color(Color::Red) : dim)}),
             separator(),
             text("INVENTORY") | bold | underlined,
             text(" raw_food: " + ff(iv.raw_food)),

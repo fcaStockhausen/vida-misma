@@ -18,6 +18,8 @@ void Simulation::system_execute_actions() {
         auto& inv    = registry_.get<InventoryComponent>(e);
         auto& pos    = registry_.get<PositionComponent>(e);
         auto& agent  = registry_.get<AgentComponent>(e);
+        auto& stress = registry_.get<StressComponent>(e);
+        auto& personality = registry_.get<PersonalityComponent>(e);
 
         // Only execute if at target (or action doesn't need movement)
         if (!action.at_target) continue;
@@ -387,7 +389,12 @@ void Simulation::system_execute_actions() {
                         auto& oneeds = registry_.get<NeedsComponent>(neighbor);
                         float excess = inv.food - 0.5f;  // keep at least 0.5 for self
                         float neighbor_need = config_.inv_food_cap - oinv.food;
-                        if (excess > 0.3f && neighbor_need > 0.3f && oneeds.hunger > 0.4f) {
+                        // Faction members share more generously
+                        float share_threshold = 0.3f;
+                        if (agent.faction_id >= 0 &&
+                            registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id)
+                            share_threshold = 0.1f;
+                        if (excess > share_threshold && neighbor_need > 0.3f && oneeds.hunger > 0.4f) {
                             float share = std::min({excess * 0.5f, neighbor_need, 1.0f});
                             inv.food -= share;
                             oinv.food += share;
@@ -395,6 +402,22 @@ void Simulation::system_execute_actions() {
                             social_.process_interaction(agent.id, neighbor_id, tick_);
                             emit_log(agent.id, "shared " + ff2(share) + " food with A" +
                                      std::to_string(neighbor_id));
+                        }
+                    }
+
+                    // B4: Faction interaction satisfies meaning
+                    if (agent.faction_id >= 0 &&
+                        registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id) {
+                        needs.meaning = std::max(0.0f, needs.meaning - 0.02f);
+                    }
+                    // S5: High-trust social contact reduces stress
+                    float trust = social_.get_rel(agent.id, neighbor_id).trust;
+                    stress.value = std::max(0.0f, stress.value - std::max(0.0f, trust) * 0.003f);
+                    // Redeemed agents provide extra stress relief to neighbors
+                    if (stress.state == StressState::REDEEMED) {
+                        if (registry_.all_of<StressComponent>(neighbor)) {
+                            auto& ns = registry_.get<StressComponent>(neighbor);
+                            ns.value = std::max(0.0f, ns.value - 0.004f);
                         }
                     }
                 } else {
@@ -406,12 +429,47 @@ void Simulation::system_execute_actions() {
             case ActionType::CREATE:
                 needs.expression = std::max(0.0f,
                     needs.expression - config_.create_satisfaction);
+                // B1: Spawn a cultural artifact at this location
+                {
+                    auto artifact = registry_.create();
+                    registry_.emplace<PositionComponent>(artifact, pos.x, pos.y);
+                    registry_.emplace<ArtifactComponent>(artifact, agent.id, 1.0f, 0);
+                    artifacts_created_++;
+                    artifacts_active_++;
+                }
+                // B4: CREATE satisfies meaning
+                needs.meaning = std::max(0.0f, needs.meaning - 0.03f);
+                // S5: CREATE reduces stress — the only real cure
+                stress.value = std::max(0.0f, stress.value - 0.008f);
                 break;
 
             case ActionType::EXPLORE:
                 needs.purpose = std::max(0.0f,
                     needs.purpose - config_.explore_satisfaction);
+                // S5: EXPLORE reduces stress — escape is a form of relief
+                stress.value = std::max(0.0f, stress.value - 0.005f);
                 random_move(pos);
+                // B2: Chance to discover a hidden space
+                {
+                    auto& personality = registry_.get<PersonalityComponent>(e);
+                    // Check current tile AND random move destination
+                    std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+                    float discovery_chance = personality.curiosity * 0.08f;
+                    // Current position
+                    for (auto [px, py] : {std::make_pair(pos.x, pos.y)}) {
+                        if (grid_.at(px, py) == TileType::OpenSpace ||
+                            grid_.at(px, py) == TileType::Floor) {
+                            if (roll(rng_) < discovery_chance) {
+                                grid_.set(px, py, TileType::HiddenSpace);
+                                grid_.data_at(px, py).hidden_space_occupancy = 0;
+                                hidden_spaces_found_++;
+                                emit_log(agent.id, "discovered a hidden space");
+                                needs.meaning = std::max(0.0f, needs.meaning - 0.15f);
+                                break;
+                            }
+                        }
+                    }
+                }
                 break;
 
             case ActionType::MAINTAIN: {
@@ -500,9 +558,151 @@ void Simulation::system_execute_actions() {
                 break;
             }
 
+            case ActionType::SABOTAGE: {
+                // S3+S4: Irrational destruction driven by stress.
+                // Find nearest built infrastructure and damage it.
+                // On each tick of sabotage, roll for redemption or suicide.
+                int sab_x = -1, sab_y = -1;
+                // Priority: conveyors > machines
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = pos.x + dx, ny = pos.y + dy;
+                        if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
+                        if (grid_.at(nx, ny) == TileType::Conveyor && grid_.data_at(nx, ny).built) {
+                            if (sab_x < 0) { sab_x = nx; sab_y = ny; }
+                        }
+                        if (grid_.at(nx, ny) == TileType::Machine && grid_.data_at(nx, ny).built) {
+                            // Prefer machines — they hurt the factory more
+                            sab_x = nx; sab_y = ny;
+                        }
+                    }
+
+                if (sab_x >= 0) {
+                    auto& td = grid_.data_at(sab_x, sab_y);
+                    if (grid_.at(sab_x, sab_y) == TileType::Conveyor) {
+                        // Damage conveyor condition
+                        td.conveyor_condition = std::max(0.0f, td.conveyor_condition - 0.15f);
+                        if (td.conveyor_condition < 0.1f && td.built) {
+                            td.built = false;
+                            td.conveyor_contents = 0.0f;
+                        }
+                    } else if (grid_.at(sab_x, sab_y) == TileType::Machine) {
+                        // Damage machine: revert build progress
+                        td.build_progress = std::max(0.0f, td.build_progress - 0.3f);
+                        if (td.build_progress <= 0.0f) {
+                            td.built = false;
+                        }
+                    }
+
+                    stress.sabotage_count++;
+                    sabotages_total_++;
+
+                    // Social damage: nearby agents notice and lose trust
+                    auto nearby = registry_.view<PositionComponent, AgentComponent>();
+                    for (auto ne : nearby) {
+                        if (ne == e) continue;
+                        auto& na = registry_.get<AgentComponent>(ne);
+                        if (!na.alive) continue;
+                        auto& np = registry_.get<PositionComponent>(ne);
+                        int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
+                        if (d <= 3) {
+                            social_.negative_interaction(agent.id, na.id, tick_);
+                            // Witness stress contagion: seeing sabotage is disturbing
+                            if (registry_.all_of<StressComponent>(ne)) {
+                                auto& ns = registry_.get<StressComponent>(ne);
+                                ns.value = std::min(1.0f, ns.value + 0.005f);
+                            }
+                        }
+                    }
+
+                    emit_log(agent.id, "SABOTAGED infrastructure at (" +
+                             std::to_string(sab_x) + "," + std::to_string(sab_y) + ")");
+
+                    // S4: Redemption roll — the epiphany
+                    // "In the act of destruction, they see the collective suffering."
+                    stress.can_redeem = true;
+                    std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+                    float redemption_roll = roll(rng_);
+                    float suicide_roll = roll(rng_);
+
+                    if (redemption_roll < config_.redemption_chance) {
+                        // REDEMPTION — the agent is transformed
+                        stress.state = StressState::REDEEMED;
+                        stress.value = std::max(0.0f, stress.value - 0.5f);
+                        // Permanent personality shift: high collectivism, low compliance
+                        // They help others selflessly but don't serve the factory
+                        personality.compliance *= 0.5f;
+                        personality.gregariousness = std::min(1.0f, personality.gregariousness + 0.3f);
+                        // Meaning burst — they found purpose in the collective
+                        needs.meaning = std::max(0.0f, needs.meaning - 0.5f);
+                        redemptions_total_++;
+                        emit_log(agent.id, "REDEEMED — saw collective suffering, became a martyr");
+                    } else if (suicide_roll < config_.suicide_chance) {
+                        // SUICIDE — the agent self-destructs
+                        // Their death impacts nearby agents deeply
+                        agent.alive = false;
+                        agent.cause_of_death = "suicide";
+                        suicides_total_++;
+                        // Nearby agents are traumatized by witnessing it
+                        for (auto ne : nearby) {
+                            if (ne == e) continue;
+                            auto& na = registry_.get<AgentComponent>(ne);
+                            if (!na.alive) continue;
+                            auto& np = registry_.get<PositionComponent>(ne);
+                            int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
+                            if (d <= 3 && registry_.all_of<StressComponent>(ne)) {
+                                auto& ns = registry_.get<StressComponent>(ne);
+                                ns.trauma = std::min(1.0f, ns.trauma + 0.05f);
+                                ns.value = std::min(1.0f, ns.value + 0.1f);
+                                social_.negative_interaction(agent.id, na.id, tick_);
+                            }
+                        }
+                        emit_log(agent.id, "SUICIDE — destroyed by the machine");
+                    }
+                }
+                break;
+            }
+
             case ActionType::IDLE:
             default:
                 break;
+        }
+
+        // A3: Noncompliance tracking — the factory watches.
+        // Productive actions reduce noncompliance; everything else increases it.
+        // HiddenSpace tiles are sanctuaries: noncompliance doesn't accumulate there.
+        bool on_hidden_space = (grid_.at(pos.x, pos.y) == TileType::HiddenSpace);
+        if (!on_hidden_space) {
+            bool productive = (action.current == ActionType::GATHER ||
+                               action.current == ActionType::BUILD ||
+                               action.current == ActionType::WORK ||
+                               action.current == ActionType::MAINTAIN);
+            if (productive) {
+                agent.noncompliance = std::max(0.0f, agent.noncompliance - 0.02f);
+            } else {
+                // Faction members near other faction members get a shield
+                bool faction_shield = false;
+                if (agent.faction_id >= 0) {
+                    auto nearby = registry_.view<PositionComponent, const AgentComponent>();
+                    int faction_neighbors = 0;
+                    for (auto ne : nearby) {
+                        if (ne == e) continue;
+                        auto& na = registry_.get<AgentComponent>(ne);
+                        if (!na.alive || na.faction_id != agent.faction_id) continue;
+                        auto& np = registry_.get<PositionComponent>(ne);
+                        if (std::abs(np.x - pos.x) + std::abs(np.y - pos.y) <= 2)
+                            faction_neighbors++;
+                    }
+                    if (faction_neighbors >= 2) faction_shield = true;
+                }
+                if (!faction_shield) {
+                    float nc_increase = 0.01f;
+                    // SABOTAGE is explicitly anti-factory — heavy noncompliance
+                    if (action.current == ActionType::SABOTAGE) nc_increase = 0.05f;
+                    agent.noncompliance = std::min(1.0f, agent.noncompliance + nc_increase);
+                }
+            }
         }
     }
 }

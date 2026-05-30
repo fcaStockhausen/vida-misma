@@ -167,6 +167,44 @@ void Simulation::system_find_targets() {
                 break;
             }
 
+            case ActionType::SABOTAGE: {
+                // Find nearest built infrastructure to destroy.
+                // Prefer machines (more damage), fallback to conveyors.
+                auto machine = grid_.find_nearest_built_machine(pos.x, pos.y);
+                int mx = machine.first, my = machine.second;
+                int mach_dist = (mx >= 0) ? std::abs(mx - pos.x) + std::abs(my - pos.y) : 999999;
+
+                // Find nearest built conveyor
+                int cx = -1, cy = -1, conv_dist = 999999;
+                for (int sy = 0; sy < grid_.height(); sy++)
+                    for (int sx = 0; sx < grid_.width(); sx++) {
+                        if (grid_.at(sx, sy) == TileType::Conveyor && grid_.data_at(sx, sy).built) {
+                            int d = std::abs(sx - pos.x) + std::abs(sy - pos.y);
+                            if (d < conv_dist) {
+                                conv_dist = d;
+                                cx = sx; cy = sy;
+                            }
+                        }
+                    }
+
+                // Prefer machine if close enough; otherwise conveyor
+                int infra_x = -1, infra_y = -1;
+                if (mx >= 0 && mach_dist <= conv_dist + 5) {
+                    infra_x = mx; infra_y = my;
+                } else if (cx >= 0) {
+                    infra_x = cx; infra_y = cy;
+                }
+
+                if (infra_x >= 0) {
+                    // Walk to adjacent tile (can't stand on machine/conveyor)
+                    auto adj = grid_.find_walkable_adjacent_to(infra_x, infra_y, pos.x, pos.y);
+                    if (adj.first >= 0) {
+                        tx = adj.first; ty = adj.second;
+                    }
+                }
+                break;
+            }
+
             default:
                 tx = pos.x;
                 ty = pos.y;

@@ -44,6 +44,16 @@ public:
     float total_food_shipped() const { return total_food_shipped_; }
     int   total_machines_broken() const { return total_machines_broken_; }
     float last_quota_fill() const { return last_quota_fill_; } // 0..1, last tick's quota completion
+    float current_quota() const { return current_quota_per_tick_; }
+    int   total_restructures() const { return total_restructures_; }
+    int   artifacts_created() const { return artifacts_created_; }
+    int   artifacts_active() const { return artifacts_active_; }
+    int   hidden_spaces_found() const { return hidden_spaces_found_; }
+    int   hidden_spaces_sealed() const { return hidden_spaces_sealed_; }
+    int   factions_formed() const { return factions_formed_; }
+    int   sabotages_total() const { return sabotages_total_; }
+    int   redemptions_total() const { return redemptions_total_; }
+    int   suicides_total() const { return suicides_total_; }
 
     // Event log
     const std::deque<LogEntry>& log() const { return log_; }
@@ -73,6 +83,16 @@ private:
     float total_food_shipped_   = 0.0f;
     int   total_machines_broken_ = 0;
     float last_quota_fill_       = 0.0f;
+    float current_quota_per_tick_ = 0.0f;
+    int   total_restructures_     = 0;
+    int   artifacts_created_      = 0;
+    int   artifacts_active_       = 0;
+    int   hidden_spaces_found_    = 0;
+    int   hidden_spaces_sealed_   = 0;
+    int   factions_formed_        = 0;
+    int   sabotages_total_        = 0;
+    int   redemptions_total_      = 0;
+    int   suicides_total_         = 0;
 
     // Event log
     std::deque<LogEntry> log_;
@@ -116,6 +136,10 @@ private:
     void system_execute_actions();    // sim_execute.cpp
     void system_ship_out_food();      // external quota fulfillment (simulation.cpp)
     void system_factory_deterioration(); // health/machine-break (simulation.cpp)
+    void system_factory_restructure();   // periodic factory reconfiguration
+    void system_artifact_effects();      // artifact mood boost + decay
+    void system_hidden_space_exposure(); // factory seals overused hidden spaces
+    void system_faction_formation();     // trust clusters become factions
     void system_update_stress();
     void system_check_deaths();
     void system_check_dismantle_penalties();

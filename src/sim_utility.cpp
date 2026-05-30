@@ -13,7 +13,7 @@ void Simulation::system_compute_utility() {
 
     auto view = registry_.view<NeedsComponent, PersonalityComponent,
                                InventoryComponent, ActionComponent,
-                               const AgentComponent>();
+                               const AgentComponent, StressComponent>();
     for (auto e : view) {
         if (!registry_.get<AgentComponent>(e).alive) continue;
 
@@ -24,6 +24,7 @@ void Simulation::system_compute_utility() {
         auto& soc        = registry_.get<SocialComponent>(e);
         auto  pos        = registry_.get<PositionComponent>(e);
         auto  ag         = registry_.get<AgentComponent>(e);
+        auto& stress     = registry_.get<StressComponent>(e);
 
         float alpha = config_.urgency_alpha;
         auto urgency = [alpha](float need) -> float {
@@ -35,6 +36,14 @@ void Simulation::system_compute_utility() {
         float u_social     = urgency(needs.social);
         float u_expression = urgency(needs.expression);
         float u_purpose    = urgency(needs.purpose);
+
+        // B4: Meaning crisis erodes compliance.
+        // Being productive but unfulfilled makes agents less willing to serve.
+        float effective_compliance = personality.compliance;
+        if (needs.meaning > 0.7f) {
+            effective_compliance *= (1.0f - (needs.meaning - 0.7f) * 1.5f);
+            // At meaning=1.0, compliance is reduced by 45%
+        }
 
         // === SOCIAL MODIFIERS ===
         // Mood affects productivity: low mood = less effective work
@@ -108,8 +117,8 @@ void Simulation::system_compute_utility() {
 
             // Base drive: compliance × infrastructure gap × material scarcity
             // Purpose adds extra but isn't required — the factory itself creates urgency.
-            float base_drive = personality.compliance * infra_gap * low_mat * 1.5f;
-            float purpose_drive = personality.compliance * u_purpose * 0.4f;
+            float base_drive = effective_compliance * infra_gap * low_mat * 1.5f;
+            float purpose_drive = effective_compliance * u_purpose * 0.4f;
             float hunger_drive = u_hunger * 0.2f;  // hungry agents know: no material → no food
 
             u_gather = (base_drive + purpose_drive + hunger_drive)
@@ -156,11 +165,11 @@ void Simulation::system_compute_utility() {
                     }
                 }
                 // Base: strong compliance × material readiness × infrastructure gap
-                float base = personality.compliance * mat_readiness * build_infra_gap * 2.0f;
+                float base = effective_compliance * mat_readiness * build_infra_gap * 2.0f;
                 // Purpose supplement (not primary driver)
-                float purpose_sup = personality.compliance * u_purpose * 0.8f;
+                float purpose_sup = effective_compliance * u_purpose * 0.8f;
                 // Community pressure
-                float community = personality.compliance * community_pressure * 0.6f;
+                float community = effective_compliance * community_pressure * 0.6f;
 
                 u_build_mach = (base + purpose_sup + community) + finish_bonus;
                 u_build_mach *= mood_factor * build_urgency;
@@ -173,7 +182,7 @@ void Simulation::system_compute_utility() {
                 const auto& td = grid_.data_at(near_ez.first, near_ez.second);
                 float finish_bonus = (td.build_cost > 0.0f)
                     ? (td.build_progress / td.build_cost) * 1.5f : 0.0f;
-                u_build_ez = personality.compliance * u_purpose * 1.0f * mat_readiness + finish_bonus;
+                u_build_ez = effective_compliance * u_purpose * 1.0f * mat_readiness + finish_bonus;
             }
 
             // Sub 3: initiate a new EatingZone — only when none exist (built OR being built)
@@ -184,7 +193,7 @@ void Simulation::system_compute_utility() {
                     pos.x, pos.y, config_.eatingzone_min_dist_machine);
                 if (site.first >= 0) {
                     // Mirror compliance × purpose weighting; this is collective infrastructure.
-                    u_build_new_ez = personality.compliance * u_purpose * 1.0f * mat_readiness;
+                    u_build_new_ez = effective_compliance * u_purpose * 1.0f * mat_readiness;
                 }
             }
 
@@ -198,8 +207,8 @@ void Simulation::system_compute_utility() {
             if (unbuilt_conveyor && inv.raw_material > 0.05f) {
                 float conv_mat = std::min(1.0f, inv.raw_material / 1.0f);
                 // Conveyors are infrastructure too — gap drives them
-                float conv_base = personality.compliance * conv_mat * build_infra_gap * 1.5f;
-                float conv_sup  = personality.compliance * u_purpose * 1.0f;
+                float conv_base = effective_compliance * conv_mat * build_infra_gap * 1.5f;
+                float conv_sup  = effective_compliance * u_purpose * 1.0f;
                 float conv_community = community_pressure * 1.2f * conv_mat;
                 u_build_conv = conv_base + conv_sup + conv_community;
                 u_build_conv *= mood_factor * build_urgency;
@@ -207,16 +216,18 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_conv);
         }
 
-        // WORK: mood modulates productivity. Influenced agents may follow herd.
-        // Factory health crisis amplifies WORK urgency.
+        // WORK: gather raw_food from a FoodSource tile. Produces for the factory.
+        // BROKEN agents refuse to work for the factory.
         float u_work = 0.0f;
+        if (stress.state != StressState::BROKEN) {
         if (built_exists) {
             float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f; // 1x at full health, 4x at zero
-            u_work = (personality.compliance * u_hunger * 0.8f
+            u_work = (effective_compliance * u_hunger * 0.8f
                 + (1.0f - personality.laziness) * u_purpose * 0.3f
-                + personality.compliance * community_pressure * 0.6f)
+                + effective_compliance * community_pressure * 0.6f)
                 * mood_factor * health_urgency;
         }
+        } // end BROKEN gate
 
         // EAT
         float u_eat = 0.0f;
@@ -236,7 +247,13 @@ void Simulation::system_compute_utility() {
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
         // Influential agents draw others to socialize
-        float u_socialize = personality.gregariousness * u_social;
+        // S2: Stress state modifiers on social utility
+        float gregariousness_mult = 1.0f;
+        if (stress.state == StressState::DISSOCIATED) gregariousness_mult = 0.7f;
+        if (stress.state == StressState::BROKEN) gregariousness_mult = 0.3f;
+        float effective_gregariousness = personality.gregariousness * gregariousness_mult
+                                       * (1.0f - stress.trauma * config_.trauma_social_impact);
+        float u_socialize = effective_gregariousness * u_social;
         u_socialize *= (0.5f + 0.5f * nearby_trust);  // high trust = more rewarding
         u_socialize += soc.influence * 0.1f;           // influential agents socialize more
 
@@ -246,10 +263,26 @@ void Simulation::system_compute_utility() {
         float u_create = 0.0f;
         if (open_space_available) {
             u_create = personality.artistry * u_expression;
+            // B4: CREATE is more attractive when meaning is unfulfilled
+            if (needs.meaning > 0.4f) {
+                u_create += personality.artistry * needs.meaning * 0.3f;
+            }
+            // S2: DISSOCIATED agents are drawn to CREATE (retreat into art)
+            if (stress.state == StressState::DISSOCIATED) {
+                u_create *= 1.3f;
+            }
         }
 
         // EXPLORE
-        float u_explore = personality.curiosity * u_purpose * 0.3f;
+        float u_explore = personality.curiosity * u_purpose * 0.5f;
+        // B4: Agents with unfulfilled meaning are drawn to explore
+        if (needs.meaning > 0.4f) {
+            u_explore += personality.curiosity * needs.meaning * 0.3f;
+        }
+        // S2: DISSOCIATED agents seek escape through exploration
+        if (stress.state == StressState::DISSOCIATED) {
+            u_explore *= 1.3f;
+        }
 
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
         float u_maintain = 0.0f;
@@ -260,7 +293,7 @@ void Simulation::system_compute_utility() {
                 float degradation = 1.0f - cd.conveyor_condition;
                 // Only maintain when degradation is significant AND agent isn't hungry
                 float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 2.0f);
-                u_maintain = personality.compliance * degradation * u_purpose * 1.5f * hunger_gate
+                u_maintain = effective_compliance * degradation * u_purpose * 1.5f * hunger_gate
                            + community_pressure * degradation * 0.8f * hunger_gate;
                 u_maintain *= mood_factor;
             }
@@ -284,12 +317,35 @@ void Simulation::system_compute_utility() {
                 float calm_gate = std::max(0.0f, soc.mood * 2.0f - 0.5f); // need calm (high mood) to dismantle
                 // High compliance agents more willing to improve the factory layout
                 // Low laziness helps (they're willing to do the extra work)
-                u_dismantle = personality.compliance * reason_strength
+                u_dismantle = effective_compliance * reason_strength
                             * hunger_gate * calm_gate * (1.0f - personality.laziness * 0.5f)
                             * mood_factor;
                 // If agent already has raw_material, less incentive to dismantle for refund
                 if (inv.raw_material > 2.0f) u_dismantle *= 0.3f;
             }
+        }
+
+        // S3: SABOTAGE — irrational destruction driven by chronic stress.
+        // Not DISMANTLE (rational). This is a broken agent lashing out.
+        // BROKEN agents have massive SABOTAGE utility. HOSTILE_EUPHORIA too.
+        // Redeemed agents NEVER sabotage.
+        float u_sabotage = 0.0f;
+        if (stress.value >= config_.sabotage_stress_threshold
+            && stress.state != StressState::REDEEMED) {
+            // Base drive scales with how broken the agent is
+            float stress_drive = 0.0f;
+            if (stress.state == StressState::HOSTILE_EUPHORIA) stress_drive = 1.2f;
+            if (stress.state == StressState::BROKEN) stress_drive = 3.0f;
+            // Even DISSOCIATED agents can lash out if trauma is high
+            if (stress.state == StressState::DISSOCIATED && stress.trauma > 0.3f)
+                stress_drive = stress.trauma * 0.5f;
+            // Trauma amplifies: more damaged = more desperate
+            stress_drive *= (1.0f + stress.trauma);
+            // Low compliance agents sabotage more easily
+            stress_drive *= (1.0f - personality.compliance * 0.3f);
+            // Hunger gates it slightly — starving agents are too weak
+            float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 1.5f);
+            u_sabotage = stress_drive * hunger_gate;
         }
 
         // GET_FOOD: agent considers fetching a "vianda" from Storage when their inv.food
@@ -360,6 +416,7 @@ void Simulation::system_compute_utility() {
             {ActionType::GET_FOOD,  u_get_food},
             {ActionType::MAINTAIN,  u_maintain},
             {ActionType::DISMANTLE, u_dismantle},
+            {ActionType::SABOTAGE,  u_sabotage},
         };
 
         float best_score = -1.0f;

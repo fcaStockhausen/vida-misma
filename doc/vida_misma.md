@@ -46,3 +46,27 @@ Hay que actualizar las secciones 12.2 y 12.3 para representar las nuevas actuali
 ## Fallas generales:
 
 Factory goes to 0 health but agents are still alive? how if the factory is crumbling, Factory should enforce output production
+
+
+# 2026-05-30 18:11 On The Agents stress
+
+The stress should have consequences on agents, as they do to people in the real life:
+    - Permanent disability to perform well -> your brain has permanently change now your top experience is lower
+    - Heavy dissosiation with life -> paranoia, illness, unwilingness to make anything
+    - High euphoria and desapego with your context
+    - Extreme individualism, goal oriented stress -> permanent disability or derrame cerebral
+    The most interesting thing to develop with people that are permanently stressed is the inability to connect with other, causing the other agents to exclude them and appart them so they dont become contagieous, also psycopathy or stuff like thats, so the stressed out is not only an internal problem of the agents, also its a external inductor of problems
+
+The model follows the logic of contemporary society where our economic system is willing to erase all traces of human expression using us just as cogs in the machine of valor. So its like this. Stress is not reduced by mere resting, it needs to be extirpated, doing the things that you, as an agent with creativity want to really do. But if certain trheshold is surpassed you get to a point of no return.
+
+    - The stressed people are willing to interfere with the machine, sabotage -> if im stressed then everyone will be, this could be xpressed with a permanent change to the utility function (stressed version of utility funciton)
+    
+    A good simulation will always be a simulation capable of replicating the simple dynamics of real life. 
+
+## About the simualtion itself
+
+It seems that the factory is not big enough yet, i suggest a 100x100 tile so it can have more things, also its important to note that the factory map and the properties (initial stage) should be generated in the Wave Function manner, when i run ./build/vida_misma STORAGE and MACHINES are always in the same places.
+Factory seems to have a belt going from storage to output by default, It shouldnt, the workers should build it.
+
+## About the doc/
+design_spec should be updated more often because its our core design document, plans should be in plans, this document is the human interface (i write on this as a human). some documents in root (like PHASE8_FIXPLAN.md) if are no longer needed should be archived or removed

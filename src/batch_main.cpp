@@ -100,8 +100,8 @@ int main(int argc, char* argv[]) {
     std::printf("\n");
 
     // Count action distribution and deaths
-    int action_counts[12] = {};
-    int deaths_by[4] = {};  // starvation, exhaustion, breakdown, collapse
+    int action_counts[13] = {};
+    int deaths_by[5] = {};  // starvation, exhaustion, breakdown, collapse, suicide
 
     // Count dead
     auto all_view = sim.registry().view<const AgentComponent>();
@@ -112,6 +112,7 @@ int main(int argc, char* argv[]) {
             else if (agent.cause_of_death == "exhaustion") deaths_by[1]++;
             else if (agent.cause_of_death == "breakdown") deaths_by[2]++;
             else if (agent.cause_of_death == "collapse") deaths_by[3]++;
+            else if (agent.cause_of_death == "suicide") deaths_by[4]++;
         }
     }
 
@@ -126,13 +127,13 @@ int main(int argc, char* argv[]) {
         action_counts[(int)action.current]++;
 
         const char* action_names[] = {
-            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "DSMNTL", "IDLE"
+            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "DSMNTL", "SABOT", "IDLE"
         };
 
-        std::printf("Agent[%2d] action=%-8s stress=%.2f | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
+        std::printf("Agent[%2d] action=%-8s stress=%.2f tr=%.2f %s | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
             agent.id,
             action.current == ActionType::IDLE ? "IDLE" : action_names[(int)action.current],
-            stress.value,
+            stress.value, stress.trauma, stress_state_name(stress.state),
             needs.hunger, needs.rest, needs.social, needs.expression, needs.purpose,
             inv.raw_food, inv.raw_material, inv.food,
             pers.compliance, pers.artistry, pers.laziness);
@@ -160,6 +161,7 @@ int main(int argc, char* argv[]) {
         if (deaths_by[1]) std::printf("  collapse (fatigue): %d\n", deaths_by[1]);
         if (deaths_by[2]) std::printf("  breakdown (stress): %d\n", deaths_by[2]);
         if (deaths_by[3]) std::printf("  factory collapse:   %d\n", deaths_by[3]);
+        if (deaths_by[4]) std::printf("  suicide:            %d\n", deaths_by[4]);
     } else {
         std::printf("\nTURNOVER: (none — stable shift)\n");
     }
@@ -208,6 +210,59 @@ int main(int argc, char* argv[]) {
     std::printf("  Conv contents:    %.1f on belts\n", conv_contents);
     std::printf("  In storage:       food=%.1f raw_food=%.1f mat=%.1f\n",
         storage_food, storage_raw, storage_mat);
+
+    // Narrative stats
+    std::printf("\n--- NARRATIVE ---\n");
+    std::printf("  Quota:            %.3f -> %.3f\n", cfg.quota_per_tick, sim.current_quota());
+    std::printf("  Restructures:     %d\n", sim.total_restructures());
+    std::printf("  Artifacts:        %d created, %d active\n",
+        sim.artifacts_created(), sim.artifacts_active());
+    std::printf("  Hidden spaces:    %d found, %d sealed\n",
+        sim.hidden_spaces_found(), sim.hidden_spaces_sealed());
+    std::printf("  Factions:         %d\n", sim.factions_formed());
+    std::printf("  Sabotages:        %d\n", sim.sabotages_total());
+    std::printf("  Redemptions:      %d\n", sim.redemptions_total());
+    std::printf("  Suicides:         %d\n", sim.suicides_total());
+
+    // Noncompliance, meaning, stress, trauma stats
+    float avg_noncomp = 0.0f, avg_meaning = 0.0f, avg_stress = 0.0f, avg_trauma = 0.0f;
+    int meaning_crisis = 0;
+    int stress_states[5] = {0, 0, 0, 0, 0}; // NORMAL, DISSOCIATED, HOSTILE_EUPHORIA, BROKEN, REDEEMED
+    auto all_agents = sim.registry().view<const AgentComponent, const NeedsComponent, const StressComponent>();
+    int n_total = 0;
+    for (auto e : all_agents) {
+        auto& ag = sim.registry().get<AgentComponent>(e);
+        auto& nd = sim.registry().get<NeedsComponent>(e);
+        auto& st = sim.registry().get<StressComponent>(e);
+        avg_noncomp += ag.noncompliance;
+        avg_meaning += nd.meaning;
+        avg_stress += st.value;
+        avg_trauma += st.trauma;
+        if (nd.meaning > 0.7f) meaning_crisis++;
+        stress_states[static_cast<int>(st.state)]++;
+        n_total++;
+    }
+    if (n_total > 0) {
+        avg_noncomp /= n_total;
+        avg_meaning /= n_total;
+        avg_stress /= n_total;
+        avg_trauma /= n_total;
+    }
+    std::printf("  Avg noncompliance: %.2f\n", avg_noncomp);
+    std::printf("  Avg meaning need:  %.2f\n", avg_meaning);
+    std::printf("  Meaning crisis:    %d / %d agents\n", meaning_crisis, n_total);
+    std::printf("  Avg stress:        %.2f\n", avg_stress);
+    std::printf("  Avg trauma:        %.2f\n", avg_trauma);
+    std::printf("  Stress states:     N=%d D=%d E=%d B=%d R=%d\n",
+        stress_states[0], stress_states[1], stress_states[2],
+        stress_states[3], stress_states[4]);
+
+    // Hidden space count on map
+    int hidden_count = 0;
+    for (int y = 0; y < sim.grid().height(); y++)
+        for (int x = 0; x < sim.grid().width(); x++)
+            if (sim.grid().at(x, y) == TileType::HiddenSpace) hidden_count++;
+    std::printf("  Hidden on map:    %d\n", hidden_count);
 
     std::printf("\nDone.\n");
     return 0;

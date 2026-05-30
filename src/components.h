@@ -19,6 +19,7 @@ enum class TileType : uint8_t {
     ScrapPile,    // Raw material deposit -- finite or slow regen
     EatingZone,   // Designated eating place (agent-built, must be ≥5 from any Machine)
     Conveyor,     // Directional transport tile — moves resources automatically
+    HiddenSpace,  // Discovered by explorers; sanctuary from factory surveillance
 };
 
 // Machine subtypes: each Machine tile has a specific function.
@@ -51,6 +52,7 @@ enum class ActionType : uint8_t {
     GET_FOOD,     // Pick up food from adjacent Storage into inventory (snack to-go)
     MAINTAIN,     // Repair a degraded Conveyor
     DISMANTLE,    // Tear down a built Conveyor (returns partial material)
+    SABOTAGE,     // Irrational destruction driven by stress — damages machines/conveyors
     IDLE,
     COUNT
 };
@@ -68,6 +70,7 @@ inline bool is_valid_action_tile(ActionType action, TileType tile) {
         case ActionType::CREATE:   return tile == TileType::OpenSpace;
         case ActionType::MAINTAIN: return true;  // agent stands ADJACENT to conveyor
         case ActionType::DISMANTLE: return true; // agent stands ADJACENT to conveyor to tear down
+        case ActionType::SABOTAGE:  return true; // agent stands ADJACENT to target
         default:                   return true;
     }
 }
@@ -89,6 +92,15 @@ struct NeedsComponent {
     float social     = 0.0f;
     float expression = 0.0f;
     float purpose    = 0.0f;
+    float meaning    = 0.0f;   // [0, 1], 1 = unfulfilled. Factory work doesn't satisfy.
+                               // Only CREATE (artifacts), factions, hidden spaces fill this.
+};
+
+// Cultural artifact: produced by CREATE, boosts nearby agent mood
+struct ArtifactComponent {
+    int creator_id = -1;
+    float strength = 1.0f;  // decays over time
+    int age = 0;            // ticks since creation
 };
 
 // ============================================================
@@ -181,8 +193,33 @@ struct ActionComponent {
     float last_utility_get_food  = 0.0f;
 };
 
+// Stress states — qualitative behavior changes at thresholds
+enum class StressState : uint8_t {
+    NORMAL = 0,       // 0.0 - 0.4: standard behavior
+    DISSOCIATED,      // 0.4 - 0.7: -30% social, +30% create/explore
+    HOSTILE_EUPHORIA, // 0.7 - 0.9: ignores noncompliance, artificial mood boost, -50% trust gain
+    BROKEN,           // 0.9+:      point of no return — stressed utility function
+    REDEEMED,         // post-sabotage epiphany — collectivist martyr
+};
+
+inline const char* stress_state_name(StressState s) {
+    switch (s) {
+        case StressState::NORMAL:          return "Normal";
+        case StressState::DISSOCIATED:     return "Dissociated";
+        case StressState::HOSTILE_EUPHORIA: return "Euphoric";
+        case StressState::BROKEN:          return "Broken";
+        case StressState::REDEEMED:        return "Redeemed";
+        default:                           return "?";
+    }
+}
+
 struct StressComponent {
-    float value = 0.0f;  // [0, 1]
+    float value = 0.0f;       // [0, 1]
+    float trauma = 0.0f;     // [0, 1] PERMANENT — accumulated from chronic stress
+    StressState state = StressState::NORMAL;
+    int ticks_in_state = 0;   // how many consecutive ticks above 0.6 (for trauma accumulation)
+    int sabotage_count = 0;   // how many times this agent has sabotaged
+    bool can_redeem = false;  // set true after first sabotage; enables redemption roll
 };
 
 struct AgentComponent {
@@ -190,6 +227,8 @@ struct AgentComponent {
     bool alive = true;
     int ticks_at_max_hunger = 0;
     int ticks_at_max_rest = 0;
+    float noncompliance = 0.0f;  // [0,1] how much the factory "notices" this agent slacking
+    int faction_id = -1;         // -1 = no faction
     std::string cause_of_death;
 };
 
@@ -243,6 +282,9 @@ struct TileData {
     int   dismantled_by     = -1;    // agent id who dismantled, -1 = never
     int   dismantled_at_tick = -1;   // when it was dismantled
     int   original_type     = 0;     // 0=conveyor frame, for rebuild tracking
+
+    // Hidden space tracking
+    int   hidden_space_occupancy = 0; // ticks of over-occupancy; factory seals at 10
 
     bool has_data() const {
         return resource_max > 0.0f || build_cost > 0.0f || storage_capacity > 0.0f;
