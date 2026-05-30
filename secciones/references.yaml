@@ -392,4 +392,18 @@ references:
     DOI: "10.1016/0022-5193(68)90079-9"
     issued:
       year: 1968
+
+  # === Section 17: Social Fabric ===
+  - id: granovetter1978
+    author:
+      - family: Granovetter
+        given: Mark
+    title: "Threshold models of collective behavior"
+    container-title: "American Journal of Sociology"
+    volume: 83
+    issue: 6
+    page: "1420-1443"
+    DOI: "10.1086/226707"
+    issued:
+      year: 1978
 ---
