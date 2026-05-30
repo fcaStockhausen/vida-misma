@@ -409,6 +409,7 @@ private:
         auto& st  = sim_.registry().get<StressComponent>(e);
         auto& iv  = sim_.registry().get<InventoryComponent>(e);
         auto& po  = sim_.registry().get<PositionComponent>(e);
+        auto& soc = sim_.registry().get<SocialComponent>(e);
 
         static const char* aname[] = {
             "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","IDLE"
@@ -471,6 +472,11 @@ private:
             pg("greg", ps.gregariousness),
             pg("res",  ps.resilience),
             pg("cur",  ps.curiosity),
+            separator(),
+            text("SOCIAL") | bold | underlined,
+            pg("mood",      soc.mood),
+            pg("influence", soc.influence),
+            pg("energy",    soc.social_energy),
             separator(),
             text("UTILITY") | bold | underlined,
             ur("GATHER",   ac.last_utility_gather),

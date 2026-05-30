@@ -209,16 +209,25 @@ void Simulation::system_execute_actions() {
 
             case ActionType::SOCIALIZE: {
                 bool has_neighbor = false;
+                entt::entity neighbor = entt::null;
+                int neighbor_id = -1;
                 auto agents = alive_agents();
                 for (auto other : agents) {
                     if (other == e) continue;
                     auto& opos = registry_.get<PositionComponent>(other);
                     int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                    if (d <= 2) { has_neighbor = true; break; }
+                    if (d <= 2) {
+                        has_neighbor = true;
+                        neighbor = other;
+                        neighbor_id = registry_.get<AgentComponent>(other).id;
+                        break;
+                    }
                 }
                 if (has_neighbor) {
                     needs.social = std::max(0.0f,
                         needs.social - config_.social_satisfaction);
+                    // Process social interaction
+                    social_.process_interaction(agent.id, neighbor_id, tick_);
                 } else {
                     needs.social = std::max(0.0f, needs.social - 0.002f);
                 }

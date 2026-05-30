@@ -3,6 +3,7 @@
 #include "components.h"
 #include "config.h"
 #include "grid.h"
+#include "social.h"
 #include <entt/entt.hpp>
 #include <random>
 #include <vector>
@@ -28,6 +29,8 @@ public:
     int tick() const { return tick_; }
     float factory_health() const { return factory_health_; }
     const Grid& grid() const { return grid_; }
+    SocialFabric& social() { return social_; }
+    const SocialFabric& social() const { return social_; }
     entt::registry& registry() { return registry_; }
     const Config& config() const { return config_; }
     Grid& grid_mut() { return grid_; }
@@ -56,6 +59,7 @@ private:
     entt::registry registry_;
     Config config_;
     Grid grid_;
+    SocialFabric social_;
     std::mt19937 rng_;
     int tick_;
     float factory_health_;

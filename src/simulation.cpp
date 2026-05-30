@@ -14,6 +14,7 @@ Simulation::Simulation(const Config& cfg)
     , total_food_produced_(0.0f)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
+    , social_(cfg.initial_population)
 {
     grid_.generate_default();
     spawn_initial_agents();
@@ -30,6 +31,14 @@ void Simulation::advance() {
     system_factory_deterioration();// machine breaks when health is low
     system_update_stress();
     system_check_deaths();
+
+    // Social systems (every tick)
+    auto alive = alive_agents();
+    social_.apply_contagion(registry_, alive);
+    social_.update_influence(registry_, alive);
+    social_.update_mood(registry_, alive);
+    social_.decay_relationships(tick_);
+
     tick_++;
 }
 
@@ -127,6 +136,7 @@ void Simulation::spawn_initial_agents() {
 
         registry_.emplace<ActionComponent>(entity, ActionType::IDLE);
         registry_.emplace<StressComponent>(entity, 0.0f);
+        registry_.emplace<SocialComponent>(entity);
         InventoryComponent inv;
         inv.food = config_.initial_food_per_agent;  // bootstrap until the factory runs
         registry_.emplace<InventoryComponent>(entity, inv);
