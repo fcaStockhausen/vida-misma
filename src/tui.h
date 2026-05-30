@@ -20,7 +20,9 @@ class TUI {
 public:
     TUI(Simulation& sim)
         : sim_(sim), selected_idx_(0), scroll_x_(0), scroll_y_(0),
-          running_(false), speed_ms_(200) {}
+          running_(false), speed_ms_(200) {
+        center_on_selected();
+    }
 
     void run() {
         auto screen = ScreenInteractive::Fullscreen();
@@ -158,7 +160,7 @@ private:
             rows.push_back(hbox(std::move(cols)));
         }
 
-        return vbox(std::move(rows)) | border;
+        return vbox(std::move(rows)) | border | hcenter;
     }
 
     Element tile_char(int x, int y, const std::vector<entt::entity>& agents) {

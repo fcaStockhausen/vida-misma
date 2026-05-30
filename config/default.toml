@@ -46,10 +46,10 @@ explore_satisfaction = 0.008
 work_purpose_gain    = 0.004
 
 [production]
-gather_rate    = 0.05   # resources collected per GATHER tick
-build_rate     = 0.02   # build progress per BUILD tick (build_cost=3 → 150 ticks)
-machine_output = 0.025  # food produced per WORK tick
-machine_input  = 0.02   # raw_food consumed per WORK tick
+gather_rate    = 0.20   # resources collected per GATHER tick
+build_rate     = 0.10   # build progress per BUILD tick (build_cost=3 → 30 ticks)
+machine_output = 0.15   # food produced per WORK tick
+machine_input  = 0.05   # raw_food consumed per WORK tick
 
 [urgency]
 alpha = 2.0

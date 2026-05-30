@@ -278,24 +278,36 @@ private:
             // How much food agent has (0-1 normalized)
             float food_security = std::min(1.0f, (inv.food + inv.raw_food * 0.5f) / 2.0f);
 
-            // GATHER: high when hungry and food is low, OR when materials needed
-            float gather_food_score = 0.0f;
+            // GATHER (food): driven by hunger, reduced when food-secure
+            float u_gather = 0.0f;
             if (food_sources_available) {
-                // Urgency scales with hunger, drops as food security rises
-                gather_food_score = u_hunger * (1.0f - food_security) * 1.5f;
+                u_gather = u_hunger * (1.0f - food_security) * 1.5f;
             }
-            float gather_material_score = 0.0f;
-            if (scrap_available && unbuilt_exists) {
-                gather_material_score = personality.compliance * u_purpose * 0.5f
-                    * (1.0f + (inv.raw_material < 1.0f ? 0.5f : 0.0f));
+
+            // GATHER (material): driven by purpose + compliance, only when food-secure
+            float u_gather_mat = 0.0f;
+            if (scrap_available && food_security > 0.10f) {
+                float material_urgency = (1.0f - std::min(1.0f, inv.raw_material / 3.0f));
+                u_gather_mat = material_urgency * (
+                    personality.compliance * u_purpose * 1.2f +
+                    (1.0f - food_security) * 0.2f
+                );
             }
-            float u_gather = std::max(gather_food_score, gather_material_score);
+            // Pick whichever gather is more urgent
+            u_gather = std::max(u_gather, u_gather_mat);
 
             // BUILD: high when have materials and unbuilt machines exist
             float u_build = 0.0f;
-            if (unbuilt_exists && inv.raw_material > 0.5f) {
-                u_build = personality.compliance * u_purpose * 1.2f
-                    * std::min(1.0f, inv.raw_material / 2.0f);
+            if (unbuilt_exists && inv.raw_material > 0.1f) {
+                float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
+                float carry_pressure = inv.raw_material / InventoryComponent::CAPACITY;
+                // Building is productive work -- scales with hunger (need production!)
+                // and purpose. Carrying materials creates urgency.
+                u_build = (
+                    u_hunger * 1.2f +                    // hungry? build to produce food!
+                    personality.compliance * u_purpose * 1.5f +
+                    carry_pressure * 2.0f                // carrying materials? use them!
+                ) * (0.5f + 0.5f * mat_readiness);
             }
 
             // WORK: high when machines exist and community needs food
@@ -394,23 +406,26 @@ private:
 
             switch (action.current) {
                 case ActionType::GATHER: {
-                    // Pick food source or scrap pile based on need
-                    bool need_food = inv.raw_food < 2.0f && inv.food < 1.0f;
-                    bool need_material = grid_.find_nearest_unbuilt_machine(
-                        pos.x, pos.y).first >= 0;
+                    // Decide food vs material based on current state
+                    bool need_food = inv.raw_food + inv.food < 2.0f;
+                    bool need_material = inv.raw_material < 2.0f;
 
                     auto food_target = grid_.find_nearest(TileType::FoodSource, pos.x, pos.y);
                     auto scrap_target = grid_.find_nearest(TileType::ScrapPile, pos.x, pos.y);
 
-                    // Prefer food if hungry, material if not
-                    bool pick_food = true;
-                    if (food_target.first < 0) pick_food = false;
-                    else if (scrap_target.first >= 0 && !need_food && need_material
-                             && inv.raw_material < 2.0f) {
-                        pick_food = false;
+                    // Prefer scrap when food-secure and need material
+                    float food_sec = std::min(1.0f, (inv.food + inv.raw_food * 0.5f) / 2.0f);
+                    bool pick_scrap = false;
+                    if (scrap_target.first >= 0 && food_sec > 0.10f && need_material) {
+                        if (!need_food || inv.raw_material < 0.5f) {
+                            pick_scrap = true;
+                        }
                     }
 
-                    if (pick_food && food_target.first >= 0) {
+                    if (pick_scrap) {
+                        tx = scrap_target.first;
+                        ty = scrap_target.second;
+                    } else if (food_target.first >= 0) {
                         tx = food_target.first;
                         ty = food_target.second;
                     } else if (scrap_target.first >= 0) {
