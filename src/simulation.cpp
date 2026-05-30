@@ -280,6 +280,7 @@ void Simulation::system_update_stress() {
 // ============================================================
 
 void Simulation::system_check_deaths() {
+    std::vector<int> newly_dead;
     auto view = registry_.view<NeedsComponent, AgentComponent, StressComponent>();
     for (auto e : view) {
         if (!registry_.get<AgentComponent>(e).alive) continue;
@@ -296,6 +297,7 @@ void Simulation::system_check_deaths() {
                 agent.cause_of_death = "starvation";
                 emit_log(agent.id, "DIED of starvation after " +
                          std::to_string(config_.starvation_ticks) + " ticks without food");
+                newly_dead.push_back(agent.id);
             }
         } else {
             agent.ticks_at_max_hunger = 0;
@@ -309,6 +311,7 @@ void Simulation::system_check_deaths() {
                 agent.cause_of_death = "exhaustion";
                 emit_log(agent.id, "DIED of exhaustion after " +
                          std::to_string(config_.exhaustion_ticks) + " ticks without rest");
+                newly_dead.push_back(agent.id);
             }
         } else {
             agent.ticks_at_max_rest = 0;
@@ -319,6 +322,15 @@ void Simulation::system_check_deaths() {
             agent.alive = false;
             agent.cause_of_death = "breakdown";
             emit_log(agent.id, "had a BREAKDOWN (stress=" + ff2(stress.value) + ")");
+            newly_dead.push_back(agent.id);
+        }
+    }
+
+    // Grief cascades: survivors who knew the deceased receive stress
+    if (!newly_dead.empty()) {
+        auto alive_now = alive_agents();
+        for (int dead_id : newly_dead) {
+            social_.apply_grief(registry_, dead_id, alive_now);
         }
     }
 }

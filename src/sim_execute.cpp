@@ -105,17 +105,17 @@ void Simulation::system_execute_actions() {
             case ActionType::WORK: {
                 auto& td = grid_.data_at(pos.x, pos.y);
                 if (td.built) {
-                    // Pure labor in this model — no raw_food input. Output is
-                    // strictly communal: it goes to adjacent Storage only. If no
-                    // storage has room, the food is lost — the worker does NOT
-                    // pocket it. This is what makes the chain genuinely communal
-                    // and forces agents to come to storage to eat.
-                    float produced = config_.machine_output;
+                    // Collaboration bonus: friends working adjacent boost output
+                    auto alive_list = alive_agents();
+                    float collab = social_.collaboration_bonus(
+                        agent.id, registry_, alive_list, e);
+                    float produced = config_.machine_output * collab;
                     float deposited = deposit_to_adjacent_storage(pos.x, pos.y,
                         ResourceType::FOOD, produced);
                     if (deposited > 0.0f) {
                         total_food_produced_ += deposited;
-                        emit_log(agent.id, "worked, +" + ff2(deposited) + " food to storage");
+                        emit_log(agent.id, "worked, +" + ff2(deposited) + " food to storage"
+                                 + (collab > 1.01f ? " (collab x" + ff2(collab) + ")" : ""));
                     }
 
                     // Work satisfies purpose slightly and tires the worker.
@@ -183,6 +183,8 @@ void Simulation::system_execute_actions() {
                             st.value = std::min(1.0f, st.value + config_.eat_at_work_stress);
                             emit_log(agent.id, "ate at work — reported by A" +
                                      std::to_string(witness_id));
+                            // Witness loses trust in transgressor (antagonism mechanic)
+                            social_.negative_interaction(witness_id, agent.id, tick_, 0.05f);
                         }
                     }
                 }
@@ -208,6 +210,7 @@ void Simulation::system_execute_actions() {
                 break;
 
             case ActionType::SOCIALIZE: {
+                auto& personality = registry_.get<PersonalityComponent>(e);
                 bool has_neighbor = false;
                 entt::entity neighbor = entt::null;
                 int neighbor_id = -1;
@@ -224,8 +227,10 @@ void Simulation::system_execute_actions() {
                     }
                 }
                 if (has_neighbor) {
-                    needs.social = std::max(0.0f,
-                        needs.social - config_.social_satisfaction);
+                    // Satisfaction weighted by gregariousness (doc §15/§17)
+                    float satisfaction = config_.social_satisfaction
+                                       * (0.5f + 0.5f * personality.gregariousness);
+                    needs.social = std::max(0.0f, needs.social - satisfaction);
                     // Process social interaction
                     social_.process_interaction(agent.id, neighbor_id, tick_);
                 } else {

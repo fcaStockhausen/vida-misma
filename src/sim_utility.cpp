@@ -21,7 +21,9 @@ void Simulation::system_compute_utility() {
         auto& personality = registry_.get<PersonalityComponent>(e);
         auto& inv        = registry_.get<InventoryComponent>(e);
         auto& action     = registry_.get<ActionComponent>(e);
+        auto& soc        = registry_.get<SocialComponent>(e);
         auto  pos        = registry_.get<PositionComponent>(e);
+        auto  ag         = registry_.get<AgentComponent>(e);
 
         float alpha = config_.urgency_alpha;
         auto urgency = [alpha](float need) -> float {
@@ -33,6 +35,31 @@ void Simulation::system_compute_utility() {
         float u_social     = urgency(needs.social);
         float u_expression = urgency(needs.expression);
         float u_purpose    = urgency(needs.purpose);
+
+        // === SOCIAL MODIFIERS ===
+        // Mood affects productivity: low mood = less effective work
+        // mood ∈ [0,1], 1=happy. Productive actions scaled by (0.5 + 0.5*mood)
+        float mood_factor = 0.5f + 0.5f * soc.mood;
+
+        // Compute average trust with nearby agents (for SOCIALIZE bonus)
+        float nearby_trust = 0.0f;
+        int nearby_count = 0;
+        {
+            auto alive_view = registry_.view<PositionComponent, const AgentComponent>();
+            for (auto other : alive_view) {
+                if (other == e) continue;
+                if (!registry_.get<AgentComponent>(other).alive) continue;
+                auto& opos = registry_.get<PositionComponent>(other);
+                int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                if (d <= 3) {
+                    int oid = registry_.get<AgentComponent>(other).id;
+                    nearby_trust += social_.get_rel(ag.id, oid).trust;
+                    nearby_count++;
+                }
+            }
+            if (nearby_count > 0) nearby_trust /= nearby_count;
+            else nearby_trust = 0.5f;
+        }
 
         // Food only comes from machines now → only check inventory food and storage.
         // raw_food field is unused (kept for ABI; legacy FoodSource gathering disabled).
@@ -56,11 +83,12 @@ void Simulation::system_compute_utility() {
         float food_security = std::min(1.0f, inv.food / 2.0f);
 
         // GATHER: only raw_material remains (no wild food sources in this model).
-        // U_gather_mat = compliance · f(purpose) · 0.5 · (1 + [r_mat < 1.0])
+        // Mood modulates productivity — unhappy agents are less motivated.
         float u_gather = 0.0f;
         if (scrap_available) {
             float low_mat_indicator = (inv.raw_material < 1.0f) ? 1.0f : 0.0f;
-            u_gather = personality.compliance * u_purpose * 0.5f * (1.0f + low_mat_indicator);
+            u_gather = personality.compliance * u_purpose * 0.5f * (1.0f + low_mat_indicator)
+                      * mood_factor;
         }
 
         // BUILD: doc formula + community pressure + "finish what you started" + EatingZone need.
@@ -90,6 +118,7 @@ void Simulation::system_compute_utility() {
                 u_build_mach = (personality.compliance * u_purpose * 1.2f
                               + personality.compliance * community_pressure * 0.8f) * mat_readiness
                              + finish_bonus;
+                u_build_mach *= mood_factor;
             }
 
             // Sub 2: continue an unbuilt EatingZone frame (high finish_bonus pull)
@@ -117,13 +146,33 @@ void Simulation::system_compute_utility() {
             u_build = std::max({u_build_mach, u_build_ez, u_build_new_ez});
         }
 
-        // WORK: doc formula + community pressure term that closes the production loop.
-        // U_work = compliance·f(hunger)·0.8 + (1-laziness)·f(purpose)·0.3 + compliance·community_pressure·0.6
+        // WORK: mood modulates productivity. Influenced agents may follow herd.
         float u_work = 0.0f;
         if (built_exists) {
-            u_work = personality.compliance * u_hunger * 0.8f
+            u_work = (personality.compliance * u_hunger * 0.8f
                 + (1.0f - personality.laziness) * u_purpose * 0.3f
-                + personality.compliance * community_pressure * 0.6f;
+                + personality.compliance * community_pressure * 0.6f)
+                * mood_factor;
+            // Herding: if nearby high-influence agents are working, boost WORK
+            if (nearby_count > 0) {
+                float herd_work = 0.0f;
+                auto alive_view2 = registry_.view<PositionComponent, const AgentComponent,
+                                                   SocialComponent, ActionComponent>();
+                for (auto other : alive_view2) {
+                    if (other == e) continue;
+                    if (!registry_.get<AgentComponent>(other).alive) continue;
+                    auto& opos = registry_.get<PositionComponent>(other);
+                    int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                    if (d <= 3) {
+                        auto& osoc = registry_.get<SocialComponent>(other);
+                        auto& oact = registry_.get<ActionComponent>(other);
+                        if (oact.current == ActionType::WORK) {
+                            herd_work += osoc.influence;
+                        }
+                    }
+                }
+                u_work += herd_work * 0.3f * personality.compliance;
+            }
         }
 
         // EAT
@@ -142,8 +191,11 @@ void Simulation::system_compute_utility() {
         if (needs.rest > 0.9f) rest_weight *= 2.0f;
         float u_rest_action = rest_weight * u_rest;
 
-        // SOCIALIZE
+        // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
+        // Influential agents draw others to socialize
         float u_socialize = personality.gregariousness * u_social;
+        u_socialize *= (0.5f + 0.5f * nearby_trust);  // high trust = more rewarding
+        u_socialize += soc.influence * 0.1f;           // influential agents socialize more
 
         // CREATE: only viable if there's an OpenSpace tile to reach
         bool open_space_available = grid_.find_nearest(TileType::OpenSpace,
