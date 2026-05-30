@@ -13,3 +13,4 @@ doc/bases_matematicas.zip
 
 # Debug
 /tmp/
+.cache/
