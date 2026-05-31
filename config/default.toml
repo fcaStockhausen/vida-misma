@@ -27,6 +27,7 @@ height = 40
 initial_population = 24
 max_population = 200
 seed = 0
+use_wfc = true
 
 [needs]
 # Calibrated so survival doesn't dominate every cycle. Slower decay gives agents

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "components.h"
+#include "wfc_generator.h"
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -571,6 +572,47 @@ public:
         pb1.built = true; pb1.build_progress = pb1.build_cost;
         auto& pb2 = data_at(m1x + 1, m1y + 1);
         pb2.built = true; pb2.build_progress = pb2.build_cost;
+    }
+
+    void generate_wfc(uint32_t seed) {
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                set(x, y, TileType::Floor);
+            }
+
+        WFCGenerator wfc(width_, height_, seed);
+        auto placements = wfc.generate();
+
+        for (auto& p : placements) {
+            set(p.x, p.y, p.type);
+            auto& d = data_at(p.x, p.y);
+
+            if (p.type == TileType::ScrapPile) {
+                d.resource_amount = p.resource_amount;
+                d.resource_max    = p.resource_max;
+                d.resource_regen  = p.resource_regen;
+            }
+            if (p.type == TileType::Machine) {
+                d.built          = p.built;
+                d.build_progress = p.built ? p.build_cost : 0.0f;
+                d.build_cost     = p.build_cost > 0.0f ? p.build_cost : 2.0f;
+                d.machine_type   = p.machine_type;
+            }
+            if (p.type == TileType::Storage) {
+                d.storage_capacity = p.storage_capacity > 0.0f ? p.storage_capacity : 20.0f;
+                d.stored_food      = 0.0f;
+                d.stored_raw_food  = 0.0f;
+                d.stored_raw_material = 0.0f;
+            }
+            if (p.type == TileType::Conveyor) {
+                d.built              = false;
+                d.build_progress     = 0.0f;
+                d.build_cost         = p.build_cost > 0.0f ? p.build_cost : 1.5f;
+                d.conveyor_dir       = p.conveyor_dir;
+                d.conveyor_condition = 1.0f;
+                d.conveyor_contents  = 0.0f;
+            }
+        }
     }
 
 private:

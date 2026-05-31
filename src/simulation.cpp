@@ -17,7 +17,11 @@ Simulation::Simulation(const Config& cfg)
     , social_(cfg.initial_population)
     , current_quota_per_tick_(cfg.quota_per_tick)
 {
-    grid_.generate_default();
+    if (cfg.use_wfc) {
+        grid_.generate_wfc(cfg.seed);
+    } else {
+        grid_.generate_default();
+    }
     spawn_initial_agents();
 }
 

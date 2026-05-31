@@ -16,6 +16,7 @@ Config load_config(const std::string& path) {
         cfg.initial_population = s->get_as<int64_t>("initial_population")->value_or(cfg.initial_population);
         cfg.max_population     = s->get_as<int64_t>("max_population")->value_or(cfg.max_population);
         cfg.seed               = s->get_as<int64_t>("seed")->value_or(cfg.seed);
+        cfg.use_wfc            = s->get_as<bool>("use_wfc")->value_or(cfg.use_wfc);
     }
 
     // Needs

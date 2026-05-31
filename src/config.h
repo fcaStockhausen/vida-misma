@@ -11,6 +11,7 @@ struct Config {
     int   initial_population = 24;
     int   max_population     = 200;
     int   seed               = 0;
+    bool  use_wfc            = true;  // wave function collapse map generation
 
     // Need decay rates
     float hunger_decay         = 0.005f;

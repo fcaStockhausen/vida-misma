@@ -120,7 +120,7 @@ doc/
 8. ~~EatingZones — agent-built tiles ≥5 from any Machine; "comer en el trabajo" triggers social penalty (only when another agent witnesses)~~ ✓
 9. ~~GET_FOOD action + inv.food cap ("vianda" to-go)~~ ✓
 10. Conveyors — buildable production-line tiles connecting distant Machines to Storage / Exit
-11. WFC procedural map layout (replace `generate_default`)
+11. ~~WFC procedural map layout (replace `generate_default`)~~ ✓
 12. Agent-decided placement for ALL buildables (Machines, Conveyors, EatingZones — currently only EatingZones; Machine frames still pre-placed)
 
 ### Phase 3 — Emergent social behavior

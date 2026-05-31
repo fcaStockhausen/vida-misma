@@ -69,3 +69,25 @@ endforeach()
 
 # FTXUI only for interactive target
 target_link_libraries(vida_misma PRIVATE ftxui::screen ftxui::dom ftxui::component)
+
+# --- SDL2 GUI executable ---
+find_package(SDL2 QUIET)
+if(SDL2_FOUND)
+  add_executable(vida_gui
+    src/main_gui.cpp
+    src/config.cpp
+    ${VIDA_SIM_SOURCES}
+  )
+  target_link_libraries(vida_gui PRIVATE
+    EnTT::EnTT
+    tomlplusplus::tomlplusplus
+    SDL2::SDL2
+    SDL2::SDL2main
+  )
+  target_include_directories(vida_gui PRIVATE src)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vida_gui PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
+  endif()
+else()
+  message(STATUS "SDL2 not found — vida_gui target skipped")
+endif()
