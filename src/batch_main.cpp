@@ -264,6 +264,19 @@ int main(int argc, char* argv[]) {
             if (sim.grid().at(x, y) == TileType::HiddenSpace) hidden_count++;
     std::printf("  Hidden on map:    %d\n", hidden_count);
 
+    // Chronicle: narrative summary + death report + first agent timeline
+    std::printf("\n--- CHRONICLE (%zu events) ---\n", sim.chronicle().size());
+    std::printf("%s", sim.chronicle().narrative_summary().c_str());
+    std::printf("%s", sim.chronicle().death_report().c_str());
+    // First agent timeline as sample
+    if (sim.chronicle().count_for_agent(0) > 0) {
+        const char* aname = archetype_name(
+            sim.registry().get<PersonalityComponent>(
+                *sim.alive_agents().begin()).archetype);
+        // Find agent 0's entity to get archetype — may be dead, just show ID
+        std::printf("%s", sim.chronicle().agent_timeline(0, "Agent0").c_str());
+    }
+
     std::printf("\nDone.\n");
     return 0;
 }

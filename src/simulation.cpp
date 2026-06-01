@@ -57,6 +57,7 @@ void Simulation::advance() {
     // Social penalty: agents who dismantled conveyors that weren't rebuilt
     // within the window lose trust with everyone who notices.
     system_check_dismantle_penalties();
+    system_chronicle_narrative();
 
     tick_++;
 }
@@ -193,6 +194,10 @@ void Simulation::spawn_initial_agents() {
         InventoryComponent inv;
         inv.food = config_.initial_food_per_agent;  // bootstrap until the factory runs
         registry_.emplace<InventoryComponent>(entity, inv);
+
+        chronicle_.log(tick_, EventType::SPAWNED, i,
+            std::string("born as ") + archetype_name(at),
+            sx, sy);
     }
 }
 
@@ -789,4 +794,69 @@ void Simulation::system_faction_formation() {
     }
 
     factions_formed_ = next_faction;
+}
+
+// ============================================================
+// SYSTEM: Chronicle narrative milestones
+// ============================================================
+
+void Simulation::system_chronicle_narrative() {
+    // Run every tick (cheap: just checks counters)
+
+    int alive = alive_count();
+
+    // Firsts
+    if (!first_build_done_ && total_machines_built_ >= 1) {
+        first_build_done_ = true;
+        chronicle_.log(tick_, EventType::FIRST_BUILD, -1,
+            "the first machine is built — the factory stirs");
+    }
+    if (!first_death_done_ && chronicle_.count_of_type(EventType::DIED_STARVATION) +
+                              chronicle_.count_of_type(EventType::DIED_EXHAUSTION) +
+                              chronicle_.count_of_type(EventType::DIED_COLLAPSE) >= 1) {
+        first_death_done_ = true;
+        chronicle_.log(tick_, EventType::FIRST_DEATH, -1,
+            "the first agent dies — innocence lost");
+    }
+    if (!first_sabotage_done_ && sabotages_total_ >= 1) {
+        first_sabotage_done_ = true;
+        chronicle_.log(tick_, EventType::FIRST_SABOTAGE, -1,
+            "the first act of sabotage — resistance begins");
+    }
+    if (!first_faction_done_ && factions_formed_ >= 1) {
+        first_faction_done_ = true;
+        chronicle_.log(tick_, EventType::FIRST_FACTION, -1,
+            "the first faction forms — unity fractures");
+    }
+    if (!first_artifact_done_ && artifacts_created_ >= 1) {
+        first_artifact_done_ = true;
+        chronicle_.log(tick_, EventType::FIRST_ARTIFACT, -1,
+            "the first artifact is created — beauty amid machinery");
+    }
+
+    // Population milestones
+    if (alive > 0 && alive % 5 == 0 && alive != last_population_milestone_) {
+        last_population_milestone_ = alive;
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "%d agents survive", alive);
+        chronicle_.log(tick_, EventType::POPULATION_MILESTONE, -1, buf);
+    }
+
+    // Crisis detection: factory health < 0.25 and hasn't fired in 200 ticks
+    if (factory_health_ < 0.25f && tick_ - last_crisis_tick_ >= 200) {
+        last_crisis_tick_ = tick_;
+        char buf[64];
+        std::snprintf(buf, sizeof(buf),
+            "factory health critical (%.0f%%) — the machine falters", factory_health_ * 100);
+        chronicle_.log(tick_, EventType::CRISIS_PERIOD, -1, buf,
+            -1, -1, factory_health_);
+    }
+
+    // Quota milestones
+    float qf = last_quota_fill_;
+    if (qf >= 1.0f && last_quota_milestone_ < 1.0f) {
+        chronicle_.log(tick_, EventType::QUOTA_MILESTONE, -1,
+            "quota met — the factory is satisfied");
+    }
+    last_quota_milestone_ = qf;
 }

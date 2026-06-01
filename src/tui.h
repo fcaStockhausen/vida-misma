@@ -60,6 +60,7 @@ private:
     int scroll_y_;
     int zoom_;                 // chars-per-tile horizontally (1..4); tile height derived
     bool show_help_ = false;   // H key toggles a legend modal
+    bool log_follow_agent_ = false; // toggle with E key: show selected agent's events
     bool running_ = false;
     bool quit_ = false;
     int speed_ms_;
@@ -106,6 +107,10 @@ private:
             screen.Exit();
             quit_ = true;
             return true;
+        }
+        if (e == Event::Character("e") || e == Event::Character("E")) {
+            log_follow_agent_ = !log_follow_agent_;
+            return false;
         }
         if (e == Event::Character("n")) { sim_.advance(); return false; }
         if (e == Event::Character("r")) { running_ = true; return false; }
@@ -383,44 +388,64 @@ private:
         }) | border | bgcolor(Color::RGB(20, 20, 30)) | hcenter | vcenter;
     }
 
-    // ---- Event log ----
+    // ---- Event log (chronicle-backed) ----
     Element build_log_panel() {
-        const auto& log = sim_.log();
+        auto agents = sim_.alive_agents();
+        int selected_agent_id = -1;
+        if (!agents.empty() && selected_idx_ < agents.size()) {
+            selected_agent_id = sim_.registry().get<AgentComponent>(agents[selected_idx_]).id;
+        }
+
+        // Fetch events: either all recent, or selected agent's
+        std::vector<const ChronicleEvent*> events;
+        const char* title;
+        if (log_follow_agent_ && selected_agent_id >= 0) {
+            events = sim_.chronicle().last_for_agent(selected_agent_id, 10);
+            title = " AGENT LOG";
+        } else {
+            events = sim_.chronicle().last(10);
+            title = " EVENT LOG";
+        }
+
         Elements lines;
-        // Show last 8 entries (newest at bottom)
-        int start = std::max(0, (int)log.size() - 8);
-        for (int i = start; i < (int)log.size(); i++) {
-            const auto& entry = log[i];
+        for (auto* ev : events) {
             Color c;
-            if (entry.text.find("DIED") != std::string::npos ||
-                entry.text.find("BREAKDOWN") != std::string::npos) {
-                c = Color::Red;
-            } else if (entry.text.find("BUILT") != std::string::npos) {
-                c = Color::Green;
-            } else if (entry.text.find("worked") != std::string::npos) {
-                c = Color::RGB(200, 200, 100);
-            } else if (entry.text.find("salvaged") != std::string::npos) {
-                c = Color::RGB(200, 150, 80);
-            } else if (entry.text.find("gathered") != std::string::npos) {
-                c = Color::RGB(100, 200, 100);
-            } else {
-                c = Color::White;
+            auto cat = category_of(ev->type);
+            switch (cat) {
+                case EventCategory::LIFECYCLE: c = Color::Red; break;
+                case EventCategory::STRESS:     c = Color::RGB(255, 150, 50); break;
+                case EventCategory::SOCIAL:     c = Color::Cyan; break;
+                case EventCategory::PRODUCTION: c = Color::Green; break;
+                case EventCategory::NARRATIVE:  c = Color::RGB(255, 220, 80); break;
+                default:                        c = Color::White; break;
             }
 
-            std::string tick_str = std::to_string(entry.tick);
+            std::string tick_str = std::to_string(ev->tick);
             while (tick_str.size() < 5) tick_str = " " + tick_str;
 
-            lines.push_back(hbox({
-                text("[" + tick_str + "]") | dim | color(Color::GrayLight),
-                text(" A" + std::to_string(entry.agent_id) + " ") | color(Color::Cyan),
-                text(entry.text) | color(c),
-            }));
+            if (ev->agent_id >= 0) {
+                lines.push_back(hbox({
+                    text("[" + tick_str + "]") | dim | color(Color::GrayLight),
+                    text(" A" + std::to_string(ev->agent_id) + " ") | color(Color::Cyan),
+                    text(ev->text) | color(c),
+                }));
+            } else {
+                lines.push_back(hbox({
+                    text("[" + tick_str + "]") | dim | color(Color::GrayLight),
+                    text(" "),
+                    text(ev->text) | color(c) | bold,
+                }));
+            }
         }
         if (lines.empty()) {
             lines.push_back(text("  (no events yet)") | dim);
         }
+
+        std::string header = std::string(title) +
+            (log_follow_agent_ ? " [A" + std::to_string(selected_agent_id) + "]" : "") +
+            " (E: toggle)";
         return vbox({
-            text(" EVENT LOG") | bold | underlined,
+            text(header) | bold | underlined,
             vbox(std::move(lines)) | flex,
         });
     }

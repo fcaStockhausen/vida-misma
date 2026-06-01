@@ -4,6 +4,7 @@
 #include "config.h"
 #include "grid.h"
 #include "social.h"
+#include "chronicle.h"
 #include <entt/entt.hpp>
 #include <random>
 #include <vector>
@@ -31,6 +32,8 @@ public:
     const Grid& grid() const { return grid_; }
     SocialFabric& social() { return social_; }
     const SocialFabric& social() const { return social_; }
+    Chronicle& chronicle() { return chronicle_; }
+    const Chronicle& chronicle() const { return chronicle_; }
     entt::registry& registry() { return registry_; }
     const Config& config() const { return config_; }
     Grid& grid_mut() { return grid_; }
@@ -70,7 +73,19 @@ private:
     Config config_;
     Grid grid_;
     SocialFabric social_;
+    Chronicle chronicle_;
     std::mt19937 rng_;
+
+    // Narrative tracking
+    bool first_build_done_ = false;
+    bool first_death_done_ = false;
+    bool first_sabotage_done_ = false;
+    bool first_faction_done_ = false;
+    bool first_artifact_done_ = false;
+    int last_population_milestone_ = 0;
+    int last_crisis_tick_ = -100;
+    float last_quota_milestone_ = 0.0f;
+
     int tick_;
     float factory_health_;
 
@@ -100,6 +115,41 @@ private:
     void emit_log(int agent_id, const std::string& text) {
         log_.push_back({tick_, agent_id, text});
         if (log_.size() > MAX_LOG) log_.pop_front();
+
+        // Auto-generate chronicle entry from text keywords
+        chronicle_.log(tick_, classify_event(text), agent_id, text);
+    }
+
+    // Rich chronicle entry (for events that need position/value/ref data)
+    void chronicle(int agent_id, EventType type, const std::string& text,
+                   int x = -1, int y = -1, float value = 0.0f, int ref_id = -1)
+    {
+        chronicle_.log(tick_, type, agent_id, text, x, y, value, ref_id);
+    }
+
+    static EventType classify_event(const std::string& text) {
+        if (text.find("DIED of starvation") != std::string::npos)  return EventType::DIED_STARVATION;
+        if (text.find("DIED of exhaustion") != std::string::npos)  return EventType::DIED_EXHAUSTION;
+        if (text.find("BREAKDOWN") != std::string::npos)           return EventType::BREAKDOWN;
+        if (text.find("DIED in factory") != std::string::npos)     return EventType::DIED_COLLAPSE;
+        if (text.find("SUICIDE") != std::string::npos)             return EventType::DIED_SUICIDE;
+        if (text.find("REDEEMED") != std::string::npos)            return EventType::REDEMPTION;
+        if (text.find("SABOTAGED") != std::string::npos)           return EventType::SABOTAGE;
+        if (text.find("shared") != std::string::npos)              return EventType::FOOD_SHARED;
+        if (text.find("BUILT a machine") != std::string::npos)     return EventType::BUILT_MACHINE;
+        if (text.find("BUILT a conveyor") != std::string::npos)    return EventType::BUILT_CONVEYOR;
+        if (text.find("BUILT an eating") != std::string::npos)     return EventType::BUILT_EATING_ZONE;
+        if (text.find("worked") != std::string::npos)              return EventType::WORK_COMPLETED;
+        if (text.find("gathered") != std::string::npos)            return EventType::GATHERED;
+        if (text.find("salvaged") != std::string::npos)            return EventType::GATHERED;
+        if (text.find("maintained") != std::string::npos)          return EventType::MAINTAINED;
+        if (text.find("DISMANTLED") != std::string::npos)          return EventType::DISMANTLED;
+        if (text.find("MACHINE") != std::string::npos)             return EventType::MACHINE_ACTIVATED;
+        if (text.find("restructured") != std::string::npos)        return EventType::FACTORY_RESTRUCTURE;
+        if (text.find("confiscated") != std::string::npos)         return EventType::FACTORY_CONFISCATED;
+        if (text.find("sealed") != std::string::npos)              return EventType::FACTORY_SEALED_SPACE;
+        if (text.find("hidden space") != std::string::npos)        return EventType::HIDDEN_SPACE_FOUND;
+        return EventType::COUNT;  // unclassified
     }
 
     static std::string ff2(float v) {
@@ -143,6 +193,7 @@ private:
     void system_update_stress();
     void system_check_deaths();
     void system_check_dismantle_penalties();
+    void system_chronicle_narrative();    // detect milestones and narrative events
 
     // --- Conveyor system (sim_conveyor.cpp) ---
     void system_conveyor_transport();
