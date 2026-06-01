@@ -75,6 +75,7 @@ find_package(SDL2 QUIET)
 if(SDL2_FOUND)
   add_executable(vida_gui
     src/main_gui.cpp
+    src/graphical_view.cpp
     src/config.cpp
     ${VIDA_SIM_SOURCES}
   )
