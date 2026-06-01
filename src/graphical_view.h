@@ -1,12 +1,12 @@
 #pragma once
 
 #include "simulation.h"
+#include "sprite_atlas.h"
+#include "font_cache.h"
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <string>
 #include <vector>
-#include <cmath>
-#include <algorithm>
 #include <unordered_set>
 
 class GraphicalView {
@@ -24,46 +24,73 @@ private:
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
+    SpriteAtlas atlas_;
+    FontCache fonts_;
 
     static constexpr int WIN_W = 1280;
     static constexpr int WIN_H = 720;
     static constexpr int TILE_W = 32;
     static constexpr int TILE_H = 16;
 
+    // Camera
     float cam_x_ = 0;
     float cam_y_ = 0;
+    float cam_target_x_ = 0;
+    float cam_target_y_ = 0;
     float zoom_ = 1.0f;
+    float zoom_target_ = 1.0f;
+
+    // Selection
     int selected_idx_ = 0;
+    bool follow_agent_ = false;
+
+    // Speed
+    int speed_idx_ = 2; // index into SPEED_PRESETS
+    static constexpr int SPEED_PRESETS[] = {20, 50, 100, 150, 200, 300, 500};
+    static constexpr int SPEED_COUNT = 7;
+
+    // View toggles
     bool show_help_ = false;
+    bool show_log_ = true;
+    bool show_grid_coords_ = false;
+    bool log_follow_agent_ = false;
+    bool show_quit_confirm_ = false;
+
+    // Drag
     bool drag_ = false;
     int drag_last_x_ = 0;
     int drag_last_y_ = 0;
 
-    bool follow_agent_ = false;
-    int speed_ms_ = 100;
-    bool show_log_ = true;
-    bool show_grid_coords_ = false;
-    int log_scroll_ = 0;
+    // Panel
+    static constexpr int PANEL_W = 280;
+    int panel_scroll_ = 0;
 
+    // Held keys for smooth input
     std::unordered_set<SDL_Keycode> keys_held_;
-    bool chord_active_ = false;
-    SDL_Keycode chord_key_ = SDLK_UNKNOWN;
 
+    // Panel tab
+    enum class PanelTab : int { Needs = 0, Personality, Social, Utility, COUNT };
+    PanelTab panel_tab_ = PanelTab::Needs;
+
+    // Hover
+    int hover_gx_ = -1;
+    int hover_gy_ = -1;
+
+    // --- Methods ---
     void handle_events();
     void handle_held_keys();
+    void update_camera_smooth();
     void render();
-    void render_iso_tile(int gx, int gy, SDL_Color color, bool filled);
     void render_tile(int gx, int gy, const std::vector<entt::entity>& agents);
-    void render_agent_marker(int gx, int gy, bool selected, int count);
     void render_header_bar();
     void render_side_panel();
-    void render_log_panel();
     void render_help_overlay();
+    void render_quit_confirm();
+    void render_tooltip();
     void render_bar(int x, int y, int w, int h, float pct, SDL_Color fg, SDL_Color bg);
-    void render_text_solid(int x, int y, const char* text, SDL_Color color);
-    void render_text_solid(int x, int y, const std::string& text, SDL_Color color);
     void render_rect(int x, int y, int w, int h, SDL_Color color);
     void render_rect_outline(int x, int y, int w, int h, SDL_Color color);
+    void render_separator(int x, int y, int w);
 
     void iso_to_screen(int gx, int gy, float& sx, float& sy) const;
     bool screen_to_grid(int sx, int sy, int& gx, int& gy) const;
@@ -71,6 +98,8 @@ private:
     void center_on_agent();
     void next_agent(int dir = 1);
     void prev_agent();
+    int speed_ms() const;
+    void cycle_speed(int dir);
 
     static std::string ff(float v) {
         char b[16];
@@ -78,6 +107,7 @@ private:
         return b;
     }
 
+    // --- Color palette ---
     static constexpr SDL_Color COL_BG       = {20, 20, 30, 255};
     static constexpr SDL_Color COL_WALL     = {60, 60, 80, 255};
     static constexpr SDL_Color COL_FLOOR    = {100, 100, 110, 255};
@@ -108,5 +138,7 @@ private:
     static constexpr SDL_Color COL_BAR_BG   = {50, 50, 60, 255};
     static constexpr SDL_Color COL_HEADER   = {30, 30, 45, 255};
     static constexpr SDL_Color COL_HIGHLIGHT= {255, 200, 60, 255};
-    static constexpr SDL_Color COL_CHORD    = {255, 160, 60, 255};
+    static constexpr SDL_Color COL_TAB_ACTIVE = {45, 45, 65, 255};
+    static constexpr SDL_Color COL_TAB_INACTIVE = {25, 25, 40, 255};
+    static constexpr SDL_Color COL_TOOLTIP_BG = {15, 15, 25, 230};
 };

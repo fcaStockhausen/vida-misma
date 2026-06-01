@@ -24,14 +24,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tomlplusplus)
 
-# FTXUI (terminal UI)
-FetchContent_Declare(
-  ftxui
-  GIT_REPOSITORY https://github.com/ArthurSonzogni/ftxui.git
-  GIT_TAG v6.0.1
-)
-FetchContent_MakeAvailable(ftxui)
-
 set(VIDA_SIM_SOURCES
   src/simulation.cpp
   src/sim_utility.cpp
@@ -41,54 +33,56 @@ set(VIDA_SIM_SOURCES
   src/sim_conveyor.cpp
 )
 
-# --- Main executable (interactive TUI) ---
-add_executable(vida_misma
-  src/main.cpp
+# --- SDL2 GUI executable (primary) ---
+find_package(SDL2 QUIET)
+if(NOT SDL2_FOUND)
+  message(FATAL_ERROR "SDL2 is required but was not found")
+endif()
+
+# SDL2_ttf: find header and library manually (Homebrew on macOS)
+find_path(SDL2_TTF_INCLUDE_DIR NAMES SDL_ttf.h PATHS /opt/homebrew/include/SDL2 NO_DEFAULT_PATH)
+find_library(SDL2_TTF_LIBRARY NAMES SDL2_ttf PATHS /opt/homebrew/lib NO_DEFAULT_PATH)
+
+if(NOT SDL2_TTF_INCLUDE_DIR OR NOT SDL2_TTF_LIBRARY)
+  message(FATAL_ERROR "SDL2_ttf is required but was not found")
+endif()
+
+message(STATUS "SDL2_ttf include: ${SDL2_TTF_INCLUDE_DIR}")
+message(STATUS "SDL2_ttf library: ${SDL2_TTF_LIBRARY}")
+
+add_executable(vida_gui
+  src/main_gui.cpp
+  src/graphical_view.cpp
+  src/font_cache.cpp
   src/config.cpp
   ${VIDA_SIM_SOURCES}
 )
+target_link_libraries(vida_gui PRIVATE
+  EnTT::EnTT
+  tomlplusplus::tomlplusplus
+  SDL2::SDL2
+  SDL2::SDL2main
+  ${SDL2_TTF_LIBRARY}
+)
+target_include_directories(vida_gui PRIVATE
+  src
+  ${SDL2_TTF_INCLUDE_DIR}/..
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(vida_gui PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
+endif()
 
-# --- Batch runner (no TUI) ---
+# --- Batch runner (headless) ---
 add_executable(vida_batch
   src/batch_main.cpp
   src/config.cpp
   ${VIDA_SIM_SOURCES}
 )
-
-# --- Link both targets ---
-foreach(tgt vida_misma vida_batch)
-  target_link_libraries(${tgt} PRIVATE
-    EnTT::EnTT
-    tomlplusplus::tomlplusplus
-  )
-  target_include_directories(${tgt} PRIVATE src)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(${tgt} PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
-  endif()
-endforeach()
-
-# FTXUI only for interactive target
-target_link_libraries(vida_misma PRIVATE ftxui::screen ftxui::dom ftxui::component)
-
-# --- SDL2 GUI executable ---
-find_package(SDL2 QUIET)
-if(SDL2_FOUND)
-  add_executable(vida_gui
-    src/main_gui.cpp
-    src/graphical_view.cpp
-    src/config.cpp
-    ${VIDA_SIM_SOURCES}
-  )
-  target_link_libraries(vida_gui PRIVATE
-    EnTT::EnTT
-    tomlplusplus::tomlplusplus
-    SDL2::SDL2
-    SDL2::SDL2main
-  )
-  target_include_directories(vida_gui PRIVATE src)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(vida_gui PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
-  endif()
-else()
-  message(STATUS "SDL2 not found — vida_gui target skipped")
+target_link_libraries(vida_batch PRIVATE
+  EnTT::EnTT
+  tomlplusplus::tomlplusplus
+)
+target_include_directories(vida_batch PRIVATE src)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(vida_batch PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
 endif()

@@ -1,5 +1,6 @@
 #include "simulation.h"
 #include <algorithm>
+#include <set>
 
 // ============================================================
 // Construction & lifecycle
@@ -389,12 +390,20 @@ void Simulation::system_update_stress() {
 
         // === STRESS STATE TRANSITIONS ===
         if (stress.state != StressState::REDEEMED) {
+            StressState old_state = stress.state;
             StressState new_state;
             if (stress.value < 0.4f)       new_state = StressState::NORMAL;
             else if (stress.value < 0.7f)  new_state = StressState::DISSOCIATED;
             else if (stress.value < 0.9f)  new_state = StressState::HOSTILE_EUPHORIA;
             else                           new_state = StressState::BROKEN;
-            stress.state = new_state;
+            if (new_state != old_state) {
+                stress.state = new_state;
+                char buf[80];
+                std::snprintf(buf, sizeof(buf), "%s -> %s (stress %.2f)",
+                    stress_state_name(old_state), stress_state_name(new_state), stress.value);
+                chronicle(agent.id, EventType::STRESS_STATE_CHANGE, buf,
+                    -1, -1, stress.value);
+            }
         }
 
         // === HOSTILE EUPHORIA: artificial mood boost ===
@@ -735,6 +744,12 @@ void Simulation::system_faction_formation() {
     int n = (int)alive.size();
     if (n < 3) return;
 
+    // Snapshot old faction assignments for delta detection
+    std::vector<int> old_faction(n, -1);
+    for (int i = 0; i < n; i++) {
+        old_faction[i] = registry_.get<AgentComponent>(alive[i]).faction_id;
+    }
+
     // Reset faction IDs
     for (auto e : alive) {
         registry_.get<AgentComponent>(e).faction_id = -1;
@@ -794,6 +809,39 @@ void Simulation::system_faction_formation() {
     }
 
     factions_formed_ = next_faction;
+
+    // Count members per new faction
+    std::vector<int> faction_sizes(next_faction, 0);
+    for (int i = 0; i < n; i++) {
+        int fid = registry_.get<AgentComponent>(alive[i]).faction_id;
+        if (fid >= 0 && fid < next_faction) faction_sizes[fid]++;
+    }
+
+    // Emit chronicle events for faction changes
+    std::set<int> formed_logged;
+    for (int i = 0; i < n; i++) {
+        int new_fid = registry_.get<AgentComponent>(alive[i]).faction_id;
+        int old_fid = old_faction[i];
+
+        if (new_fid >= 0 && old_fid < 0) {
+            int aid = registry_.get<AgentComponent>(alive[i]).id;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "joined faction %d", new_fid);
+            chronicle(aid, EventType::FACTION_JOINED, buf, -1, -1, 0.0f, new_fid);
+
+            if (formed_logged.insert(new_fid).second) {
+                char fbuf[64];
+                std::snprintf(fbuf, sizeof(fbuf),
+                    "faction %d formed (%d members)", new_fid, faction_sizes[new_fid]);
+                chronicle_.log(tick_, EventType::FACTION_FORMED, -1, fbuf);
+            }
+        } else if (old_fid >= 0 && new_fid < 0) {
+            int aid = registry_.get<AgentComponent>(alive[i]).id;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "left faction %d", old_fid);
+            chronicle(aid, EventType::FACTION_LEFT, buf, -1, -1, 0.0f, old_fid);
+        }
+    }
 }
 
 // ============================================================
