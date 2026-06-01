@@ -70,3 +70,5 @@ Factory seems to have a belt going from storage to output by default, It shouldn
 
 ## About the doc/
 design_spec should be updated more often because its our core design document, plans should be in plans, this document is the human interface (i write on this as a human). some documents in root (like PHASE8_FIXPLAN.md) if are no longer needed should be archived or removed
+
+# 2026-05-31 23:08 

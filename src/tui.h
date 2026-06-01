@@ -441,6 +441,7 @@ private:
         auto& iv  = sim_.registry().get<InventoryComponent>(e);
         auto& po  = sim_.registry().get<PositionComponent>(e);
         auto& soc = sim_.registry().get<SocialComponent>(e);
+        auto& op  = sim_.registry().get<OpinionComponent>(e);
 
         static const char* aname[] = {
             "GATHER","BUILD","WORK","EAT","REST","SOCIALIZE","CREATE","EXPLORE","GET_FOOD","MAINTAIN","DSMNTL","SABOTAGE","IDLE"
@@ -517,6 +518,12 @@ private:
             pg("mood",      soc.mood),
             pg("influence", soc.influence),
             pg("energy",    soc.social_energy),
+            separator(),
+            text("OPINIONS") | bold | underlined,
+            pg("ethic",  op.values[0]),
+            pg("risk",   op.values[1]),
+            pg("trad",   op.values[2]),
+            pg("solid",  op.values[3]),
             separator(),
             text("UTILITY") | bold | underlined,
             ur("GATHER",   ac.last_utility_gather),

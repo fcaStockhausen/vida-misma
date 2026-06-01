@@ -52,6 +52,7 @@ void Simulation::advance() {
     social_.update_influence(registry_, alive);
     social_.update_mood(registry_, alive);
     social_.decay_relationships(tick_);
+    social_.leader_opinion_pull(alive, registry_, factions_formed_);
 
     // Social penalty: agents who dismantled conveyors that weren't rebuilt
     // within the window lose trust with everyone who notices.
@@ -183,6 +184,12 @@ void Simulation::spawn_initial_agents() {
         registry_.emplace<ActionComponent>(entity, ActionType::IDLE);
         registry_.emplace<StressComponent>(entity, 0.0f);
         registry_.emplace<SocialComponent>(entity);
+        // Opinion priors from archetype + per-agent noise
+        OpinionComponent op = archetype_opinion_priors(at);
+        std::uniform_real_distribution<float> op_jitter(-0.10f, 0.10f);
+        for (int d = 0; d < OpinionComponent::DIMS; d++)
+            op.values[d] = std::clamp(op.values[d] + op_jitter(rng_), 0.05f, 0.95f);
+        registry_.emplace<OpinionComponent>(entity, op);
         InventoryComponent inv;
         inv.food = config_.initial_food_per_agent;  // bootstrap until the factory runs
         registry_.emplace<InventoryComponent>(entity, inv);
@@ -728,15 +735,17 @@ void Simulation::system_faction_formation() {
         registry_.get<AgentComponent>(e).faction_id = -1;
     }
 
-    // Find trust clusters: simple connected components where all edges have trust > 0.4
+    // Find trust+opinion clusters: connected components where edges have
+    // mutual trust > 0.3 AND opinion distance < 0.5 (bounded confidence).
     int next_faction = 0;
     std::vector<int> component(n, -1);
 
     for (int i = 0; i < n; i++) {
         if (component[i] >= 0) continue;
-        int aid = registry_.get<AgentComponent>(alive[i]).id;
 
-        // BFS: find all agents reachable via mutual trust > 0.4
+        auto& op_i = registry_.get<OpinionComponent>(alive[i]);
+
+        // BFS: find all agents reachable via mutual trust + opinion proximity
         std::vector<int> cluster;
         std::vector<int> queue;
         queue.push_back(i);
@@ -753,12 +762,20 @@ void Simulation::system_faction_formation() {
                 int oid = registry_.get<AgentComponent>(alive[j]).id;
                 const auto& rel_ab = social_.get_rel(cid, oid);
                 const auto& rel_ba = social_.get_rel(oid, cid);
-                if (rel_ab.trust > 0.4f && rel_ba.trust > 0.4f
-                    && rel_ab.familiarity > 0.3f) {
-                    component[j] = next_faction;
-                    cluster.push_back(j);
-                    queue.push_back(j);
-                }
+
+                // Must have mutual trust > 0.3 and familiarity > 0.2
+                bool trust_ok = rel_ab.trust > 0.3f && rel_ba.trust > 0.3f
+                             && rel_ab.familiarity > 0.2f;
+                if (!trust_ok) continue;
+
+                // Opinion distance must be below threshold (bounded confidence)
+                auto& op_j = registry_.get<OpinionComponent>(alive[j]);
+                float op_dist = SocialFabric::opinion_distance(op_i, op_j);
+                if (op_dist > 0.5f) continue;
+
+                component[j] = next_faction;
+                cluster.push_back(j);
+                queue.push_back(j);
             }
         }
 

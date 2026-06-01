@@ -222,6 +222,42 @@ struct StressComponent {
     bool can_redeem = false;  // set true after first sabotage; enables redemption roll
 };
 
+// Opinion dynamics: cultural beliefs that diverge via bounded confidence (doc §8.5)
+// Each dimension is [0, 1] — 0 and 1 represent opposing stances.
+struct OpinionComponent {
+    static constexpr int DIMS = 4;
+    float values[DIMS] = {0.5f, 0.5f, 0.5f, 0.5f};
+    // [0] work_ethic:   0=slacker,      1=workaholic
+    // [1] risk_tolerance:0=cautious,      1=reckless
+    // [2] tradition:     0=innovative,    1=traditionalist
+    // [3] solidarity:    0=selfish,       1=collectivist
+};
+
+inline OpinionComponent archetype_opinion_priors(Archetype a) {
+    OpinionComponent op;
+    switch (a) {
+        //                           ethic  risk   trad   solid
+        case Archetype::FOREMAN:       op = {{0.85f, 0.30f, 0.70f, 0.80f}}; break;
+        case Archetype::NETWORKER:     op = {{0.50f, 0.50f, 0.30f, 0.90f}}; break;
+        case Archetype::ARTISAN:       op = {{0.30f, 0.60f, 0.10f, 0.40f}}; break;
+        case Archetype::SURVIVOR:      op = {{0.60f, 0.20f, 0.50f, 0.30f}}; break;
+        case Archetype::EXPLORER:      op = {{0.40f, 0.85f, 0.15f, 0.35f}}; break;
+        case Archetype::STEADY_WORKER: op = {{0.80f, 0.15f, 0.80f, 0.65f}}; break;
+        default:                       op = {{0.50f, 0.50f, 0.50f, 0.50f}}; break;
+    }
+    return op;
+}
+
+inline const char* opinion_dim_name(int d) {
+    switch (d) {
+        case 0: return "ethic";
+        case 1: return "risk";
+        case 2: return "trad";
+        case 3: return "solid";
+        default: return "?";
+    }
+}
+
 struct AgentComponent {
     int id = 0;
     bool alive = true;

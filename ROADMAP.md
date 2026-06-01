@@ -7,8 +7,8 @@ Grid-based factory simulation where autonomous agents build, produce, socialize,
 
 ## Current State
 
-**4,623 LOC** across 17 source files. Compiles clean (Clang, C++20, CMake).
-Both `vida_misma` (TUI) and `vida_batch` (headless) targets build successfully.
+**7,230 LOC** across 22 source files. Compiles clean (Clang, C++20, CMake).
+Three targets: `vida_misma` (FTXUI TUI), `vida_batch` (headless), `vida_gui` (SDL2 2.5D isometric).
 
 Latest batch results (3000 ticks, 7 seeds, 24 agents):
 - Average survivors: 2.1 (up from 1.3)
@@ -22,24 +22,28 @@ Latest batch results (3000 ticks, 7 seeds, 24 agents):
 
 ```
 src/
-  components.h          250   ECS components, enums, archetype tables
+  components.h          280   ECS components, enums, archetype tables, opinion component
   config.h               88   Config struct + TOML loader
   config.cpp            112   TOML parsing implementation
-  grid.h                626   60x40 grid, tile types, machine clusters, conveyor placement
+  grid.h                626   60x40 grid, tile types, machine clusters, WFC generator
+  wfc_generator.h       400   Wave Function Collapse procedural map layout
   pathfinding.h         110   A* implementation (exists, not integrated)
-  social.h              282   SocialFabric: trust, familiarity, contagion, influence, mood, grief
+  social.h              400   SocialFabric: trust, familiarity, contagion, influence, mood, grief, opinions
   simulation.h          145   Simulation orchestrator
-  simulation.cpp        460   Tick loop, systems, death, quota, factory health
+  simulation.cpp        500   Tick loop, systems, death, quota, factory health, factions
   sim_utility.cpp       398   Utility AI: 11 actions, social learning, infra_gap drive
-  sim_execute.cpp       690   Action execution: BUILD, WORK, GATHER, EAT, SHARE, DISMANTLE...
+  sim_execute.cpp       700   Action execution: BUILD, WORK, GATHER, EAT, SHARE, DISMANTLE...
   sim_targets.cpp       180   Target finding: nearest unbuilt machine, scrap, storage, etc.
   sim_movement.cpp       72   Movement toward targets with noise
   sim_conveyor.cpp       76   Conveyor belt transport chain
   batch_main.cpp        214   Headless runner with multi-seed, timeline report
   main.cpp               20   Entry point (TUI)
-  renderer.h            346   FTXUI grid renderer
-  tui.h                 553   FTXUI interactive interface
+  renderer.h            346   FTXUI grid renderer (legacy)
+  tui.h                 560   FTXUI interactive interface
   renderer.cpp            1   (empty)
+  graphical_view.h       100   SDL2 isometric renderer declaration
+  graphical_view.cpp     900   SDL2 2.5D isometric renderer with bitmap font
+  main_gui.cpp            36   GUI entry point
 config/
   default.toml               All tunable parameters
 doc/
@@ -62,13 +66,20 @@ doc/
 ### Agent Systems
 - [x] Utility AI with 11 action types (GATHER, BUILD, WORK, EAT, REST, SOCIALIZE, CREATE, EXPLORE, GET_FOOD, MAINTAIN, DISMANTLE)
 - [x] Need decay: hunger, rest, social, expression, purpose
+### Stress & Trauma
 - [x] Stress accumulation with personality modulation
-- [x] 3 death causes: starvation (burnout), exhaustion (collapse), stress (breakdown), factory collapse
-- [x] Inventory system with food, raw_material, construction_material
-
-### Personality Archetypes (based on Big Five, Belbin, RIASEC)
-- [x] 6 archetypes: Foreman, Networker, Artisan, Survivor, Explorer, Steady Worker
-- [x] Per-archetype base traits with per-agent jitter (+-0.08 to +-0.10)
+- [x] 5 stress states: NORMAL → DISSOCIATED → EUPHORIC → BROKEN → REDEEMED
+- [x] Permanent trauma from chronic stress (never decays)
+- [x] Noncompliance tracking: factory "notices" slacking agents
+- [x] Sabotage action: high-stress agents damage conveyors
+- [x] Redemption arc: Broken agents can recover via prolonged low-stress
+- [x] Suicide risk for severely traumatized agents
+- [x] Stress-affected personality: trauma reduces gregariousness, curiosity
+- [x] 4 death causes: starvation, exhaustion, breakdown, factory collapse
+- [x] Cultural artifacts: CREATE spawns mood-boosting objects at location
+- [x] Hidden spaces: factory seals overused rest areas
+- [x] 6 personality archetypes: Foreman, Networker, Artisan, Survivor, Explorer, Steady Worker
+- [x] Per-archetype base traits with per-agent jitter
 - [x] Balanced distribution across 24 agents
 - [x] Archetype name displayed in batch output
 
@@ -94,6 +105,17 @@ doc/
 - [x] Relationship decay over time (familiarity fades, trust drifts to neutral)
 - [x] Negative interactions: witnesses report transgressions, trust drops
 
+### Opinion Dynamics (doc §8.5 — Hegselmann-Krause bounded confidence + DeGroot)
+- [x] Each agent holds 4D opinion vector: work_ethic, risk_tolerance, tradition, solidarity
+- [x] Archetype-based priors with per-agent jitter (e.g., Foreman → high work_ethic, Artisan → low tradition)
+- [x] SOCIALIZE exchanges opinions via bounded confidence (ε=0.3): agents only shift toward neighbors within ε
+- [x] DeGroot-weighted averaging: influence ratio determines persuasion strength
+- [x] Trust-modulated learning rate: trusted contacts shift opinions faster
+- [x] Agents with similar opinions + mutual trust cluster into factions (BFS, dual criteria)
+- [x] Faction trust modulation: same faction = trust boost, different faction = friction
+- [x] Leader opinion pull: high-influence agents gently shift faction consensus toward their views
+- [x] Opinions displayed in TUI agent panel and GUI side panel
+
 ### Adaptive Infrastructure
 - [x] DISMANTLE action: tear down dead-end or blocking conveyors for raw_material refund
 - [x] Social penalty for dismantlers who don't rebuild
@@ -103,6 +125,17 @@ doc/
 - [x] FTXUI interactive TUI with grid view, agent details, log
 - [x] Batch runner with timeline report (actions, production, deaths)
 - [x] Multi-seed support for consistency testing
+- [x] SDL2 2.5D isometric GUI with WASD camera, zoom, chord keyboard system
+- [x] 5×7 bitmap pixel font (no SDL2_ttf dependency)
+- [x] Side panel with needs, personality, opinions, stress, inventory, utility
+- [x] Header bar with sim stats, help overlay with controls + legend
+
+### Procedural Generation
+- [x] WFC (Wave Function Collapse) map layout replaces hardcoded factory
+- [x] 3-type structural WFC (Wall/Floor/OpenSpace) with weighted priors
+- [x] Layered generation: structural → functional stamping → bootstrap
+- [x] Seed-reproducible, configurable via `use_wfc` in TOML
+- [x] `generate_default()` preserved as fallback
 
 ### Documentation
 - [x] 20-section academic document (Pandoc + XeLaTeX, builds to PDF/HTML)
@@ -141,16 +174,9 @@ Currently factory health decays at a fixed rate. A Director would:
 
 Estimated: ~500-800 LOC new, modifications to `simulation.cpp` tick loop
 
-### Priority 2: Opinion Dynamics (Phase 7 of original roadmap)
-With archetypes in place, agents can develop cultural divergence:
-
-- [ ] Each agent holds an opinion vector (e.g., work ethic, risk tolerance, tradition vs. innovation)
-- [ ] SOCIALIZE exchanges opinions via DeGroot averaging or bounded confidence
-- [ ] Agents with similar opinions cluster into factions
-- [ ] Faction alignment modulates trust: same faction = trust boost, different = friction
-- [ ] Leaders (high influence) pull faction opinions toward their own
-
-Estimated: ~400-600 LOC new in `social.h` + `components.h`
+### Priority 2: ~~Opinion Dynamics~~ ✓ (Phase 7)
+Implemented via bounded confidence (Hegselmann-Krause) + DeGroot weighting.
+See Completed Features → Opinion Dynamics.
 
 ### Priority 3: Pathfinding Integration (Phase 3 of original roadmap)
 The A* code exists. It needs to be wired into the movement system:
@@ -184,16 +210,8 @@ Agents get better at tasks through practice:
 
 Estimated: ~400-500 LOC new in `components.h` + `sim_execute.cpp`
 
-### Priority 6: World Generation (Phase 1 of original roadmap)
-Currently using a hardcoded factory layout. For a more open simulation:
-
-- [ ] Procedural map generation (Perlin/Simplex noise for elevation)
-- [ ] Biome classification from layered noise (temperature, rainfall, drainage)
-- [ ] Resource placement based on biome
-- [ ] Region delineation via relaxed Voronoi
-- [ ] This is a major scope expansion — only pursue if moving toward Dwarf Fortress style
-
-Estimated: ~2,000 LOC new
+### Priority 6: ~~WFC Procedural Map~~ ✓
+Implemented. See Completed Features → Procedural Generation.
 
 ---
 

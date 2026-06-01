@@ -706,6 +706,7 @@ void GraphicalView::render_side_panel() {
     auto& iv  = sim_.registry().get<InventoryComponent>(e);
     auto& po  = sim_.registry().get<PositionComponent>(e);
     auto& soc = sim_.registry().get<SocialComponent>(e);
+    auto& op  = sim_.registry().get<OpinionComponent>(e);
 
     int bw = pw - 20;
 
@@ -788,6 +789,16 @@ void GraphicalView::render_side_panel() {
     pg("mood", soc.mood);
     pg("infl", soc.influence);
     pg("enrg", soc.social_energy);
+    y += 4;
+
+    SDL_SetRenderDrawColor(renderer_, 50, 50, 60, 255);
+    SDL_RenderDrawLine(renderer_, px + 5, y, px + pw - 5, y); y += 6;
+
+    render_text_solid(px + 10, y, "OPINIONS", COL_WHITE); y += 16;
+    pg("ethic", op.values[0]);
+    pg("risk",  op.values[1]);
+    pg("trad",  op.values[2]);
+    pg("solid", op.values[3]);
     y += 4;
 
     SDL_SetRenderDrawColor(renderer_, 50, 50, 60, 255);

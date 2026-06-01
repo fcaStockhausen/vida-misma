@@ -410,6 +410,22 @@ void Simulation::system_execute_actions() {
                         registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id) {
                         needs.meaning = std::max(0.0f, needs.meaning - 0.02f);
                     }
+                    // Opinion exchange: bounded confidence (Hegselmann-Krause, doc §8.5)
+                    {
+                        auto& my_op = registry_.get<OpinionComponent>(e);
+                        auto& their_op = registry_.get<OpinionComponent>(neighbor);
+                        auto& my_soc = registry_.get<SocialComponent>(e);
+                        auto& their_soc = registry_.get<SocialComponent>(neighbor);
+                        social_.exchange_opinions(
+                            agent.id, neighbor_id,
+                            my_op, their_op,
+                            my_soc.influence, their_soc.influence);
+                    }
+                    // Faction trust modulation
+                    social_.apply_faction_trust_modulation(
+                        agent.id, neighbor_id, tick_,
+                        agent.faction_id,
+                        registry_.get<AgentComponent>(neighbor).faction_id);
                     // S5: High-trust social contact reduces stress
                     float trust = social_.get_rel(agent.id, neighbor_id).trust;
                     stress.value = std::max(0.0f, stress.value - std::max(0.0f, trust) * 0.003f);

@@ -276,6 +276,121 @@ public:
         rel.last_tick = tick;
     }
 
+    // --- 9. Opinion exchange via bounded confidence (Hegselmann-Krause, doc §8.5) ---
+    // Agent i only averages opinions with agent j if |x_i - x_j| < epsilon.
+    // Leaders (high influence) exert stronger pull via DeGroot-weighted averaging.
+    // Returns true if opinions changed.
+    bool exchange_opinions(
+        int agent_a, int agent_b,
+        OpinionComponent& op_a, OpinionComponent& op_b,
+        float influence_a, float influence_b,
+        float epsilon = 0.3f)
+    {
+        // DeGroot weights: higher influence = more pull.
+        // w_a = influence_a / (influence_a + influence_b), clamped for stability.
+        float total_inf = influence_a + influence_b;
+        if (total_inf < 0.01f) return false;
+        float w_a = influence_a / total_inf;  // weight of A's opinion in the blend
+        float w_b = 1.0f - w_a;              // weight of B's opinion
+
+        // Learning rate: trust amplifies how much each agent shifts.
+        const auto& rel_ab = get_rel(agent_a, agent_b);
+        float trust_factor = 0.5f + 0.5f * std::max(0.0f, rel_ab.trust);  // [0.5, 1.0]
+        float lr = 0.1f * trust_factor;  // base learning rate * trust
+
+        bool changed = false;
+        for (int d = 0; d < OpinionComponent::DIMS; d++) {
+            float diff = std::abs(op_a.values[d] - op_b.values[d]);
+            if (diff < epsilon) {
+                // Bounded confidence: close enough to influence each other
+                // DeGroot weighted average: each agent moves toward the blend
+                float blend = w_a * op_a.values[d] + w_b * op_b.values[d];
+
+                float old_a = op_a.values[d];
+                float old_b = op_b.values[d];
+                op_a.values[d] += (blend - op_a.values[d]) * lr;
+                op_b.values[d] += (blend - op_b.values[d]) * lr;
+
+                // Clamp to [0, 1]
+                op_a.values[d] = std::clamp(op_a.values[d], 0.0f, 1.0f);
+                op_b.values[d] = std::clamp(op_b.values[d], 0.0f, 1.0f);
+
+                if (std::abs(op_a.values[d] - old_a) > 0.001f ||
+                    std::abs(op_b.values[d] - old_b) > 0.001f)
+                    changed = true;
+            }
+        }
+        return changed;
+    }
+
+    // --- 10. Euclidean distance between two opinion vectors ---
+    static float opinion_distance(const OpinionComponent& a, const OpinionComponent& b) {
+        float sum = 0.0f;
+        for (int d = 0; d < OpinionComponent::DIMS; d++) {
+            float diff = a.values[d] - b.values[d];
+            sum += diff * diff;
+        }
+        return std::sqrt(sum);
+    }
+
+    // --- 11. Faction trust modulation ---
+    // Same faction: trust boost. Different faction: friction.
+    void apply_faction_trust_modulation(
+        int agent_a, int agent_b, int tick,
+        int faction_a, int faction_b)
+    {
+        if (faction_a < 0 || faction_b < 0) return;  // no faction = no modulation
+        if (faction_a == faction_b) {
+            // Same faction: small trust boost per interaction
+            auto& rel = get_rel(agent_a, agent_b);
+            rel.trust = std::clamp(rel.trust + 0.01f, -1.0f, 1.0f);
+        } else {
+            // Different faction: small friction
+            auto& rel = get_rel(agent_a, agent_b);
+            rel.trust = std::clamp(rel.trust - 0.005f, -1.0f, 1.0f);
+        }
+    }
+
+    // --- 12. Leader opinion pull (high-influence agents shift faction consensus) ---
+    // Called per tick for each faction: find the most influential member,
+    // then all faction members drift slightly toward that leader's opinions.
+    void leader_opinion_pull(
+        const std::vector<entt::entity>& alive,
+        entt::registry& registry,
+        int max_faction_id)
+    {
+        for (int f = 0; f <= max_faction_id; f++) {
+            // Find leader (highest influence in this faction)
+            entt::entity leader = entt::null;
+            float max_inf = 0.0f;
+            OpinionComponent leader_op;
+
+            for (auto e : alive) {
+                auto& ag = registry.get<AgentComponent>(e);
+                if (!ag.alive || ag.faction_id != f) continue;
+                auto& soc = registry.get<SocialComponent>(e);
+                if (soc.influence > max_inf) {
+                    max_inf = soc.influence;
+                    leader = e;
+                    leader_op = registry.get<OpinionComponent>(e);
+                }
+            }
+            if (leader == entt::null || max_inf < 0.1f) continue;
+
+            // Pull all faction members toward leader's opinions
+            float pull_strength = 0.02f * max_inf;  // stronger leader = stronger pull
+            for (auto e : alive) {
+                auto& ag = registry.get<AgentComponent>(e);
+                if (!ag.alive || ag.faction_id != f || e == leader) continue;
+                auto& op = registry.get<OpinionComponent>(e);
+                for (int d = 0; d < OpinionComponent::DIMS; d++) {
+                    op.values[d] += (leader_op.values[d] - op.values[d]) * pull_strength;
+                    op.values[d] = std::clamp(op.values[d], 0.0f, 1.0f);
+                }
+            }
+        }
+    }
+
 private:
     int max_agents_;
     std::vector<RelationshipEntry> rels_;
