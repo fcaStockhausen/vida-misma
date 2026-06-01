@@ -34,21 +34,23 @@ set(VIDA_SIM_SOURCES
 )
 
 # --- SDL2 GUI executable (primary) ---
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-  message(FATAL_ERROR "SDL2 is required but was not found")
-endif()
-
-# SDL2_ttf: find header and library manually (Homebrew on macOS)
+# Use Homebrew SDL2 + SDL2_ttf exclusively to avoid duplicate objc class loading
+# when both framework and dylib are present on macOS.
+find_path(SDL2_INCLUDE_DIR NAMES SDL.h PATHS /opt/homebrew/include/SDL2 NO_DEFAULT_PATH)
+find_library(SDL2_LIBRARY NAMES SDL2 PATHS /opt/homebrew/lib NO_DEFAULT_PATH)
 find_path(SDL2_TTF_INCLUDE_DIR NAMES SDL_ttf.h PATHS /opt/homebrew/include/SDL2 NO_DEFAULT_PATH)
 find_library(SDL2_TTF_LIBRARY NAMES SDL2_ttf PATHS /opt/homebrew/lib NO_DEFAULT_PATH)
+find_library(SDL2_MAIN_LIBRARY NAMES SDL2main PATHS /opt/homebrew/lib NO_DEFAULT_PATH)
 
+if(NOT SDL2_INCLUDE_DIR OR NOT SDL2_LIBRARY)
+  message(FATAL_ERROR "SDL2 not found in /opt/homebrew")
+endif()
 if(NOT SDL2_TTF_INCLUDE_DIR OR NOT SDL2_TTF_LIBRARY)
-  message(FATAL_ERROR "SDL2_ttf is required but was not found")
+  message(FATAL_ERROR "SDL2_ttf not found in /opt/homebrew")
 endif()
 
-message(STATUS "SDL2_ttf include: ${SDL2_TTF_INCLUDE_DIR}")
-message(STATUS "SDL2_ttf library: ${SDL2_TTF_LIBRARY}")
+message(STATUS "SDL2: ${SDL2_LIBRARY}")
+message(STATUS "SDL2_ttf: ${SDL2_TTF_LIBRARY}")
 
 add_executable(vida_gui
   src/main_gui.cpp
@@ -60,13 +62,13 @@ add_executable(vida_gui
 target_link_libraries(vida_gui PRIVATE
   EnTT::EnTT
   tomlplusplus::tomlplusplus
-  SDL2::SDL2
-  SDL2::SDL2main
+  ${SDL2_LIBRARY}
+  ${SDL2_MAIN_LIBRARY}
   ${SDL2_TTF_LIBRARY}
 )
 target_include_directories(vida_gui PRIVATE
   src
-  ${SDL2_TTF_INCLUDE_DIR}/..
+  ${SDL2_INCLUDE_DIR}/..
 )
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(vida_gui PRIVATE -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers)
