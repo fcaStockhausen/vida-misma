@@ -289,18 +289,14 @@ static int cmd_map(int argc, char* argv[]) {
 
     std::printf("=== Map Diagnostic (seed=%d) ===\n\n", cfg.seed);
 
-    // Count walls
-    int inner_walls = 0, boundary_walls = 0;
+    // Count boundary walls (no inner walls — open floor plan)
+    int boundary_walls = 0;
     for (int y = 0; y < grid.height(); y++)
         for (int x = 0; x < grid.width(); x++) {
-            if (grid.at(x, y) == TileType::Wall) {
-                if (x == 0 || x == grid.width()-1 || y == 0 || y == grid.height()-1)
-                    boundary_walls++;
-                else
-                    inner_walls++;
-            }
+            if (grid.at(x, y) == TileType::Wall)
+                boundary_walls++;
         }
-    std::printf("  Walls: %d boundary, %d inner\n\n", boundary_walls, inner_walls);
+    std::printf("  Boundary walls: %d\n\n", boundary_walls);
 
     // All special tiles
     for (int y = 0; y < grid.height(); y++)

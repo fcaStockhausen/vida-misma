@@ -46,7 +46,13 @@ public:
     std::vector<Placement> generate() {
         pre_collapse_boundaries();
         pre_collapse_portals();
-        forbid_inner_walls();
+        // Open floor plan: no internal walls (permanent design choice)
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                auto& s = slots_[idx(x, y)];
+                if (!s.collapsed)
+                    s.possible[IDX_WALL] = false;
+            }
         run_collapse();
         auto placements = build_placements();
         return placements;
@@ -147,16 +153,6 @@ private:
                 }
             }
         }
-    }
-
-    void forbid_inner_walls() {
-        for (int y = 1; y < height_ - 1; y++)
-            for (int x = 1; x < width_ - 1; x++) {
-                auto& s = slots_[idx(x, y)];
-                if (!s.collapsed) {
-                    s.possible[IDX_WALL] = false;
-                }
-            }
     }
 
     void force_collapse(int x, int y, TileType t) {

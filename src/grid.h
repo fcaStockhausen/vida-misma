@@ -559,9 +559,11 @@ public:
                     set(px, py, TileType::OpenSpace);
             }
 
-        // No internal walls for now -- open floor plan
-        // This allows simple greedy pathfinding to work.
-        // Internal walls will be added back once A* pathfinding is implemented.
+        // Open floor plan — no internal walls.
+        // The factory is a single open space with machines, storage,
+        // and conveyors. This maximizes agent mobility and keeps
+        // path distances short for the supply chain.
+        // (WFC generator already forbids inner walls.)
 
         // === CONVEYOR LINES (production pipelines) ===
         // Connect each factory cluster's storage to the central hub,
