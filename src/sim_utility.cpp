@@ -10,6 +10,7 @@ void Simulation::system_compute_utility() {
     int total_machines = 0, built_machines = 0;
     int built_food_machines = 0;
     float total_stor_food = 0.0f;
+    float total_stor_raw_food = 0.0f;
     for (int gy = 0; gy < grid_.height(); gy++)
         for (int gx = 0; gx < grid_.width(); gx++) {
             if (grid_.at(gx, gy) == TileType::Machine) {
@@ -21,6 +22,7 @@ void Simulation::system_compute_utility() {
                 }
             } else if (grid_.at(gx, gy) == TileType::Storage) {
                 total_stor_food += grid_.data_at(gx, gy).stored_food;
+                total_stor_raw_food += grid_.data_at(gx, gy).stored_raw_food;
             }
         }
 
@@ -230,24 +232,41 @@ void Simulation::system_compute_utility() {
             float purpose_drive = effective_compliance * u_purpose * 0.4f;
             float hunger_drive = u_hunger * 0.2f;  // hungry agents know: no material → no food
 
-            // Raw food gathering: ONI "forage panic" pattern.
-            // When food supply is LOW, gathering raw_food becomes a survival action.
-            // Uses exponential urgency so it can compete with EAT even when agent
-            // has no food (can't eat → must gather → then work → then eat).
+            // Raw food gathering: ONI "supply chain" pattern.
+            // TWO drives:
+            //   1. Personal hunger → gather to eat (emergency)
+            //   2. Supply-chain deficit → gather to FEED THE MACHINES (proactive)
+            // The second is critical: even well-fed agents must gather raw_food
+            // because FoodMachines need inputs. Without this, the supply chain
+            // starves: agents eat processed food, never gather raw food, machines
+            // have nothing to process, food production stops.
             float raw_food_drive = 0.0f;
-            if (inv.raw_food < 0.5f) {
+            {
                 bool food_source_available = grid_.find_nearest(TileType::FoodSource,
                     pos.x, pos.y).first >= 0;
                 if (food_source_available) {
-                    float food_gap = std::min(1.0f, 1.0f - food_supply_ratio);
-                    // Scale with community food deficit (exponential)
-                    raw_food_drive = u_hunger * 0.8f * (0.5f + food_gap);
-                    // Critical forage boost: when personal food AND storage food
-                    // are both low, gathering is the ONLY path to survival
-                    if (!can_eat && food_supply_ratio < 0.3f) {
-                        // Emergency: agent can't eat, must forage NOW.
-                        // Use critical spike for maximum urgency.
-                        raw_food_drive += critical_spike(needs.hunger) * 0.8f;
+                    // Drive 1: personal hunger → forage to eat
+                    if (inv.raw_food < 0.5f) {
+                        float food_gap = std::min(1.0f, 1.0f - food_supply_ratio);
+                        raw_food_drive += u_hunger * 0.8f * (0.5f + food_gap);
+                        // Critical forage boost: when personal food AND storage food
+                        // are both low, gathering is the ONLY path to survival
+                        if (!can_eat && food_supply_ratio < 0.3f) {
+                            raw_food_drive += critical_spike(needs.hunger) * 0.8f;
+                        }
+                    }
+                    // Drive 2: supply-chain deficit → forage to feed machines.
+                    // When raw_food stores are LOW (machines will starve),
+                    // agents gather raw_food even if personally well-fed.
+                    // This is the ONI/RimWorld "haul ingredients to workshop" pattern.
+                    if (total_stor_raw_food < 3.0f && inv.raw_food < 1.0f) {
+                        float supply_deficit = std::max(0.0f, 1.0f - total_stor_raw_food / 3.0f);
+                        // Scale with compliance and purpose: dutiful agents maintain supply chain
+                        raw_food_drive += effective_compliance * u_purpose * supply_deficit * 1.5f;
+                        // Stronger pull when food machines are built (they need inputs!)
+                        if (built_food_machines > 0) {
+                            raw_food_drive += supply_deficit * (float)built_food_machines * 0.15f;
+                        }
                     }
                 }
             }
@@ -373,21 +392,28 @@ void Simulation::system_compute_utility() {
         if (built_exists) {
             float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f;
 
-            // Input readiness: WORK is only valuable when inputs are available.
-            // Two tiers:
-            //   1. Carrying raw_food or raw_material (gathered resources) → need >0.5 total
-            //   2. Carrying construction_material (refined product) → ANY amount counts
-            //      because it comes from MaterialsMachine in small per-tick amounts.
+            // Input readiness: how prepared the agent is to WORK.
+            // TWO components:
+            //   1. Carrying resources (raw or refined) → high readiness
+            //   2. BASE readiness: machines pull from adjacent storage,
+            //      so even empty-handed agents can produce if storage has inputs.
+            //      This prevents the "empty inventory = WORK=0 forever" death spiral.
             float raw_total = inv.raw_food + inv.raw_material + inv.construction_material;
             float input_readiness = 0.0f;
             if (inv.construction_material > 0.05f) {
                 // Refined product from MaterialsMachine: even small amounts are valuable
-                // (OutputMachine pulls from storage, agent just needs to be there)
                 input_readiness = 1.0f + inv.construction_material * 5.0f;
             } else if (raw_total > 0.5f) {
                 // Raw gathered resources: stock up before going to machine
                 input_readiness = std::min(3.5f, raw_total);
                 if (inv.raw_food > 0.1f) input_readiness += 0.5f;
+            } else {
+                // BASE READINESS: agent doesn't need inputs in inventory.
+                // Machines pull from adjacent storage. This is the RimWorld/ONI pattern:
+                // colonists walk to workstations that have ingredients stocked nearby.
+                // Low base (0.3) so agents WITH inputs still prioritize, but
+                // empty-handed agents still consider WORK as an option.
+                input_readiness = 0.3f;
             }
 
             // WORK pull: scales with built_ratio (more built = more to operate)
