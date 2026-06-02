@@ -11,6 +11,14 @@ void Simulation::system_find_targets() {
         auto& pos    = registry_.get<PositionComponent>(e);
         auto& inv    = registry_.get<InventoryComponent>(e);
 
+        // Release machine claim when switching away from WORK
+        if (action.current != ActionType::WORK &&
+            action.target_x >= 0 && action.target_y >= 0) {
+            auto& td = grid_.data_at(action.target_x, action.target_y);
+            int my_id = registry_.get<AgentComponent>(e).id;
+            if (td.claimed_by == my_id) td.claimed_by = -1;
+        }
+
         int tx = -1, ty = -1;
 
         switch (action.current) {
@@ -117,6 +125,8 @@ void Simulation::system_find_targets() {
 
                 if (inv.raw_food > 0.1f) {
                     prefer_food = true;  // carry raw_food → work FoodMachine
+                } else if (inv.construction_material > 0.1f) {
+                    prefer_output = true; // carry constr_mat → work OutputMachine
                 } else if (inv.raw_material > 0.1f) {
                     prefer_materials = true;  // carry scrap → work MaterialsMachine
                 } else {
@@ -124,8 +134,8 @@ void Simulation::system_find_targets() {
                     prefer_food = total_storage_food() < 15.0f;
                     if (!prefer_food) {
                         float constr_mat = total_storage_constr_mat();
-                        if (constr_mat > 0.5f) {
-                            prefer_output = last_quota_fill_ < 0.8f;
+                        if (constr_mat > 0.3f || factory_health_ < 0.5f) {
+                            prefer_output = true;
                         } else {
                             prefer_materials = true;
                         }
@@ -135,6 +145,20 @@ void Simulation::system_find_targets() {
                     pos.x, pos.y, prefer_food, prefer_output, prefer_materials);
                 tx = target.first;
                 ty = target.second;
+                // Claim the target machine (RimWorld/DF pattern)
+                if (tx >= 0 && ty >= 0) {
+                    int my_id = registry_.get<AgentComponent>(e).id;
+                    // Release old claim if target changed
+                    if (action.target_x >= 0 && action.target_y >= 0 &&
+                        (action.target_x != tx || action.target_y != ty)) {
+                        auto& old_td = grid_.data_at(action.target_x, action.target_y);
+                        if (old_td.claimed_by == my_id) old_td.claimed_by = -1;
+                    }
+                    auto& td = grid_.data_at(tx, ty);
+                    if (td.claimed_by < 0 || td.claimed_by == my_id) {
+                        td.claimed_by = my_id;
+                    }
+                }
                 break;
             }
 

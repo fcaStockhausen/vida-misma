@@ -13,6 +13,7 @@ Simulation::Simulation(const Config& cfg)
     , tick_(0)
     , factory_health_(1.0f)
     , total_food_produced_(0.0f)
+    , total_output_produced_(0.0f)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
     , social_(cfg.initial_population)
@@ -30,8 +31,12 @@ void Simulation::advance() {
     system_regen_resources();
     system_decay_needs();
 
-    // A1: Quota escalation — the factory demands more over time
-    current_quota_per_tick_ += config_.quota_growth_rate;
+    // A1: Quota escalation — the factory demands more over time.
+    // Capped at 3x initial quota to prevent inevitable collapse —
+    // agents who build enough infrastructure can sustain indefinitely.
+    float quota_cap = config_.quota_per_tick * 3.0f;
+    current_quota_per_tick_ = std::min(quota_cap,
+        current_quota_per_tick_ + config_.quota_growth_rate);
 
     system_compute_utility();
     system_find_targets();
@@ -221,11 +226,12 @@ void Simulation::spawn_initial_agents() {
 }
 
 // ============================================================
-// SYSTEM: Ship Out Food (external quota / production line)
+// SYSTEM: Ship Out Output (external quota / production line)
 // ============================================================
-// Each tick, drain up to quota_per_tick of food from any Storage that is 8-adjacent
+// Each tick, drain up to quota_per_tick of OUTPUT from any Storage that is 8-adjacent
 // to an Exit tile. Track how much we shipped. If the quota wasn't met,
 // factory_health drops; meeting it pushes health back up.
+// Surplus (over-delivering) gives bonus health recovery.
 
 void Simulation::system_ship_out_food() {
     float quota = current_quota_per_tick_;
@@ -274,6 +280,12 @@ void Simulation::system_ship_out_food() {
         factory_health_ = std::max(0.0f, factory_health_ - config_.health_decay_per_miss);
     } else {
         factory_health_ = std::min(1.0f, factory_health_ + config_.health_recovery_per_hit);
+        // Surplus bonus: over-delivering heals extra.
+        // Reward production capacity exceeding demand.
+        float surplus_ratio = (quota > 0.0f) ? (shipped / quota - 1.0f) : 0.0f;
+        if (surplus_ratio > 0.0f) {
+            factory_health_ = std::min(1.0f, factory_health_ + surplus_ratio * 0.001f);
+        }
     }
 }
 
@@ -283,9 +295,12 @@ void Simulation::system_ship_out_food() {
 // When factory_health falls below threshold, built machines have a small per-tick
 // probability of breaking (reverting to unbuilt, build_progress=0). The factory
 // pressure forces the community to keep producing — or watch their infrastructure crumble.
+// Health floor at 0.10: below this, machines stop breaking (breaks the death spiral,
+// gives agents a chance to recover if they can still produce output).
 
 void Simulation::system_factory_deterioration() {
     if (factory_health_ >= config_.machine_break_threshold) return;
+    if (factory_health_ < 0.10f) return;  // death spiral escape: stop breaking below 10%
     // Sharpening: the lower the health, the more aggressive breaks become.
     float severity = (config_.machine_break_threshold - factory_health_)
                    / std::max(0.0001f, config_.machine_break_threshold);

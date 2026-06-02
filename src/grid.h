@@ -86,29 +86,37 @@ public:
         return best;
     }
 
-    // Find nearest operational machine
-    // prefer_food: FOOD machines get score=100 when food is scarce
-    // prefer_output: OUTPUT machines get score=80 when quota is failing
-    // prefer_materials: MAT machines get score=70 when output machines need input
+    // Find nearest operational machine with preference scoring.
+    // Pattern from RimWorld/ONI: preference score DOMINATES distance.
+    // A preferred machine 20 tiles away beats a non-preferred one 5 tiles away.
+    // This prevents all agents from converging on the single nearest machine.
     std::pair<int,int> find_nearest_built_machine(int fx, int fy,
         bool prefer_food = false, bool prefer_output = false,
         bool prefer_materials = false) const {
         int best_dist = 999999;
-        int best_score = 0;
+        int best_score = -1;  // start at -1 so ANY machine beats "no preference"
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Machine) continue;
                 if (!data_at(x, y).built) continue;
                 int d = std::abs(x - fx) + std::abs(y - fy);
-                int score = 0;
+                int score = 1;  // base: any built machine
                 if (prefer_food && data_at(x, y).machine_type == MachineType::Food)
                     score = 100;
                 if (prefer_output && data_at(x, y).machine_type == MachineType::Output)
                     score = 80;
                 if (prefer_materials && data_at(x, y).machine_type == MachineType::Materials)
                     score = 70;
-                if (d < best_dist || (d == best_dist && score > best_score)) {
+                // Soft claim penalty (RimWorld/ONI pattern):
+                // Machines claimed by other agents get -30 score.
+                // This diversifies agents across machines while still allowing
+                // sharing when the machine really needs workers.
+                if (data_at(x, y).claimed_by >= 0) {
+                    score -= 30;
+                }
+                // Score dominates: preferred machine always wins over closer non-preferred
+                if (score > best_score || (score == best_score && d < best_dist)) {
                     best_dist = d;
                     best_score = score;
                     best = {x, y};

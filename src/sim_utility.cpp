@@ -69,6 +69,30 @@ void Simulation::system_compute_utility() {
         auto  ag         = registry_.get<AgentComponent>(e);
         auto& stress     = registry_.get<StressComponent>(e);
 
+        // ================================================================
+        // STICKINESS (The Sims / RimWorld pattern):
+        // Once an agent commits to WORK or BUILD, it stays committed
+        // for a duration. This prevents the volatility where agents
+        // walk toward a machine for 30 ticks then switch away.
+        // Critical needs (EAT when starving) CAN override stickiness.
+        // ================================================================
+        if (action.sticky_ticks > 0 && action.current == action.sticky_action) {
+            // Only critical survival needs can break commitment:
+            // hunger > 0.8 is "starving" — override anything
+            bool survival_override = (needs.hunger > 0.8f && action.sticky_action != ActionType::EAT);
+            if (!survival_override) {
+                action.sticky_ticks--;
+                // Store last utilities for debugging but keep current action
+                action.last_utility_gather = 0.0f;
+                action.last_utility_build  = 0.0f;
+                action.last_utility_work   = 0.0f;
+                action.last_utility_eat    = 0.0f;
+                continue;  // skip re-evaluation entirely
+            }
+            // Survival override: break stickiness
+            action.sticky_ticks = 0;
+        }
+
         float alpha = config_.urgency_alpha;
         auto urgency = [alpha](float need) -> float {
             return std::pow(need, alpha);
@@ -291,14 +315,20 @@ void Simulation::system_compute_utility() {
             float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f;
 
             // Input readiness: WORK is only valuable when inputs are available.
-            // Scales with how much input the agent has — encourages STOCKING UP
-            // before heading to a machine. An agent with 0.08 raw_food shouldn't
-            // waste time walking to a machine; it should keep gathering.
+            // Two tiers:
+            //   1. Carrying raw_food or raw_material (gathered resources) → need >0.5 total
+            //   2. Carrying construction_material (refined product) → ANY amount counts
+            //      because it comes from MaterialsMachine in small per-tick amounts.
             float raw_total = inv.raw_food + inv.raw_material + inv.construction_material;
             float input_readiness = 0.0f;
-            if (raw_total > 0.5f) {  // threshold: only WORK if carrying meaningful amount
-                input_readiness = std::min(3.5f, raw_total);  // scales up to 3.5x
-                if (inv.raw_food > 0.1f) input_readiness += 0.5f;  // bonus for food chain
+            if (inv.construction_material > 0.05f) {
+                // Refined product from MaterialsMachine: even small amounts are valuable
+                // (OutputMachine pulls from storage, agent just needs to be there)
+                input_readiness = 1.0f + inv.construction_material * 5.0f;
+            } else if (raw_total > 0.5f) {
+                // Raw gathered resources: stock up before going to machine
+                input_readiness = std::min(3.5f, raw_total);
+                if (inv.raw_food > 0.1f) input_readiness += 0.5f;
             }
 
             // WORK pull: scales with built_ratio (more built = more to operate)
@@ -527,6 +557,31 @@ void Simulation::system_compute_utility() {
         }
 
         action.current = best_action;
+
+        // Set stickiness for WORK actions (The Sims pattern):
+        // WORK requires walking to machines, then sustained execution.
+        // BUILD doesn't need stickiness (it has build_progress for sustained execution).
+        // GATHER doesn't need it (agents gather where they stand).
+        if (best_action == ActionType::WORK) {
+            if (action.sticky_action != best_action || action.sticky_ticks <= 0) {
+                action.sticky_action = best_action;
+                // Estimate distance to target machine for commitment duration.
+                // Walk time + 15 ticks of actual work.
+                // If no target yet, default to 30.
+                int dist = 30;
+                if (action.target_x >= 0 && action.target_y >= 0) {
+                    dist = std::abs(pos.x - action.target_x) + std::abs(pos.y - action.target_y);
+                }
+                action.sticky_ticks = dist + 15;
+            }
+        } else {
+            // Clear stickiness when switching away from WORK
+            if (action.sticky_action == ActionType::WORK) {
+                action.sticky_ticks = 0;
+                action.sticky_action = ActionType::IDLE;
+            }
+        }
+
         action.last_utility_gather    = u_gather;
         action.last_utility_build     = u_build;
         action.last_utility_work      = u_work;

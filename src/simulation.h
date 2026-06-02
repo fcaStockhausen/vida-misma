@@ -40,6 +40,7 @@ public:
 
     // Production stats
     float total_food_produced() const { return total_food_produced_; }
+    float total_output_produced() const { return total_output_produced_; }
     float total_raw_gathered() const { return total_raw_gathered_; }
     int   total_machines_built() const { return total_machines_built_; }
 
@@ -93,6 +94,7 @@ private:
 
     // Production stats
     float total_food_produced_;
+    float total_output_produced_;
     float total_raw_gathered_;
     int   total_machines_built_;
 

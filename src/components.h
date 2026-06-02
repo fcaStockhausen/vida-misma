@@ -183,6 +183,13 @@ struct ActionComponent {
     int target_y = -1;
     bool at_target = false;
 
+    // Action stickiness: once an agent commits to WORK or BUILD, it stays
+    // committed for this many ticks (resets when action changes).
+    // Prevents agents from starting to walk to a machine, then abandoning
+    // the task 1-2 ticks later when utility re-evaluates.
+    int sticky_ticks = 0;  // remaining commitment ticks
+    ActionType sticky_action = ActionType::IDLE;  // which action we're committed to
+
     // Path cache for A* — avoids recomputing the full path every tick
     PathCache path_cache;
 
@@ -304,6 +311,10 @@ struct TileData {
     float build_progress = 0.0f;    // [0, build_cost]
     float build_cost     = 0.0f;    // raw_material needed
     MachineType machine_type = MachineType::Food;  // subtype: Food, Materials, or Output
+    int claimed_by = -1;  // agent ID that claimed this machine (-1 = unclaimed)
+                         // Pattern from RimWorld/DF: prevents all agents from
+                         // targeting the same machine. Soft claim: other agents
+                         // can still work it but with reduced utility.
 
     // Storage contents
     float stored_food         = 0.0f;

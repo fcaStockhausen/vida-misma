@@ -189,6 +189,8 @@ void Simulation::system_execute_actions() {
                         case MachineType::Food: {
                             // FoodMachine: raw_food → processed_food
                             // Consume raw_food from agent inventory, then adjacent storage
+                            // Mild health effect: 80-100% efficiency based on factory health
+                            float health_eff = 0.8f + 0.2f * factory_health_;
                             float raw_needed = config_.machine_input;
                             float from_inv = std::min(raw_needed, inv.raw_food);
                             inv.raw_food -= from_inv;
@@ -204,17 +206,21 @@ void Simulation::system_execute_actions() {
                                 break;
                             }
                             float efficiency = total_consumed / raw_needed;
-                            float food_produced = config_.machine_output * efficiency * collab;
+                            float food_produced = config_.machine_output * efficiency * collab * health_eff;
+                            // Worker keeps 30% of food produced (self-sustenance),
+                            // rest goes to storage for the community.
+                            inv.food += food_produced * 0.3f;
+                            float to_store = food_produced * 0.7f;
                             float food_dep = deposit_to_adjacent_storage(pos.x, pos.y,
-                                ResourceType::FOOD, food_produced);
-                            float food_left = food_produced - food_dep;
+                                ResourceType::FOOD, to_store);
+                            float food_left = to_store - food_dep;
                             if (food_left > 0.01f) {
                                 food_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
                                     ResourceType::FOOD, food_left);
                             }
                             deposited = food_dep;
-                            total_food_produced_ += food_dep;
-                            log_detail = "+" + ff2(food_dep) + " food (ate " + ff2(total_consumed) + " raw)";
+                            total_food_produced_ += food_produced;
+                            log_detail = "+" + ff2(food_produced) + " food (ate " + ff2(total_consumed) + " raw, kept " + ff2(food_produced * 0.3f) + ")";
                             break;
                         }
                         case MachineType::Materials: {
@@ -235,9 +241,15 @@ void Simulation::system_execute_actions() {
                             }
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
+                            // Split: keep some in inventory (so agent can carry to OutputMachine),
+                            // rest goes to storage for other agents.
+                            float keep_ratio = 0.4f;  // 40% to agent, 60% to storage
+                            float to_inventory = mat_produced * keep_ratio;
+                            float to_store = mat_produced - to_inventory;
+                            inv.construction_material += to_inventory;
                             float mat_dep = deposit_to_adjacent_storage(pos.x, pos.y,
-                                ResourceType::CONSTRUCTION_MATERIAL, mat_produced);
-                            float mat_left = mat_produced - mat_dep;
+                                ResourceType::CONSTRUCTION_MATERIAL, to_store);
+                            float mat_left = to_store - mat_dep;
                             if (mat_left > 0.01f) {
                                 mat_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
                                     ResourceType::CONSTRUCTION_MATERIAL, mat_left);
@@ -264,10 +276,13 @@ void Simulation::system_execute_actions() {
                         }
                         case MachineType::Output: {
                             // OutputMachine: construction_material → output product (shipped as quota)
+                            // Also directly heals factory health — the factory's existential anchor.
+                            // Production efficiency scales with factory_health (positive feedback).
+                            float health_eff = 0.5f + 0.5f * factory_health_;  // 50-100% based on health
                             float pulled = pull_construction_material_from_adjacent_storage(
                                 pos.x, pos.y, config_.machine_out_output);
                             if (pulled > 0.001f) {
-                                float output_produced = pulled * 2.0f;
+                                float output_produced = pulled * 2.0f * health_eff;
                                 float out_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                     ResourceType::OUTPUT, output_produced);
                                 float out_left = output_produced - out_dep;
@@ -276,7 +291,10 @@ void Simulation::system_execute_actions() {
                                         ResourceType::OUTPUT, out_left);
                                 }
                                 deposited = out_dep;
-                                total_food_produced_ += out_dep;
+                                total_output_produced_ += out_dep;
+                                // Direct factory health heal: OutputMachine is the factory's purpose.
+                                // Each unit of output produced heals a small amount.
+                                factory_health_ = std::min(1.0f, factory_health_ + out_dep * 0.03f);
                                 // Scrap byproduct: OutputMachine also recycles material
                                 float scrap = pulled * 0.15f;
                                 for (int dy = -3; dy <= 3; dy++)
@@ -291,7 +309,7 @@ void Simulation::system_execute_actions() {
                                         }
                                         if (scrap < 0.001f) break;
                                     }
-                                log_detail = "+" + ff2(out_dep) + " output (used " + ff2(pulled) + " mat)";
+                                log_detail = "+" + ff2(out_dep) + " output (used " + ff2(pulled) + " mat, eff " + ff2(health_eff) + ")";
                             } else {
                                 log_detail = "no mat available";
                             }
