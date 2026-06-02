@@ -46,13 +46,18 @@ void Simulation::system_conveyor_transport() {
 
         if (target == TileType::Storage) {
             auto& sd = grid_.data_at(tx, ty);
-            float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material;
+            float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
+                       - sd.stored_output;
             float deposit = std::min(amount, room);
             if (deposit > 0.0f) {
                 if (d.conveyor_contents_type == ResourceType::FOOD)
                     sd.stored_food += deposit;
                 else if (d.conveyor_contents_type == ResourceType::RAW_MATERIAL)
                     sd.stored_raw_material += deposit;
+                else if (d.conveyor_contents_type == ResourceType::OUTPUT)
+                    sd.stored_output += deposit;
+                else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL)
+                    sd.stored_construction_material += deposit;
                 else
                     sd.stored_raw_food += deposit;
                 d.conveyor_contents -= deposit;

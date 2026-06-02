@@ -72,6 +72,7 @@ public:
         generate_all();
         atlas_tex_ = SDL_CreateTextureFromSurface(renderer_, atlas_surf_);
         SDL_SetTextureBlendMode(atlas_tex_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(atlas_tex_, SDL_ScaleModeNearest);
     }
 
     ~SpriteAtlas() {

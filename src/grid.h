@@ -87,16 +87,30 @@ public:
     }
 
     // Find nearest operational machine
-    std::pair<int,int> find_nearest_built_machine(int fx, int fy) const {
+    // prefer_food: FOOD machines get score=100 when food is scarce
+    // prefer_output: OUTPUT machines get score=80 when quota is failing
+    // prefer_materials: MAT machines get score=70 when output machines need input
+    std::pair<int,int> find_nearest_built_machine(int fx, int fy,
+        bool prefer_food = false, bool prefer_output = false,
+        bool prefer_materials = false) const {
         int best_dist = 999999;
+        int best_score = 0;
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Machine) continue;
                 if (!data_at(x, y).built) continue;
                 int d = std::abs(x - fx) + std::abs(y - fy);
-                if (d < best_dist) {
+                int score = 0;
+                if (prefer_food && data_at(x, y).machine_type == MachineType::Food)
+                    score = 100;
+                if (prefer_output && data_at(x, y).machine_type == MachineType::Output)
+                    score = 80;
+                if (prefer_materials && data_at(x, y).machine_type == MachineType::Materials)
+                    score = 70;
+                if (d < best_dist || (d == best_dist && score > best_score)) {
                     best_dist = d;
+                    best_score = score;
                     best = {x, y};
                 }
             }
@@ -106,14 +120,24 @@ public:
     // Find nearest unbuilt machine
     std::pair<int,int> find_nearest_unbuilt_machine(int fx, int fy) const {
         int best_dist = 999999;
+        int best_storage = 0;
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Machine) continue;
                 if (data_at(x, y).built) continue;
                 int d = std::abs(x - fx) + std::abs(y - fy);
-                if (d < best_dist) {
+                int nearby_storage = 0;
+                for (int dy = -3; dy <= 3; dy++)
+                    for (int dx = -3; dx <= 3; dx++) {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                        if (at(nx, ny) == TileType::Storage) nearby_storage++;
+                    }
+                // Prefer closer; break ties by storage adjacency
+                if (d < best_dist || (d == best_dist && nearby_storage > best_storage)) {
                     best_dist = d;
+                    best_storage = nearby_storage;
                     best = {x, y};
                 }
             }
@@ -587,7 +611,7 @@ public:
             set(p.x, p.y, p.type);
             auto& d = data_at(p.x, p.y);
 
-            if (p.type == TileType::ScrapPile) {
+            if (p.type == TileType::ScrapPile || p.type == TileType::FoodSource) {
                 d.resource_amount = p.resource_amount;
                 d.resource_max    = p.resource_max;
                 d.resource_regen  = p.resource_regen;
@@ -600,9 +624,10 @@ public:
             }
             if (p.type == TileType::Storage) {
                 d.storage_capacity = p.storage_capacity > 0.0f ? p.storage_capacity : 20.0f;
-                d.stored_food      = 0.0f;
-                d.stored_raw_food  = 0.0f;
+                d.stored_food         = 0.0f;
+                d.stored_raw_food     = 0.0f;
                 d.stored_raw_material = 0.0f;
+                d.stored_output       = 0.0f;
             }
             if (p.type == TileType::Conveyor) {
                 d.built              = false;
@@ -632,9 +657,9 @@ private:
     void place_scrap_pile(int x, int y) {
         set(x, y, TileType::ScrapPile);
         auto& d = data_at(x, y);
-        d.resource_amount = 5.0f;
-        d.resource_max    = 5.0f;
-        d.resource_regen  = 0.001f;  // very slow regen
+        d.resource_amount = 10.0f;
+        d.resource_max    = 10.0f;
+        d.resource_regen  = 0.08f;  // regenerates: ~125 ticks to refill, sustains economy
     }
 
     void place_machine(int x, int y, MachineType mtype = MachineType::Food) {
@@ -653,6 +678,7 @@ private:
         d.stored_food         = 0.0f;
         d.stored_raw_food     = 0.0f;
         d.stored_raw_material = 0.0f;
+        d.stored_output       = 0.0f;
     }
 
     void place_conveyor(int x, int y, ConveyorDir dir) {

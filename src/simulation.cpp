@@ -95,6 +95,24 @@ float Simulation::total_storage_food() const {
     return total;
 }
 
+float Simulation::total_storage_output() const {
+    float total = 0.0f;
+    auto storages = grid_.find_all(TileType::Storage);
+    for (auto [x,y] : storages) {
+        total += grid_.data_at(x, y).stored_output;
+    }
+    return total;
+}
+
+float Simulation::total_storage_constr_mat() const {
+    float total = 0.0f;
+    auto storages = grid_.find_all(TileType::Storage);
+    for (auto [x,y] : storages) {
+        total += grid_.data_at(x, y).stored_construction_material;
+    }
+    return total;
+}
+
 std::vector<entt::entity> Simulation::alive_agents() const {
     std::vector<entt::entity> result;
     auto view = registry_.view<const AgentComponent>();
@@ -213,9 +231,7 @@ void Simulation::system_ship_out_food() {
     float quota = current_quota_per_tick_;
     float to_ship = quota;
 
-    // Drain food from any Storage near an Exit (radius 3 first, then all storages).
-    // The "external demand" represents the supply chain — in practice, any storage
-    // that has food is part of the drainable pool.
+    // Drain output from any Storage near an Exit (radius 3 first, then all storages).
     auto exits = grid_.find_all(TileType::Exit);
     for (int radius = 1; radius <= 3 && to_ship > 0.001f; radius++) {
         for (auto [ex, ey] : exits) {
@@ -227,9 +243,9 @@ void Simulation::system_ship_out_food() {
                     int nx = ex + dx, ny = ey + dy;
                     if (grid_.at(nx, ny) != TileType::Storage) continue;
                     auto& d = grid_.data_at(nx, ny);
-                    float take = std::min(to_ship, d.stored_food);
+                    float take = std::min(to_ship, d.stored_output);
                     if (take > 0.0f) {
-                        d.stored_food -= take;
+                        d.stored_output -= take;
                         to_ship -= take;
                     }
                 }
@@ -237,15 +253,14 @@ void Simulation::system_ship_out_food() {
     }
 
     // Fallback: if Exit-adjacent storages are empty, drain from ANY storage on the map.
-    // Represents the external supply chain reaching deeper into the factory.
     if (to_ship > 0.001f) {
         auto storages = grid_.find_all(TileType::Storage);
         for (auto [sx, sy] : storages) {
             if (to_ship <= 0.001f) break;
             auto& d = grid_.data_at(sx, sy);
-            float take = std::min(to_ship, d.stored_food);
+            float take = std::min(to_ship, d.stored_output);
             if (take > 0.0f) {
-                d.stored_food -= take;
+                d.stored_output -= take;
                 to_ship -= take;
             }
         }
@@ -623,11 +638,11 @@ void Simulation::system_factory_restructure() {
                 std::uniform_int_distribution<int> pick(0, (int)storages.size() - 1);
                 auto [sx, sy] = storages[pick(rng_)];
                 auto& d = grid_.data_at(sx, sy);
-                if (d.stored_food > 0.0f) {
-                    float confiscated = d.stored_food * 0.5f;
-                    d.stored_food -= confiscated;
+                if (d.stored_output > 0.0f) {
+                    float confiscated = d.stored_output * 0.5f;
+                    d.stored_output -= confiscated;
                     emit_log(-1, "FACTORY confiscated " + ff2(confiscated) +
-                             " food from storage at (" +
+                             " output from storage at (" +
                              std::to_string(sx) + "," + std::to_string(sy) + ")");
                     total_restructures_++;
                 }

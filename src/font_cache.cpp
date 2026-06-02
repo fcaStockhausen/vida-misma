@@ -14,9 +14,9 @@ static const char* FONT_PATHS[] = {
 };
 
 static constexpr int FONT_SIZES[(int)FontSize::COUNT] = {
-    11,  // Small
-    14,  // Normal
-    18,  // Large
+    13,  // Small
+    16,  // Normal
+    20,  // Large
 };
 
 FontCache::~FontCache() {
@@ -123,14 +123,16 @@ FontCache::CacheEntry& FontCache::get_or_render(const char* text, SDL_Color colo
     CacheEntry entry{};
     TTF_Font* f = font(size);
     if (f && text && text[0]) {
-        SDL_Surface* surf = TTF_RenderUTF8_Blended(f, text, color);
+        SDL_Surface* surf = TTF_RenderUTF8_Solid(f, text, color);
         if (surf) {
+            SDL_SetColorKey(surf, SDL_TRUE, 0);
             entry.tex = SDL_CreateTextureFromSurface(renderer_, surf);
             entry.w = surf->w;
             entry.h = surf->h;
             SDL_FreeSurface(surf);
             if (entry.tex) {
                 SDL_SetTextureBlendMode(entry.tex, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(entry.tex, SDL_ScaleModeNearest);
             }
         }
     }

@@ -29,7 +29,10 @@ void GraphicalView::run() {
     window_ = SDL_CreateWindow(
         "La Vida Misma — Isometric Factory",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WIN_W, WIN_H, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+        WIN_W, WIN_H,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     if (!window_) {
         std::fprintf(stderr, "SDL window failed: %s\n", SDL_GetError());
         return;
@@ -40,6 +43,9 @@ void GraphicalView::run() {
         std::fprintf(stderr, "SDL renderer failed: %s\n", SDL_GetError());
         return;
     }
+
+    // Logical size: all code uses 1280×720, SDL2 scales to physical framebuffer
+    SDL_RenderSetLogicalSize(renderer_, WIN_W, WIN_H);
 
     if (!fonts_.init(renderer_)) {
         std::fprintf(stderr, "Font init failed — continuing without text cache\n");
@@ -89,7 +95,7 @@ void GraphicalView::center_camera() {
     float cx = (gw - gh) * TILE_W * zoom_ * 0.5f;
     float cy = (gw + gh) * TILE_H * zoom_ * 0.5f;
     int ww, wh;
-    if (window_) SDL_GetWindowSize(window_, &ww, &wh);
+    if (renderer_) get_output_size(ww, wh);
     else { ww = WIN_W; wh = WIN_H; }
     cam_x_ = ww * 0.5f - cx;
     cam_y_ = wh * 0.3f - cy;
@@ -104,7 +110,7 @@ void GraphicalView::center_on_agent() {
     float sx, sy;
     iso_to_screen(pos.x, pos.y, sx, sy);
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int pw = show_log_ ? PANEL_W : 0;
     cam_target_x_ = (ww - pw) * 0.5f - sx + cam_x_;
     cam_target_y_ = wh * 0.4f - sy + cam_y_;
@@ -212,8 +218,6 @@ void GraphicalView::handle_events() {
                         show_grid_coords_ = !show_grid_coords_; break;
                     case SDLK_h:
                         show_help_ = !show_help_; break;
-                    case SDLK_e:
-                        log_follow_agent_ = !log_follow_agent_; break;
 
                     // Agents
                     case SDLK_TAB:
@@ -311,7 +315,7 @@ void GraphicalView::render() {
     auto agents = sim_.alive_agents();
 
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int map_w = ww - (show_log_ ? PANEL_W : 0);
 
     for (int y = 0; y < grid.height(); y++) {
@@ -370,7 +374,7 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
             }
             break;
         case TileType::Storage: {
-            float tot = d.stored_food + d.stored_raw_food + d.stored_raw_material;
+            float tot = d.stored_food + d.stored_raw_food + d.stored_raw_material + d.stored_output;
             if (tot > 5.f) sid = SpriteID::StorageFull;
             else if (tot > 0.5f) sid = SpriteID::StoragePartial;
             else sid = SpriteID::StorageEmpty;
@@ -438,6 +442,10 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
 // Drawing helpers
 // ============================================================
 
+void GraphicalView::get_output_size(int& w, int& h) const {
+    SDL_GetWindowSize(window_, &w, &h);
+}
+
 void GraphicalView::render_rect(int x, int y, int w, int h, SDL_Color color) {
     SDL_Rect r = {x, y, w, h};
     SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, 255);
@@ -473,7 +481,7 @@ void GraphicalView::render_bar(int x, int y, int w, int h, float pct, SDL_Color 
 
 void GraphicalView::render_header_bar() {
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int panel_w = show_log_ ? PANEL_W : 0;
     int hh = fonts_.line_height(FontSize::Small) + 6;
 
@@ -537,7 +545,7 @@ void GraphicalView::render_header_bar() {
 
 void GraphicalView::render_side_panel() {
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int pw = PANEL_W;
     int px = ww - pw;
     int header_h = fonts_.line_height(FontSize::Small) + 6;
@@ -691,11 +699,10 @@ void GraphicalView::render_side_panel() {
         }
     }
 
-    // Chronicle log (always at bottom)
+    // Chronicle log — first-person narrative from selected agent
     render_separator(px + 3, y, pw - 6); y += 4;
-    const char* log_mode = log_follow_agent_ ? "LOG (agent)" : "LOG (all)";
-    fonts_.draw(px + margin, y, log_mode, COL_WHITE, FontSize::Small);
-    fonts_.draw(px + margin + fonts_.text_width(log_mode, FontSize::Small) + 6, y, "E:toggle  PgUp/Dn", COL_DIM, FontSize::Small);
+    fonts_.draw(px + margin, y, "JOURNAL", COL_WHITE, FontSize::Small);
+    fonts_.draw(px + margin + fonts_.text_width("JOURNAL", FontSize::Small) + 6, y, "PgUp/Dn scroll", COL_DIM, FontSize::Small);
     y += lh_s + 2;
 
     int footer_y = wh - lh_s - 4;
@@ -704,40 +711,39 @@ void GraphicalView::render_side_panel() {
     if (max_log_lines < 1) max_log_lines = 1;
     if (max_log_lines > 30) max_log_lines = 30;
 
-    auto cat_color = [](EventCategory cat) -> SDL_Color {
-        switch (cat) {
-            case EventCategory::LIFECYCLE:  return COL_RED;
-            case EventCategory::STRESS:     return {255, 160, 80, 255};
-            case EventCategory::SOCIAL:     return COL_CYAN;
-            case EventCategory::PRODUCTION: return COL_GREEN;
-            case EventCategory::NARRATIVE:  return COL_YELLOW;
-            default:                        return COL_DIM;
+    auto stress_color = [](StressState ss) -> SDL_Color {
+        switch (ss) {
+            case StressState::NORMAL:          return {180, 200, 180, 255};
+            case StressState::DISSOCIATED:     return {120, 120, 160, 255};
+            case StressState::HOSTILE_EUPHORIA: return {220, 80, 80, 255};
+            case StressState::BROKEN:          return {90, 90, 90, 255};
+            case StressState::REDEEMED:        return {80, 220, 160, 255};
+            default:                           return COL_DIM;
         }
     };
 
+    // Fetch agent's events
     std::vector<const ChronicleEvent*> events;
-    if (log_follow_agent_ && (size_t)selected_idx_ < agents.size()) {
+    {
         int total = sim_.chronicle().count_for_agent(ag.id);
         int skip = std::max(0, total - max_log_lines - panel_scroll_);
         auto all = sim_.chronicle().by_agent(ag.id);
         for (int i = skip; i < (int)all.size() && (int)events.size() < max_log_lines; i++)
             events.push_back(all[i]);
-    } else {
-        int total = (int)sim_.chronicle().size();
-        int skip = std::max(0, total - max_log_lines - panel_scroll_);
-        auto last = sim_.chronicle().last(total);  // get all
-        for (int i = skip; i < (int)last.size() && (int)events.size() < max_log_lines; i++)
-            events.push_back(last[i]);
     }
 
     int max_ch = (pw - margin * 2) / (fonts_.text_width("m", FontSize::Small));
+    SDL_Color line_col = stress_color(st.state);
     for (auto* ev : events) {
         if (y + log_line_h > footer_y - 2) break;
-        SDL_Color ec = cat_color(category_of(ev->type));
-        std::string line = ev->summary();
+        std::string line = ev->narrative(ps.archetype, st.state);
         if ((int)line.size() > max_ch) line.resize(max_ch);
-        fonts_.draw(px + margin, y, line, ec, FontSize::Small);
+        fonts_.draw(px + margin, y, line, line_col, FontSize::Small);
         y += log_line_h;
+    }
+
+    if (events.empty()) {
+        fonts_.draw(px + margin, y, "No memories yet.", COL_DIM, FontSize::Small);
     }
 
     // Footer
@@ -796,7 +802,7 @@ void GraphicalView::render_tooltip() {
 
     int tx = mx + 12, ty = my + 12;
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     if (tx + tw > ww) tx = mx - tw - 4;
     if (ty + th > wh) ty = my - th - 4;
 
@@ -816,7 +822,7 @@ void GraphicalView::render_tooltip() {
 
 void GraphicalView::render_help_overlay() {
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int lh = fonts_.line_height(FontSize::Small);
     int lh_n = fonts_.line_height(FontSize::Normal);
 
@@ -859,8 +865,7 @@ void GraphicalView::render_help_overlay() {
     row("LMB", "Select agent on tile");
     row("T", "Toggle panel");
     row("1-4", "Panel tabs (Needs/Pers/Soc/Util)");
-    row("E", "Toggle log: all / agent");
-    row("PgUp/PgDn", "Scroll log");
+    row("PgUp/PgDn", "Scroll journal");
     y += 4;
 
     fonts_.draw(x, y, "Other", COL_CYAN, FontSize::Small); y += lh + 2;
@@ -875,7 +880,7 @@ void GraphicalView::render_help_overlay() {
 
 void GraphicalView::render_quit_confirm() {
     int ww, wh;
-    SDL_GetWindowSize(window_, &ww, &wh);
+    get_output_size(ww, wh);
     int lh = fonts_.line_height(FontSize::Normal);
     int lh_s = fonts_.line_height(FontSize::Small);
 

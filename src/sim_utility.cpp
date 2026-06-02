@@ -3,10 +3,53 @@
 #include <cmath>
 
 void Simulation::system_compute_utility() {
+    // ================================================================
+    // GRID-LEVEL SUPPLY-CHAIN SIGNALS (computed once, used by all agents)
+    // Replaces 5 redundant per-agent loops with a single scan.
+    // ================================================================
+    int total_machines = 0, built_machines = 0;
+    int built_food_machines = 0;
+    float total_stor_food = 0.0f;
+    for (int gy = 0; gy < grid_.height(); gy++)
+        for (int gx = 0; gx < grid_.width(); gx++) {
+            if (grid_.at(gx, gy) == TileType::Machine) {
+                total_machines++;
+                if (grid_.data_at(gx, gy).built) {
+                    built_machines++;
+                    if (grid_.data_at(gx, gy).machine_type == MachineType::Food)
+                        built_food_machines++;
+                }
+            } else if (grid_.at(gx, gy) == TileType::Storage) {
+                total_stor_food += grid_.data_at(gx, gy).stored_food;
+            }
+        }
+
+    float built_ratio = (total_machines > 0)
+        ? (float)built_machines / (float)total_machines : 0.0f;
+    float infra_gap = 1.0f - built_ratio;
+
+    // Food supply ratio: how much food we have vs how much we need.
+    // Includes BOTH storage food AND agent inventory food, since agents
+    // carry bootstrap food and that's real supply even if not in storages.
+    float total_agent_food = 0.0f;
+    {
+        auto food_view = registry_.view<InventoryComponent, const AgentComponent>();
+        for (auto fe : food_view) {
+            if (registry_.get<AgentComponent>(fe).alive)
+                total_agent_food += registry_.get<InventoryComponent>(fe).food;
+        }
+    }
+    float total_food_supply = total_stor_food + total_agent_food;
+    float food_consumption_rate = (float)alive_count() * config_.hunger_decay;
+    // Ratio: total food / (consumption rate * 100 ticks buffer)
+    // 2.0 = abundant, 1.0 = ~100 ticks of buffer, <1.0 = deficit
+    float food_supply_ratio = (food_consumption_rate > 0.001f)
+        ? std::min(2.0f, total_food_supply / (food_consumption_rate * 100.0f))
+        : 2.0f;
+
     // Community pressure: storage buffer × external supply-chain health.
-    // Empty storage → 1, abundant → 0. Amplified when factory_health is low
-    // (the external pressure documented in §13 / §14).
-    float community_food   = total_storage_food();
+    // Empty storage → 1, abundant → 0. Amplified when factory_health is low.
+    float community_food   = total_stor_food;  // reuse the pre-computed value
     float storage_pressure = std::max(0.0f, 1.0f - community_food / 30.0f);
     float external_amp     = 1.0f + (1.0f - factory_health_);  // 1 at full, 2 at zero health
     float community_pressure = std::min(1.5f, storage_pressure * external_amp);
@@ -47,7 +90,6 @@ void Simulation::system_compute_utility() {
 
         // === SOCIAL MODIFIERS ===
         // Mood affects productivity: low mood = less effective work
-        // mood ∈ [0,1], 1=happy. Productive actions scaled by (0.5 + 0.5*mood)
         float mood_factor = 0.5f + 0.5f * soc.mood;
 
         // Compute average trust with nearby agents (for SOCIALIZE bonus)
@@ -71,7 +113,6 @@ void Simulation::system_compute_utility() {
         }
 
         // Food only comes from machines now → only check inventory food and storage.
-        // raw_food field is unused (kept for ABI; legacy FoodSource gathering disabled).
         bool has_food     = inv.food > 0.01f;
         bool storage_near = has_adjacent_storage_with_food(e);
         bool can_eat      = has_food || storage_near;
@@ -91,24 +132,13 @@ void Simulation::system_compute_utility() {
         // Personal food buffer (processed only, since FoodSource is gone).
         float food_security = std::min(1.0f, inv.food / 2.0f);
 
+        // ================================================================
         // GATHER: base drive from incomplete infrastructure + purpose/hunger.
-        // Key insight: agents in a factory with unbuilt machines should WANT to gather
-        // raw material even when purpose is low. The unbuilt-machine ratio provides a
-        // constant "the job isn't done" signal that doesn't depend on personal needs.
+        // Scales with infra_gap (fewer unbuilt → less urgency to gather).
+        // ADD: food urgency boost when no food production exists.
+        // ================================================================
         float u_gather = 0.0f;
         if (scrap_available) {
-            // Infrastructure gap: how much of the factory is unbuilt?
-            // Provides a constant 0-1 drive independent of personal needs.
-            int total_machines = 0, built_machines = 0;
-            for (int gy = 0; gy < grid_.height(); gy++)
-                for (int gx = 0; gx < grid_.width(); gx++)
-                    if (grid_.at(gx, gy) == TileType::Machine) {
-                        total_machines++;
-                        if (grid_.data_at(gx, gy).built) built_machines++;
-                    }
-            float infra_gap = (total_machines > 0)
-                ? 1.0f - (float)built_machines / (float)total_machines : 0.0f;
-
             // Low material indicator: agent has nothing to build with
             float low_mat = std::max(0.0f, 1.0f - inv.raw_material / 2.0f);
 
@@ -116,18 +146,38 @@ void Simulation::system_compute_utility() {
             float gather_urgency = 1.0f + (1.0f - factory_health_) * 2.0f;
 
             // Base drive: compliance × infrastructure gap × material scarcity
-            // Purpose adds extra but isn't required — the factory itself creates urgency.
-            float base_drive = effective_compliance * infra_gap * low_mat * 1.5f;
+            // infra_gap from grid-level signal — no redundant per-agent loop
+            float gather_base = effective_compliance * infra_gap * low_mat * 1.5f;
+
+            // Food urgency boost: when food is low and no food machines exist,
+            // gathering is the only path to food (gather→build FOOD machine→work it)
+            if (built_food_machines == 0 || food_supply_ratio < 0.5f) {
+                gather_base += u_hunger * 0.5f;
+            }
+
             float purpose_drive = effective_compliance * u_purpose * 0.4f;
             float hunger_drive = u_hunger * 0.2f;  // hungry agents know: no material → no food
 
-            u_gather = (base_drive + purpose_drive + hunger_drive)
+            // Raw food gathering: when food is low and FoodSource tiles exist
+            float raw_food_drive = 0.0f;
+            if (inv.raw_food < 0.5f) {
+                bool food_source_available = grid_.find_nearest(TileType::FoodSource,
+                    pos.x, pos.y).first >= 0;
+                if (food_source_available) {
+                    float food_gap = std::min(1.0f, 1.0f - food_supply_ratio);
+                    raw_food_drive = u_hunger * 0.6f * (0.5f + food_gap);
+                }
+            }
+
+            u_gather = (gather_base + purpose_drive + hunger_drive + raw_food_drive)
                       * mood_factor * gather_urgency;
         }
 
+        // ================================================================
         // BUILD: infrastructure completion drive.
-        // Two components: (1) "I have material, let me build" and (2) "the factory needs this".
-        // The infra_gap provides constant urgency even when purpose is low.
+        // Scales with infra_gap (phase transition). Per-type priority
+        // for FOOD machines when food_supply_ratio < 1.0.
+        // ================================================================
         float u_build = 0.0f;
         bool unbuilt_ez_exists = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y).first >= 0;
         bool built_ez_exists   = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
@@ -137,19 +187,21 @@ void Simulation::system_compute_utility() {
         float build_urgency = 1.0f + (1.0f - factory_health_) * 4.0f; // 1x at full, 5x at zero
 
         // Material availability boost: having material should STRONGLY push toward BUILD
-        // vs other actions. This creates the gather→build→work cycle.
         float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
 
-        // Compute infra_gap for BUILD (same as GATHER — could cache but perf is fine for 24 agents)
-        int total_mach = 0, built_mach = 0;
-        for (int gy2 = 0; gy2 < grid_.height(); gy2++)
-            for (int gx2 = 0; gx2 < grid_.width(); gx2++)
-                if (grid_.at(gx2, gy2) == TileType::Machine) {
-                    total_mach++;
-                    if (grid_.data_at(gx2, gy2).built) built_mach++;
-                }
-        float build_infra_gap = (total_mach > 0)
-            ? 1.0f - (float)built_mach / (float)total_mach : 0.0f;
+        // Use grid-level build_infra_gap — no redundant per-agent loop
+        float build_infra_gap = infra_gap;
+
+        // Per-type food priority bonus: when food is scarce, building FOOD machines
+        // is more valuable than building other types. This replaces the old blunt
+        // infra_gap halving with a targeted per-type signal.
+        float food_build_priority = 1.0f;
+        if (food_supply_ratio < 1.0f && built_food_machines < 6) {
+            // Up to 2x priority at zero food supply, scaling with how many food
+            // machines are still needed (6 = full complement for 24 agents)
+            float food_machine_gap = 1.0f - (float)built_food_machines / 6.0f;
+            food_build_priority = 1.0f + food_machine_gap * (1.0f - food_supply_ratio);
+        }
 
         if (inv.raw_material > 0.1f) {
             // Sub 1: machine — strongest build target. Having material + unbuilt machines
@@ -166,6 +218,15 @@ void Simulation::system_compute_utility() {
                 }
                 // Base: strong compliance × material readiness × infrastructure gap
                 float base = effective_compliance * mat_readiness * build_infra_gap * 2.0f;
+
+                // Apply food-build priority if nearest unbuilt machine is FOOD type
+                if (near_m.first >= 0) {
+                    const auto& td = grid_.data_at(near_m.first, near_m.second);
+                    if (td.machine_type == MachineType::Food) {
+                        base *= food_build_priority;
+                    }
+                }
+
                 // Purpose supplement (not primary driver)
                 float purpose_sup = effective_compliance * u_purpose * 0.8f;
                 // Community pressure
@@ -192,7 +253,6 @@ void Simulation::system_compute_utility() {
                 auto site = grid_.find_nearest_valid_eatingzone_site(
                     pos.x, pos.y, config_.eatingzone_min_dist_machine);
                 if (site.first >= 0) {
-                    // Mirror compliance × purpose weighting; this is collective infrastructure.
                     u_build_new_ez = effective_compliance * u_purpose * 1.0f * mat_readiness;
                 }
             }
@@ -206,7 +266,6 @@ void Simulation::system_compute_utility() {
             float u_build_conv = 0.0f;
             if (unbuilt_conveyor && inv.raw_material > 0.05f) {
                 float conv_mat = std::min(1.0f, inv.raw_material / 1.0f);
-                // Conveyors are infrastructure too — gap drives them
                 float conv_base = effective_compliance * conv_mat * build_infra_gap * 1.5f;
                 float conv_sup  = effective_compliance * u_purpose * 1.0f;
                 float conv_community = community_pressure * 1.2f * conv_mat;
@@ -216,16 +275,59 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_conv);
         }
 
-        // WORK: gather raw_food from a FoodSource tile. Produces for the factory.
-        // BROKEN agents refuse to work for the factory.
+        // ================================================================
+        // WORK: operate built machines to produce food/material/output.
+        // Supply-chain-aware pull replaces the old flat duty_drive.
+        //
+        // Key design:
+        //   - work_pull scales with built_ratio (more built = more to operate)
+        //   - food_work_urgency spikes when food_supply_ratio is LOW
+        //   - At built_ratio < 0.3, WORK stays below GATHER/BUILD naturally
+        //   - At built_ratio > 0.5 with food stress, WORK dominates
+        // ================================================================
         float u_work = 0.0f;
         if (stress.state != StressState::BROKEN) {
         if (built_exists) {
-            float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f; // 1x at full health, 4x at zero
-            u_work = (effective_compliance * u_hunger * 0.8f
-                + (1.0f - personality.laziness) * u_purpose * 0.3f
-                + effective_compliance * community_pressure * 0.6f)
-                * mood_factor * health_urgency;
+            float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f;
+
+            // Input readiness: WORK is only valuable when inputs are available.
+            // Scales with how much input the agent has — encourages STOCKING UP
+            // before heading to a machine. An agent with 0.08 raw_food shouldn't
+            // waste time walking to a machine; it should keep gathering.
+            float raw_total = inv.raw_food + inv.raw_material + inv.construction_material;
+            float input_readiness = 0.0f;
+            if (raw_total > 0.5f) {  // threshold: only WORK if carrying meaningful amount
+                input_readiness = std::min(3.5f, raw_total);  // scales up to 3.5x
+                if (inv.raw_food > 0.1f) input_readiness += 0.5f;  // bonus for food chain
+            }
+
+            // WORK pull: scales with built_ratio (more built = more to operate)
+            float work_pull = effective_compliance * built_ratio * 2.0f;
+
+            // Food urgency: when food supply is LOW, WORK becomes critical.
+            // This is the key signal: WORK is how agents GET food from machines.
+            // Gated: only fires when food_supply_ratio < 1.5 AND there are
+            // food machines to operate. Skip at game start when agents have
+            // bootstrap food (food_supply_ratio will be high from inventories).
+            float food_work_urgency = 1.0f;
+            if (built_food_machines > 0 && food_supply_ratio < 1.5f) {
+                // Up to 4x at zero food supply ratio (1.0 + (1.5-0)*2.0 = 4.0)
+                food_work_urgency = 1.0f + (1.5f - food_supply_ratio) * 2.0f;
+            }
+
+            // Personal hunger adds to work urgency (secondary driver)
+            // Only if agent has meaningful inputs
+            float personal_hunger = (input_readiness > 0.0f) ? (u_hunger * 0.5f) : 0.0f;
+
+            // Purpose and community drives — only meaningful if can actually produce
+            float purpose_drive = (input_readiness > 0.0f)
+                ? ((1.0f - personality.laziness) * u_purpose * 0.3f) : 0.0f;
+            float community = (input_readiness > 0.0f)
+                ? (effective_compliance * community_pressure * 0.6f) : 0.0f;
+
+            u_work = (work_pull * food_work_urgency * input_readiness
+                      + personal_hunger + purpose_drive + community)
+                     * mood_factor * health_urgency;
         }
         } // end BROKEN gate
 
@@ -237,17 +339,13 @@ void Simulation::system_compute_utility() {
             u_eat = u_hunger * eat_weight;
         }
 
-        // REST: doc formula + a near-max escalation. The doc's intent is "prevents
-        // agents from working themselves to death"; the literal 1.5x is too weak
-        // against EAT's 1.8x at the extreme.
+        // REST: doc formula + a near-max escalation.
         float rest_weight = 0.4f + 0.6f * personality.laziness;
         if (needs.rest > 0.7f) rest_weight *= 1.5f;
         if (needs.rest > 0.9f) rest_weight *= 2.0f;
         float u_rest_action = rest_weight * u_rest;
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
-        // Influential agents draw others to socialize
-        // S2: Stress state modifiers on social utility
         float gregariousness_mult = 1.0f;
         if (stress.state == StressState::DISSOCIATED) gregariousness_mult = 0.7f;
         if (stress.state == StressState::BROKEN) gregariousness_mult = 0.3f;
@@ -291,7 +389,6 @@ void Simulation::system_compute_utility() {
             if (conv.first >= 0) {
                 const auto& cd = grid_.data_at(conv.first, conv.second);
                 float degradation = 1.0f - cd.conveyor_condition;
-                // Only maintain when degradation is significant AND agent isn't hungry
                 float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 2.0f);
                 u_maintain = effective_compliance * degradation * u_purpose * 1.5f * hunger_gate
                            + community_pressure * degradation * 0.8f * hunger_gate;
@@ -300,11 +397,8 @@ void Simulation::system_compute_utility() {
         }
 
         // DISMANTLE: consider tearing down conveyors that are dead-ends or blocking paths.
-        // Only high-compliance agents who see a clear improvement will do this.
-        // Hunger-gated: don't dismantle when starving. Low stress needed (calm judgment).
         float u_dismantle = 0.0f;
         {
-            // Check if there's a blocking conveyor nearby (strong reason)
             bool blocking_nearby = false;
             bool dead_end_nearby = grid_.find_nearest_dead_end_conveyor(pos.x, pos.y).first >= 0;
             for (int sy = std::max(0, pos.y - 8); sy < std::min(grid_.height(), pos.y + 8); sy++)
@@ -313,61 +407,45 @@ void Simulation::system_compute_utility() {
 
             if (blocking_nearby || dead_end_nearby) {
                 float reason_strength = blocking_nearby ? 1.5f : 0.6f;
-                float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 3.0f);  // strong hunger gate
-                float calm_gate = std::max(0.0f, soc.mood * 2.0f - 0.5f); // need calm (high mood) to dismantle
-                // High compliance agents more willing to improve the factory layout
-                // Low laziness helps (they're willing to do the extra work)
+                float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 3.0f);
+                float calm_gate = std::max(0.0f, soc.mood * 2.0f - 0.5f);
                 u_dismantle = effective_compliance * reason_strength
                             * hunger_gate * calm_gate * (1.0f - personality.laziness * 0.5f)
                             * mood_factor;
-                // If agent already has raw_material, less incentive to dismantle for refund
                 if (inv.raw_material > 2.0f) u_dismantle *= 0.3f;
             }
         }
 
         // S3: SABOTAGE — irrational destruction driven by chronic stress.
-        // Not DISMANTLE (rational). This is a broken agent lashing out.
-        // BROKEN agents have massive SABOTAGE utility. HOSTILE_EUPHORIA too.
-        // Redeemed agents NEVER sabotage.
         float u_sabotage = 0.0f;
         if (stress.value >= config_.sabotage_stress_threshold
             && stress.state != StressState::REDEEMED) {
-            // Base drive scales with how broken the agent is
             float stress_drive = 0.0f;
             if (stress.state == StressState::HOSTILE_EUPHORIA) stress_drive = 1.2f;
             if (stress.state == StressState::BROKEN) stress_drive = 3.0f;
-            // Even DISSOCIATED agents can lash out if trauma is high
             if (stress.state == StressState::DISSOCIATED && stress.trauma > 0.3f)
                 stress_drive = stress.trauma * 0.5f;
-            // Trauma amplifies: more damaged = more desperate
             stress_drive *= (1.0f + stress.trauma);
-            // Low compliance agents sabotage more easily
             stress_drive *= (1.0f - personality.compliance * 0.3f);
-            // Hunger gates it slightly — starving agents are too weak
             float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 1.5f);
             u_sabotage = stress_drive * hunger_gate;
         }
 
         // GET_FOOD: agent considers fetching a "vianda" from Storage when their inv.food
-        // is low and they're not at the bottom of immediate hunger urgency. Higher when an
-        // EatingZone exists and the agent isn't currently next to Storage.
+        // is low and they're not at the bottom of immediate hunger urgency.
         float u_get_food = 0.0f;
         {
             float room_in_inv = std::max(0.0f, config_.inv_food_cap - inv.food);
             bool any_storage_food = grid_.find_nearest_storage_with_food(pos.x, pos.y).first >= 0;
             if (any_storage_food && room_in_inv > 0.1f) {
-                // Drive: anticipating hunger plus "I should bring food to the eating zone".
-                // Scales with how empty the pocket is and a modest hunger anticipation.
                 float pocket_emptiness = room_in_inv / config_.inv_food_cap;
                 u_get_food = pocket_emptiness * (0.3f + u_hunger * 0.8f);
-                // If a built EatingZone exists, bringing food back there is more valuable.
                 if (built_ez_exists) u_get_food *= 1.3f;
             }
         }
 
         // SOCIAL LEARNING: agents observe what trusted neighbors are doing
-        // and get a bonus for copying productive actions. This creates
-        // emergent coordination: a trusted agent gathering → others gather nearby.
+        int worker_nearby = 0, gatherer_nearby = 0, builder_nearby = 0;
         {
             auto alive_view3 = registry_.view<PositionComponent, const AgentComponent,
                                                SocialComponent, ActionComponent>();
@@ -383,14 +461,12 @@ void Simulation::system_compute_utility() {
                 int oid = registry_.get<AgentComponent>(other).id;
                 const auto& rel = social_.get_rel(ag.id, oid);
 
-                // Weight: trust * influence * proximity decay
                 float trust_w = std::max(0.0f, rel.trust);
                 float prox = 1.0f / (1.0f + (float)d);
                 float weight = trust_w * (0.3f + 0.7f * osoc.influence) * prox;
 
                 if (weight < 0.01f) continue;
 
-                // Boost the matching action
                 switch (oact.current) {
                     case ActionType::GATHER:   u_gather  += weight * 0.4f; break;
                     case ActionType::BUILD:    u_build   += weight * 0.5f; break;
@@ -399,8 +475,17 @@ void Simulation::system_compute_utility() {
                     case ActionType::GET_FOOD: u_get_food += weight * 0.2f; break;
                     default: break;
                 }
+                if (oact.current == ActionType::WORK) worker_nearby++;
+                if (oact.current == ActionType::GATHER) gatherer_nearby++;
+                if (oact.current == ActionType::BUILD) builder_nearby++;
             }
         }
+
+        // Niche dampening: if too many nearby agents are doing the same action,
+        // reduce its utility to encourage role diversity.
+        if (worker_nearby >= 3) u_work *= 1.0f / (1.0f + (worker_nearby - 2) * 0.3f);
+        if (gatherer_nearby >= 3) u_gather *= 1.0f / (1.0f + (gatherer_nearby - 2) * 0.3f);
+        if (builder_nearby >= 3) u_build *= 1.0f / (1.0f + (builder_nearby - 2) * 0.3f);
 
         // Pick best action
         struct Scored { ActionType type; float score; };

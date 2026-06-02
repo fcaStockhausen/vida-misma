@@ -15,18 +15,52 @@ void Simulation::system_find_targets() {
 
         switch (action.current) {
             case ActionType::GATHER: {
-                // Only ScrapPile is gatherable in this model (no FoodSource).
+                // Prefer FoodSource if agent has no raw_food and low food
+                // (food chain priority). Otherwise prefer ScrapPile (for building).
+                auto food_src = grid_.find_nearest(TileType::FoodSource, pos.x, pos.y);
                 auto scrap_target = grid_.find_nearest(TileType::ScrapPile, pos.x, pos.y);
-                if (scrap_target.first >= 0) {
+                
+                int food_dist = (food_src.first >= 0)
+                    ? std::abs(food_src.first - pos.x) + std::abs(food_src.second - pos.y) : 999999;
+                int scrap_dist = (scrap_target.first >= 0)
+                    ? std::abs(scrap_target.first - pos.x) + std::abs(scrap_target.second - pos.y) : 999999;
+
+                // Priority logic:
+                // - Bootstrapping: if no machines built yet, prefer ScrapPile (need to BUILD first)
+                // - If carrying raw_food but no raw_material: prefer ScrapPile
+                // - If carrying raw_material but no raw_food: prefer FoodSource
+                // - If both empty: prefer ScrapPile (industry first, food can wait)
+                // - If both have some: prefer whatever has less (balance)
+                bool prefer_food = false;
+                // Use cached built_machine_count() instead of scanning grid
+                bool any_built = built_machine_count() > 0;
+
+                if (!any_built) {
+                    prefer_food = false;  // Bootstrap: need raw_material to BUILD machines
+                } else if (inv.raw_food < 0.1f && inv.raw_material > 0.1f) {
+                    prefer_food = true;  // need raw_food to work FoodMachine
+                } else if (inv.raw_food > 0.1f && inv.raw_material < 0.1f) {
+                    prefer_food = false;  // need raw_material for building/mat machines
+                } else {
+                    prefer_food = false;  // Default: industry first
+                }
+
+                if (prefer_food && food_src.first >= 0) {
+                    tx = food_src.first;
+                    ty = food_src.second;
+                } else if (scrap_target.first >= 0) {
                     tx = scrap_target.first;
                     ty = scrap_target.second;
+                } else if (food_src.first >= 0) {
+                    tx = food_src.first;
+                    ty = food_src.second;
                 }
                 break;
             }
 
             case ActionType::BUILD: {
-                // Priority: nearest unbuilt structure (Machine/Conveyor/EZ) with tie-breaking
-                // toward conveyors when machines are far away. Unbuilt conveyor frames are walkable.
+                // Priority: nearest unbuilt structure with strategic bias.
+                // When food is scarce, machines get priority over conveyors.
                 auto machine_t = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
                 auto conv_t    = grid_.find_nearest_conveyor_to_build(pos.x, pos.y);
                 auto ez_t      = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y);
@@ -40,16 +74,17 @@ void Simulation::system_find_targets() {
                 int ez_dist = (ez_t.first >= 0)
                     ? std::abs(ez_t.first - pos.x) + std::abs(ez_t.second - pos.y) : 999999;
 
-                // Prefer closest unbuilt structure; conveyors get a distance bonus
-                // so they're chosen even when slightly farther than machines.
+                // When storage food is low, strongly prefer machines over conveyors
+                int conv_bonus = (total_storage_food() < 3.0f) ? -10 : -3;
+
                 int best_dist = 999999;
                 if (machine_t.first >= 0 && mach_dist < best_dist) best_dist = mach_dist;
-                if (conv_t.first >= 0 && (conv_dist - 3) < best_dist) best_dist = conv_dist - 3;
+                if (conv_t.first >= 0 && (conv_dist + conv_bonus) < best_dist) best_dist = conv_dist + conv_bonus;
                 if (ez_t.first >= 0 && ez_dist < best_dist) best_dist = ez_dist;
 
                 if (machine_t.first >= 0 && mach_dist <= best_dist) {
                     tx = machine_t.first; ty = machine_t.second;
-                } else if (conv_t.first >= 0 && (conv_dist - 3) <= best_dist) {
+                } else if (conv_t.first >= 0 && (conv_dist + conv_bonus) <= best_dist) {
                     tx = conv_t.first; ty = conv_t.second;
                 } else if (ez_t.first >= 0) {
                     tx = ez_t.first; ty = ez_t.second;
@@ -72,7 +107,32 @@ void Simulation::system_find_targets() {
             }
 
             case ActionType::WORK: {
-                auto target = grid_.find_nearest_built_machine(pos.x, pos.y);
+                // Prefer machines matching what the agent has in inventory
+                // Agent with raw_food → FoodMachine
+                // Agent with raw_material → MaterialsMachine
+                // Otherwise use production chain priority
+                bool prefer_food = false;
+                bool prefer_output = false;
+                bool prefer_materials = false;
+
+                if (inv.raw_food > 0.1f) {
+                    prefer_food = true;  // carry raw_food → work FoodMachine
+                } else if (inv.raw_material > 0.1f) {
+                    prefer_materials = true;  // carry scrap → work MaterialsMachine
+                } else {
+                    // No inputs in inventory — fall back to production chain priority
+                    prefer_food = total_storage_food() < 15.0f;
+                    if (!prefer_food) {
+                        float constr_mat = total_storage_constr_mat();
+                        if (constr_mat > 0.5f) {
+                            prefer_output = last_quota_fill_ < 0.8f;
+                        } else {
+                            prefer_materials = true;
+                        }
+                    }
+                }
+                auto target = grid_.find_nearest_built_machine(
+                    pos.x, pos.y, prefer_food, prefer_output, prefer_materials);
                 tx = target.first;
                 ty = target.second;
                 break;

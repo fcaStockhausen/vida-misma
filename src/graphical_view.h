@@ -53,7 +53,6 @@ private:
     bool show_help_ = false;
     bool show_log_ = true;
     bool show_grid_coords_ = false;
-    bool log_follow_agent_ = false;
     bool show_quit_confirm_ = false;
 
     // Drag
@@ -91,6 +90,8 @@ private:
     void render_rect(int x, int y, int w, int h, SDL_Color color);
     void render_rect_outline(int x, int y, int w, int h, SDL_Color color);
     void render_separator(int x, int y, int w);
+
+    void get_output_size(int& w, int& h) const;
 
     void iso_to_screen(int gx, int gy, float& sx, float& sy) const;
     bool screen_to_grid(int sx, int sy, int& gx, int& gy) const;

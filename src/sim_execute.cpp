@@ -188,7 +188,23 @@ void Simulation::system_execute_actions() {
                     switch (td.machine_type) {
                         case MachineType::Food: {
                             // FoodMachine: raw_food → processed_food
-                            float food_produced = config_.machine_output * collab;
+                            // Consume raw_food from agent inventory, then adjacent storage
+                            float raw_needed = config_.machine_input;
+                            float from_inv = std::min(raw_needed, inv.raw_food);
+                            inv.raw_food -= from_inv;
+                            float from_storage = 0.0f;
+                            if (from_inv < raw_needed) {
+                                from_storage = std::min(raw_needed - from_inv,
+                                    get_adjacent_raw_food(pos.x, pos.y));
+                                consume_adjacent_raw_food(pos.x, pos.y, from_storage);
+                            }
+                            float total_consumed = from_inv + from_storage;
+                            if (total_consumed < 0.001f) {
+                                log_detail = "no raw_food";
+                                break;
+                            }
+                            float efficiency = total_consumed / raw_needed;
+                            float food_produced = config_.machine_output * efficiency * collab;
                             float food_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                 ResourceType::FOOD, food_produced);
                             float food_left = food_produced - food_dep;
@@ -198,12 +214,27 @@ void Simulation::system_execute_actions() {
                             }
                             deposited = food_dep;
                             total_food_produced_ += food_dep;
-                            log_detail = "+" + ff2(food_dep) + " food";
+                            log_detail = "+" + ff2(food_dep) + " food (ate " + ff2(total_consumed) + " raw)";
                             break;
                         }
                         case MachineType::Materials: {
                             // MaterialsMachine: raw_material → construction_material + scrap byproduct
-                            float mat_produced = config_.machine_mat_output * collab;
+                            // Consume raw_material from agent inventory, then adjacent storage
+                            float raw_needed = config_.machine_input;
+                            float from_inv = std::min(raw_needed, inv.raw_material);
+                            inv.raw_material -= from_inv;
+                            float from_storage = 0.0f;
+                            if (from_inv < raw_needed) {
+                                from_storage = pull_raw_material_from_adjacent_storage(
+                                    pos.x, pos.y, raw_needed - from_inv);
+                            }
+                            float total_consumed = from_inv + from_storage;
+                            if (total_consumed < 0.001f) {
+                                log_detail = "no raw_material";
+                                break;
+                            }
+                            float efficiency = total_consumed / raw_needed;
+                            float mat_produced = config_.machine_mat_output * efficiency * collab;
                             float mat_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                 ResourceType::CONSTRUCTION_MATERIAL, mat_produced);
                             float mat_left = mat_produced - mat_dep;
@@ -213,7 +244,7 @@ void Simulation::system_execute_actions() {
                             }
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
-                            float scrap = config_.machine_mat_output * 0.3f * collab;
+                            float scrap = config_.machine_mat_output * 0.3f * efficiency * collab;
                             for (int dy = -3; dy <= 3; dy++)
                                 for (int dx = -3; dx <= 3; dx++) {
                                     int nx = pos.x + dx, ny = pos.y + dy;
@@ -228,19 +259,39 @@ void Simulation::system_execute_actions() {
                                 }
 
                             deposited = mat_dep;
-                            log_detail = "+" + ff2(mat_dep) + " constr_mat";
+                            log_detail = "+" + ff2(mat_dep) + " constr_mat (ate " + ff2(total_consumed) + " scrap)";
                             break;
                         }
                         case MachineType::Output: {
-                            // OutputMachine: construction_material → factory health restoration
-                            // Pull construction_material from adjacent storage
+                            // OutputMachine: construction_material → output product (shipped as quota)
                             float pulled = pull_construction_material_from_adjacent_storage(
-                                pos.x, pos.y, 0.05f);
+                                pos.x, pos.y, config_.machine_out_output);
                             if (pulled > 0.001f) {
-                                float health_gain = pulled * 8.0f; // amplify: small mat → meaningful health
-                                factory_health_ = std::min(1.0f, factory_health_ + health_gain);
-                                deposited = pulled;
-                                log_detail = "+" + ff2(health_gain) + " hp (used " + ff2(pulled) + " mat)";
+                                float output_produced = pulled * 2.0f;
+                                float out_dep = deposit_to_adjacent_storage(pos.x, pos.y,
+                                    ResourceType::OUTPUT, output_produced);
+                                float out_left = output_produced - out_dep;
+                                if (out_left > 0.01f) {
+                                    out_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                                        ResourceType::OUTPUT, out_left);
+                                }
+                                deposited = out_dep;
+                                total_food_produced_ += out_dep;
+                                // Scrap byproduct: OutputMachine also recycles material
+                                float scrap = pulled * 0.15f;
+                                for (int dy = -3; dy <= 3; dy++)
+                                    for (int dx = -3; dx <= 3; dx++) {
+                                        int nx = pos.x + dx, ny = pos.y + dy;
+                                        if (grid_.at(nx, ny) == TileType::ScrapPile) {
+                                            auto& sd = grid_.data_at(nx, ny);
+                                            float add = std::min(scrap, sd.resource_max - sd.resource_amount);
+                                            sd.resource_amount += add;
+                                            scrap -= add;
+                                            if (scrap < 0.001f) break;
+                                        }
+                                        if (scrap < 0.001f) break;
+                                    }
+                                log_detail = "+" + ff2(out_dep) + " output (used " + ff2(pulled) + " mat)";
                             } else {
                                 log_detail = "no mat available";
                             }
@@ -275,6 +326,11 @@ void Simulation::system_execute_actions() {
                 if (inv.food >= config_.eat_food_per_tick) {
                     inv.food -= config_.eat_food_per_tick;
                     satisfaction_mul = 1.0f;
+                    ate = true;
+                } else if (inv.raw_food >= config_.eat_food_per_tick) {
+                    // Eat raw food from inventory (reduced efficiency, disease risk)
+                    inv.raw_food -= config_.eat_food_per_tick;
+                    satisfaction_mul = config_.eat_raw_efficiency;
                     ate = true;
                 } else {
                     float taken_mul = take_from_adjacent_storage(pos.x, pos.y);
@@ -773,15 +829,17 @@ void Simulation::consume_adjacent_raw_food(int px, int py, float amount) {
 
 float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type, float amount) {
     float remaining = amount;
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (dx == 0 && dy == 0) continue;
             if (remaining <= 0.001f) return amount - remaining;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) == TileType::Storage) {
                 auto& d = grid_.data_at(nx, ny);
                 float stored_total = d.stored_food + d.stored_raw_food
-                                   + d.stored_raw_material + d.stored_construction_material;
+                                   + d.stored_raw_material + d.stored_construction_material
+                                   + d.stored_output;
                 float space = d.storage_capacity - stored_total;
                 if (space > 0.001f) {
                     float deposit = std::min(remaining, space);
@@ -791,6 +849,8 @@ float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type,
                         d.stored_raw_food += deposit;
                     } else if (type == ResourceType::CONSTRUCTION_MATERIAL) {
                         d.stored_construction_material += deposit;
+                    } else if (type == ResourceType::OUTPUT) {
+                        d.stored_output += deposit;
                     } else {
                         d.stored_raw_material += deposit;
                     }
@@ -803,11 +863,12 @@ float Simulation::deposit_to_adjacent_storage(int px, int py, ResourceType type,
 
 float Simulation::deposit_to_adjacent_conveyor(int px, int py, ResourceType type, float amount) {
     float remaining = amount;
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (dx == 0 && dy == 0) continue;
             if (remaining <= 0.001f) return amount - remaining;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) == TileType::Conveyor) {
                 auto& d = grid_.data_at(nx, ny);
                 if (!d.built || d.conveyor_condition < 0.2f) continue;
@@ -825,10 +886,11 @@ float Simulation::deposit_to_adjacent_conveyor(int px, int py, ResourceType type
 
 // Returns effective satisfaction multiplier based on what was eaten
 float Simulation::take_from_adjacent_storage(int px, int py) {
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (dx == 0 && dy == 0) continue;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) == TileType::Storage) {
                 auto& d = grid_.data_at(nx, ny);
                 if (d.stored_food >= config_.eat_food_per_tick) {
@@ -848,10 +910,11 @@ float Simulation::take_from_adjacent_storage(int px, int py) {
 // Storage), up to `max_amount`. Returns the amount actually transferred.
 float Simulation::pull_food_from_adjacent_storage(int px, int py, float max_amount) {
     float remaining = max_amount;
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (remaining <= 0.001f) return max_amount - remaining;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) != TileType::Storage) continue;
             auto& d = grid_.data_at(nx, ny);
             float take = std::min(remaining, d.stored_food);
@@ -865,10 +928,11 @@ float Simulation::pull_food_from_adjacent_storage(int px, int py, float max_amou
 
 float Simulation::pull_raw_material_from_adjacent_storage(int px, int py, float max_amount) {
     float remaining = max_amount;
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (remaining <= 0.001f) return max_amount - remaining;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) != TileType::Storage) continue;
             auto& d = grid_.data_at(nx, ny);
             float take = std::min(remaining, d.stored_raw_material);
@@ -882,10 +946,11 @@ float Simulation::pull_raw_material_from_adjacent_storage(int px, int py, float 
 
 float Simulation::pull_construction_material_from_adjacent_storage(int px, int py, float max_amount) {
     float remaining = max_amount;
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (remaining <= 0.001f) return max_amount - remaining;
             int nx = px + dx, ny = py + dy;
+            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
             if (grid_.at(nx, ny) != TileType::Storage) continue;
             auto& d = grid_.data_at(nx, ny);
             float take = std::min(remaining, d.stored_construction_material);

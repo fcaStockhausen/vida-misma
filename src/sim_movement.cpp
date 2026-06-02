@@ -4,7 +4,7 @@
 #include <cstdlib>
 
 // ============================================================
-// SYSTEM: Move to Targets (with A* pathfinding)
+// SYSTEM: Move to Targets (with cached A* pathfinding)
 // ============================================================
 
 void Simulation::system_move_to_targets() {
@@ -24,16 +24,11 @@ void Simulation::system_move_to_targets() {
             continue;
         }
 
-        // Noise: sometimes random step
-        std::uniform_real_distribution<float> noise_roll(0.0f, 1.0f);
-        if (noise_roll(rng_) < config_.movement_noise) {
-            random_move(pos);
-            continue;
-        }
-
-        // A* pathfinding: get next step
-        auto [nx, ny] = astar_next_step(grid_, pos.x, pos.y,
-                                         action.target_x, action.target_y);
+        // Cached A* pathfinding: get next step along cached path
+        auto [nx, ny] = cached_next_step(grid_, action.path_cache,
+                                          pos.x, pos.y,
+                                          action.target_x, action.target_y,
+                                          tick_);
 
         if (nx != pos.x || ny != pos.y) {
             pos.x = nx;
@@ -51,11 +46,11 @@ void Simulation::system_move_to_targets() {
 // ============================================================
 
 void Simulation::move_toward(PositionComponent& pos, int tx, int ty) {
-    // Now uses A* -- kept as fallback / direct call
-    auto [nx, ny] = astar_next_step(grid_, pos.x, pos.y, tx, ty);
-    if (nx != pos.x || ny != pos.y) {
-        pos.x = nx;
-        pos.y = ny;
+    // Direct A* call (no cache) — used only as fallback
+    auto path = astar_find_path(grid_, pos.x, pos.y, tx, ty);
+    if (!path.empty()) {
+        pos.x = path[0].first;
+        pos.y = path[0].second;
     }
 }
 

@@ -45,6 +45,8 @@ Config load_config(const std::string& path) {
         cfg.gather_rate    = p->get_as<double>("gather_rate")->value_or(cfg.gather_rate);
         cfg.build_rate     = p->get_as<double>("build_rate")->value_or(cfg.build_rate);
         cfg.machine_output = p->get_as<double>("machine_output")->value_or(cfg.machine_output);
+        cfg.machine_mat_output = p->get_as<double>("machine_mat_output")->value_or(cfg.machine_mat_output);
+        cfg.machine_out_output = p->get_as<double>("machine_out_output")->value_or(cfg.machine_out_output);
         cfg.machine_input  = p->get_as<double>("machine_input")->value_or(cfg.machine_input);
     }
 

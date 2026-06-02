@@ -217,6 +217,77 @@ struct ChronicleEvent {
         }
         return buf;
     }
+
+    // First-person narrative from agent's POV
+    std::string narrative(Archetype arch, StressState state) const {
+        if (agent_id < 0) return "> " + text;
+
+        const char* mood = "";
+        switch (state) {
+            case StressState::BROKEN:          mood = "... "; break;
+            case StressState::DISSOCIATED:     mood = ""; break;
+            case StressState::HOSTILE_EUPHORIA: mood = "* "; break;
+            case StressState::REDEEMED:        mood = "~ "; break;
+            default: break;
+        }
+
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "%s%s", mood, narrative_text(arch));
+        return buf;
+    }
+
+private:
+    const char* narrative_text(Archetype arch) const {
+        (void)arch;
+        switch (type) {
+            case EventType::SPAWNED:        return "I woke up. The factory hums around me.";
+            case EventType::DIED_STARVATION:return "I can't... the hunger took me.";
+            case EventType::DIED_EXHAUSTION:return "So tired... I just need to close my eyes.";
+            case EventType::DIED_BREAKDOWN: return "I can't take this anymore.";
+            case EventType::DIED_COLLAPSE:  return "The ceiling... it's coming down!";
+            case EventType::DIED_SUICIDE:   return "This machine ate everything I was.";
+
+            case EventType::STRESS_STATE_CHANGE: return text.c_str();
+            case EventType::TRAUMA_GAINED:  return "Something broke inside me.";
+            case EventType::BREAKDOWN:      return "I can't... I just can't.";
+            case EventType::REDEMPTION:     return "I see them suffering. I have to help.";
+            case EventType::SABOTAGE:       return "If I break it, maybe they'll listen.";
+
+            case EventType::OPINION_SHIFT:  return "I'm starting to see things differently.";
+            case EventType::TRUST_MILESTONE:return "I think I can trust them now.";
+            case EventType::FOOD_SHARED:    return "Here. Take this. We're in this together.";
+            case EventType::FACTION_FORMED: return "We found each other. We stand together.";
+            case EventType::FACTION_JOINED: return "I'm not alone anymore.";
+            case EventType::FACTION_LEFT:   return "I have to walk my own path.";
+
+            case EventType::BUILT_MACHINE:     return "I built something real today.";
+            case EventType::BUILT_CONVEYOR:    return "Another piece of the machine takes shape.";
+            case EventType::BUILT_EATING_ZONE: return "A place to eat. That's something.";
+            case EventType::WORK_COMPLETED:    return "Done. Another shift, another quota.";
+            case EventType::GATHERED:          return "Found something useful out there.";
+            case EventType::MAINTAINED:        return "I keep things running. That's my job.";
+            case EventType::DISMANTLED:        return "We don't need this anymore.";
+
+            case EventType::MACHINE_ACTIVATED:  return "It lives. The machine breathes.";
+            case EventType::MACHINE_BROKE:      return "Another one down. We're losing ground.";
+            case EventType::FACTORY_RESTRUCTURE: return "The walls are shifting again.";
+            case EventType::FACTORY_CONFISCATED: return "They took it. They always take.";
+            case EventType::FACTORY_SEALED_SPACE: return "There are places here we can't go.";
+            case EventType::ARTIFACT_CREATED:    return "I made something... beautiful.";
+            case EventType::HIDDEN_SPACE_FOUND:  return "What's behind here?";
+            case EventType::QUOTA_MILESTONE:     return "We made quota. For once.";
+
+            case EventType::FIRST_BUILD:      return "The first thing anyone built here.";
+            case EventType::FIRST_DEATH:       return "Someone died. The first, but not the last.";
+            case EventType::FIRST_SABOTAGE:    return "Someone fought back.";
+            case EventType::FIRST_FACTION:     return "A group formed. Strength in numbers.";
+            case EventType::FIRST_ARTIFACT:    return "Someone created art in this place.";
+            case EventType::POPULATION_MILESTONE: return "More of us now. Or fewer.";
+            case EventType::CRISIS_PERIOD:     return "Everything is falling apart.";
+
+            default: return text.c_str();
+        }
+    }
 };
 
 // ============================================================
@@ -401,6 +472,162 @@ public:
             out += "  " + m->summary() + "\n";
         }
         if (milestones.empty()) out += "  (no milestones yet)\n";
+        return out;
+    }
+
+    // One-line arc summary for an agent
+    std::string agent_arc(int agent_id, const char* archetype_name = nullptr) const {
+        auto evs = by_agent(agent_id);
+        if (evs.empty()) return "(no events)";
+
+        int built = 0, gathered = 0, worked = 0, shared = 0, sabotaged = 0;
+        int first_tick = evs.front()->tick;
+        int last_tick = evs.back()->tick;
+        std::string death;
+
+        for (auto* ev : evs) {
+            switch (ev->type) {
+                case EventType::BUILT_MACHINE:
+                case EventType::BUILT_CONVEYOR:
+                case EventType::BUILT_EATING_ZONE:
+                    built++; break;
+                case EventType::GATHERED:     gathered++; break;
+                case EventType::WORK_COMPLETED: worked++; break;
+                case EventType::FOOD_SHARED:  shared++; break;
+                case EventType::SABOTAGE:     sabotaged++; break;
+                case EventType::DIED_STARVATION: death = "starvation"; break;
+                case EventType::DIED_EXHAUSTION: death = "exhaustion"; break;
+                case EventType::DIED_BREAKDOWN:  death = "breakdown"; break;
+                case EventType::DIED_COLLAPSE:   death = "collapse"; break;
+                case EventType::DIED_SUICIDE:    death = "suicide"; break;
+                default: break;
+            }
+        }
+
+        char buf[256];
+        const char* arch = archetype_name ? archetype_name : "?";
+        if (death.empty()) {
+            std::snprintf(buf, sizeof(buf),
+                "%s. Lived %d ticks. Built %d, gathered %d, worked %d, shared %d.%s%s",
+                arch, last_tick - first_tick,
+                built, gathered, worked, shared,
+                sabotaged > 0 ? " Sabotaged." : "",
+                evs.size() > 50 ? " (eventful life)" : "");
+        } else {
+            std::snprintf(buf, sizeof(buf),
+                "%s. Lived %d ticks. Built %d, gathered %d, worked %d. Died of %s at tick %d.%s%s",
+                arch, last_tick - first_tick,
+                built, gathered, worked, death.c_str(), last_tick,
+                sabotaged > 0 ? " Sabotaged." : "",
+                shared > 0 ? " Shared food." : "");
+        }
+        return buf;
+    }
+
+    // Narrative timeline for an agent (first-person), limited lines
+    std::string agent_journal(int agent_id, int head = 3, int tail = 15) const {
+        auto evs = by_agent(agent_id);
+        std::string out;
+        if (evs.empty()) return "  (no memories)\n";
+
+        // Show first N and last M events, with ellipsis
+        int shown_head = std::min(head, (int)evs.size());
+        int shown_tail = std::min(tail, (int)evs.size() - shown_head);
+        if (shown_tail < 0) shown_tail = 0;
+
+        char buf[64];
+        for (int i = 0; i < shown_head; i++) {
+            std::snprintf(buf, sizeof(buf), "[%5d] ", evs[i]->tick);
+            out += "  " + std::string(buf) + evs[i]->text + "\n";
+        }
+        if ((int)evs.size() > shown_head + shown_tail) {
+            std::snprintf(buf, sizeof(buf), "  ... (%d more) ...\n",
+                (int)evs.size() - shown_head - shown_tail);
+            out += buf;
+        }
+        for (int i = (int)evs.size() - shown_tail; i < (int)evs.size(); i++) {
+            if (i < shown_head) continue;
+            std::snprintf(buf, sizeof(buf), "[%5d] ", evs[i]->tick);
+            out += "  " + std::string(buf) + evs[i]->text + "\n";
+        }
+        return out;
+    }
+
+    // Ex-post analysis: faction arcs
+    std::string faction_arcs() const {
+        std::string out = "--- Faction Arcs ---\n";
+        auto faction_events = filter([](const ChronicleEvent& e) {
+            return e.type == EventType::FACTION_FORMED
+                || e.type == EventType::FACTION_JOINED
+                || e.type == EventType::FACTION_LEFT;
+        });
+        if (faction_events.empty()) { out += "  (no factions formed)\n"; return out; }
+        for (auto* ev : faction_events) {
+            out += "  " + ev->summary() + "\n";
+        }
+        return out;
+    }
+
+    // Ex-post analysis: crisis periods (STRESS_STATE_CHANGE events, breakdowns)
+    std::string crisis_timeline() const {
+        std::string out = "--- Crisis Timeline ---\n";
+        auto crises = filter([](const ChronicleEvent& e) {
+            return e.type == EventType::BREAKDOWN
+                || e.type == EventType::SABOTAGE
+                || e.type == EventType::DIED_SUICIDE
+                || e.type == EventType::CRISIS_PERIOD;
+        });
+        if (crises.empty()) { out += "  (no crises recorded)\n"; return out; }
+        for (auto* ev : crises) {
+            out += "  " + ev->summary() + "\n";
+        }
+        return out;
+    }
+
+    // Ex-post analysis: event type distribution
+    std::string event_distribution() const {
+        std::string out = "--- Event Distribution ---\n";
+        char buf[128];
+        for (int i = 0; i < (int)EventType::COUNT; i++) {
+            int c = (int)type_index_[i].size();
+            if (c == 0) continue;
+            std::snprintf(buf, sizeof(buf), "  %-22s %4d\n", event_type_name((EventType)i), c);
+            out += buf;
+        }
+        return out;
+    }
+
+    // JSONL: one JSON object per event, for external analysis
+    std::string to_jsonl() const {
+        std::string out;
+        out.reserve(events_.size() * 200);
+        char buf[512];
+        for (auto& ev : events_) {
+            // Escape quotes in text
+            std::string escaped;
+            escaped.reserve(ev.text.size());
+            for (char c : ev.text) {
+                if (c == '"') escaped += "\\\"";
+                else if (c == '\\') escaped += "\\\\";
+                else escaped += c;
+            }
+            const char* cat_name = "WORLD";
+            switch (category_of(ev.type)) {
+                case EventCategory::LIFECYCLE:  cat_name = "LIFECYCLE"; break;
+                case EventCategory::STRESS:     cat_name = "STRESS"; break;
+                case EventCategory::SOCIAL:     cat_name = "SOCIAL"; break;
+                case EventCategory::PRODUCTION: cat_name = "PRODUCTION"; break;
+                case EventCategory::WORLD:      cat_name = "WORLD"; break;
+                case EventCategory::NARRATIVE:  cat_name = "NARRATIVE"; break;
+                default: break;
+            }
+            std::snprintf(buf, sizeof(buf),
+                "{\"tick\":%d,\"type\":\"%s\",\"category\":\"%s\",\"agent\":%d,"
+                "\"x\":%d,\"y\":%d,\"value\":%.4f,\"ref\":%d,\"text\":\"%s\"}\n",
+                ev.tick, event_type_name(ev.type), cat_name, ev.agent_id,
+                ev.x, ev.y, ev.value, ev.ref_id, escaped.c_str());
+            out += buf;
+        }
         return out;
     }
 

@@ -3,66 +3,67 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
-int main(int argc, char* argv[]) {
-    int ticks = 500;
-    if (argc > 1) ticks = std::atoi(argv[1]);
-    if (ticks <= 0) ticks = 500;
+// ============================================================
+// Helpers
+// ============================================================
 
+static Config make_config(int argc, char* argv[], int arg_base) {
     std::string config_path = "config/default.toml";
     Config cfg = load_config(config_path);
-    if (argc > 2) cfg.seed = std::atoi(argv[2]);
+    if (argc > arg_base + 0) cfg.seed = std::atoi(argv[arg_base + 0]);
+    return cfg;
+}
 
+static Simulation run_sim(Config& cfg, int ticks) {
+    Simulation sim(cfg);
+    for (int t = 0; t < ticks; t++) sim.advance();
+    return sim;
+}
+
+// Collect archetype name for an agent_id (may be dead, search all entities)
+static const char* find_archetype_name(Simulation& sim, int agent_id) {
+    auto view = sim.registry().view<const AgentComponent, const PersonalityComponent>();
+    for (auto e : view) {
+        auto& ag = sim.registry().get<AgentComponent>(e);
+        if (ag.id == agent_id) {
+            auto& ps = sim.registry().get<PersonalityComponent>(e);
+            return archetype_name(ps.archetype);
+        }
+    }
+    return "?";
+}
+
+// ============================================================
+// Commands
+// ============================================================
+
+static int cmd_run(int argc, char* argv[]) {
+    int ticks = 500;
+    if (argc > 2) ticks = std::atoi(argv[2]);
+    if (ticks <= 0) ticks = 500;
+
+    Config cfg = make_config(argc, argv, 3);
     Simulation sim(cfg);
 
     std::printf("=== La Vida Misma - Batch Run ===\n");
     std::printf("Grid: %dx%d  Agents: %d  Ticks: %d  Seed: %d\n",
         cfg.grid_width, cfg.grid_height, cfg.initial_population, ticks, cfg.seed);
 
-    // Print map stats
-    int food_sources = 0, scrap_piles = 0, machines = 0, storages = 0;
-    float total_raw_food = 0.0f, total_raw_mat = 0.0f;
-    for (int y = 0; y < sim.grid().height(); y++)
-        for (int x = 0; x < sim.grid().width(); x++) {
-            auto t = sim.grid().at(x, y);
-            const auto& d = sim.grid().data_at(x, y);
-            if (t == TileType::FoodSource) {
-                food_sources++;
-                total_raw_food += d.resource_amount;
-            }
-            if (t == TileType::ScrapPile) {
-                scrap_piles++;
-                total_raw_mat += d.resource_amount;
-            }
-            if (t == TileType::Machine) machines++;
-            if (t == TileType::Storage) storages++;
-        }
-    std::printf("Map: %d food_src (%.1f raw_food) %d scrap (%.1f mat) %d machines %d storages\n\n",
-        food_sources, total_raw_food, scrap_piles, total_raw_mat, machines, storages);
-
-    // Print initial state
-    std::printf("--- INITIAL STATE ---\n");
-    auto agents = sim.alive_agents();
-    for (auto e : agents) {
-        auto& agent = sim.registry().get<AgentComponent>(e);
-        auto& pers = sim.registry().get<PersonalityComponent>(e);
-        std::printf("Agent[%2d] %-9s comp=%.2f lazy=%.2f art=%.2f greg=%.2f res=%.2f cur=%.2f\n",
-            agent.id, archetype_name(pers.archetype),
-            pers.compliance, pers.laziness, pers.artistry,
-            pers.gregariousness, pers.resilience, pers.curiosity);
-    }
-
-    // Run simulation with periodic sampling
     int sample_interval = std::max(1, ticks / 20);
-    std::printf("\n--- TIMELINE (every %d ticks) ---\n", sample_interval);
-    std::printf("%6s %5s %5s %5s %5s %5s %5s %5s %5s | %5s %5s %5s | %4s %4s\n",
+    std::printf("\n%6s %5s %5s %5s %5s %5s %5s %5s %5s | %5s %5s %5s | %4s %4s\n",
         "tick", "alive", "GATH", "BUIL", "WORK", "EAT", "REST", "SOC", "OTHR",
         "rawF", "rawM", "food", "mach", "raw");
     for (int t = 0; t < ticks; t++) {
         sim.advance();
+        if (sim.alive_count() == 0) {
+            std::printf("\nEXTINCTION at tick %d.\n", t + 1);
+            break;
+        }
         if ((t + 1) % sample_interval == 0 || t == 0) {
             int alive = sim.alive_count();
-            int act_counts[12] = {};
+            int act_counts[14] = {};
             float inv_rf = 0, inv_rm = 0, inv_f = 0;
             auto av = sim.alive_agents();
             for (auto e : av) {
@@ -78,6 +79,7 @@ int main(int argc, char* argv[]) {
                       + act_counts[(int)ActionType::GET_FOOD]
                       + act_counts[(int)ActionType::MAINTAIN]
                       + act_counts[(int)ActionType::DISMANTLE]
+                      + act_counts[(int)ActionType::SABOTAGE]
                       + act_counts[(int)ActionType::IDLE];
             std::printf("%6d %5d %5d %5d %5d %5d %5d %5d %5d | %5.1f %5.1f %5.1f | %4d %4.0f\n",
                 t + 1, alive,
@@ -94,189 +96,314 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Print final state
-    agents = sim.alive_agents();
-    std::printf("\n--- AFTER %d TICKS (alive: %d) ---\n", ticks, (int)agents.size());
-    std::printf("\n");
+    std::printf("\nDone. alive=%d  built=%d  food=%.1f  quota=%.0f%%\n",
+        sim.alive_count(), sim.total_machines_built(),
+        sim.total_storage_food(), sim.last_quota_fill() * 100);
+    return 0;
+}
 
-    // Count action distribution and deaths
-    int action_counts[13] = {};
-    int deaths_by[5] = {};  // starvation, exhaustion, breakdown, collapse, suicide
+static int cmd_story(int argc, char* argv[]) {
+    int ticks = 500;
+    if (argc > 2) ticks = std::atoi(argv[2]);
+    if (ticks <= 0) ticks = 500;
 
-    // Count dead
+    Config cfg = make_config(argc, argv, 3);
+    std::printf("# La Vida Misma — Story Mode\n");
+    std::printf("# Grid: %dx%d  Agents: %d  Ticks: %d  Seed: %d\n\n",
+        cfg.grid_width, cfg.grid_height, cfg.initial_population, ticks, cfg.seed);
+
+    Simulation sim(cfg);
+    for (int t = 0; t < ticks; t++) {
+        sim.advance();
+        if (sim.alive_count() == 0) break;
+    }
+
+    // Narrative milestones
+    std::printf("== NARRATIVE ARC ==\n");
+    std::printf("%s", sim.chronicle().narrative_summary().c_str());
+
+    // Per-agent arcs: alive first, then dead
+    auto alive = sim.alive_agents();
+    std::vector<int> alive_ids, dead_ids;
+
     auto all_view = sim.registry().view<const AgentComponent>();
     for (auto e : all_view) {
-        auto& agent = sim.registry().get<AgentComponent>(e);
-        if (!agent.alive) {
-            if (agent.cause_of_death == "starvation") deaths_by[0]++;
-            else if (agent.cause_of_death == "exhaustion") deaths_by[1]++;
-            else if (agent.cause_of_death == "breakdown") deaths_by[2]++;
-            else if (agent.cause_of_death == "collapse") deaths_by[3]++;
-            else if (agent.cause_of_death == "suicide") deaths_by[4]++;
-        }
+        auto& ag = sim.registry().get<AgentComponent>(e);
+        if (ag.alive) alive_ids.push_back(ag.id);
+        else dead_ids.push_back(ag.id);
     }
 
-    for (auto e : agents) {
-        auto& agent  = sim.registry().get<AgentComponent>(e);
-        auto& needs  = sim.registry().get<NeedsComponent>(e);
-        auto& pers   = sim.registry().get<PersonalityComponent>(e);
-        auto& action = sim.registry().get<ActionComponent>(e);
-        auto& stress = sim.registry().get<StressComponent>(e);
-        auto& inv    = sim.registry().get<InventoryComponent>(e);
+    std::printf("\n== AGENT ARCS (%d alive, %d dead) ==\n",
+        (int)alive_ids.size(), (int)dead_ids.size());
 
-        action_counts[(int)action.current]++;
-
-        const char* action_names[] = {
-            "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE", "GETFOOD", "MAINT", "DSMNTL", "SABOT", "IDLE"
-        };
-
-        std::printf("Agent[%2d] action=%-8s stress=%.2f tr=%.2f %s | H=%.2f R=%.2f S=%.2f E=%.2f P=%.2f | inv[rf=%.1f rm=%.1f f=%.1f] | comp=%.2f art=%.2f lazy=%.2f\n",
-            agent.id,
-            action.current == ActionType::IDLE ? "IDLE" : action_names[(int)action.current],
-            stress.value, stress.trauma, stress_state_name(stress.state),
-            needs.hunger, needs.rest, needs.social, needs.expression, needs.purpose,
-            inv.raw_food, inv.raw_material, inv.food,
-            pers.compliance, pers.artistry, pers.laziness);
+    for (int id : alive_ids) {
+        const char* arch = find_archetype_name(sim, id);
+        std::printf("\n--- Agent %d (%s) ALIVE ---\n", id, arch);
+        std::printf("  %s\n", sim.chronicle().agent_arc(id, arch).c_str());
+        std::printf("%s", sim.chronicle().agent_journal(id, 3, 12).c_str());
+    }
+    for (int id : dead_ids) {
+        const char* arch = find_archetype_name(sim, id);
+        std::printf("\n--- Agent %d (%s) DEAD ---\n", id, arch);
+        std::printf("  %s\n", sim.chronicle().agent_arc(id, arch).c_str());
+        std::printf("%s", sim.chronicle().agent_journal(id, 2, 8).c_str());
     }
 
-    // Action distribution (counts already accumulated in action_counts above)
-    const char* action_names[] = {
-        "GATHER", "BUILD", "WORK", "EAT", "REST", "SOCIAL", "CREATE", "EXPLORE",
-        "GETFOOD", "MAINT", "DSMNTL", "IDLE"
-    };
-    std::printf("\n--- ACTION DISTRIBUTION ---\n");
-    for (int i = 0; i < 12; i++) {
-        if (action_counts[i] > 0) {
-            std::printf("  %-8s: %2d ", action_names[i], action_counts[i]);
-            for (int j = 0; j < action_counts[i]; j++) std::printf("#");
-            std::printf("\n");
-        }
+    // Death report
+    std::printf("\n%s", sim.chronicle().death_report().c_str());
+
+    // Production summary
+    std::printf("\n== EPILOGUE ==\n");
+    std::printf("  Factory health: %.0f%%\n", sim.factory_health() * 100);
+    std::printf("  Machines built: %d\n", sim.total_machines_built());
+    std::printf("  Food shipped: %.1f\n", sim.total_food_shipped());
+    std::printf("  Sabotages: %d  Redemptions: %d  Suicides: %d\n",
+        sim.sabotages_total(), sim.redemptions_total(), sim.suicides_total());
+    std::printf("  Factions: %d  Artifacts: %d\n",
+        sim.factions_formed(), sim.artifacts_created());
+
+    return 0;
+}
+
+static int cmd_agent(int argc, char* argv[]) {
+    if (argc < 3) {
+        std::fprintf(stderr, "Usage: vida_batch agent <agent_id> <ticks> [seed]\n");
+        return 1;
+    }
+    int agent_id = std::atoi(argv[2]);
+    int ticks = 500;
+    if (argc > 3) ticks = std::atoi(argv[3]);
+    if (ticks <= 0) ticks = 500;
+
+    Config cfg = make_config(argc, argv, 4);
+    Simulation sim(cfg);
+    for (int t = 0; t < ticks; t++) {
+        sim.advance();
+        if (sim.alive_count() == 0) break;
     }
 
-    // Deaths (framed as natural turnover — this is a stressful factory environment)
-    int total_dead = deaths_by[0] + deaths_by[1] + deaths_by[2] + deaths_by[3];
-    if (total_dead > 0) {
-        std::printf("\nTURNOVER:\n");
-        if (deaths_by[0]) std::printf("  burnout (hunger):   %d\n", deaths_by[0]);
-        if (deaths_by[1]) std::printf("  collapse (fatigue): %d\n", deaths_by[1]);
-        if (deaths_by[2]) std::printf("  breakdown (stress): %d\n", deaths_by[2]);
-        if (deaths_by[3]) std::printf("  factory collapse:   %d\n", deaths_by[3]);
-        if (deaths_by[4]) std::printf("  suicide:            %d\n", deaths_by[4]);
-    } else {
-        std::printf("\nTURNOVER: (none — stable shift)\n");
+    const char* arch = find_archetype_name(sim, agent_id);
+    auto evs = sim.chronicle().by_agent(agent_id);
+
+    std::printf("# Journal of Agent %d (%s)\n", agent_id, arch);
+    std::printf("# %d ticks, seed %d, %zu events\n\n",
+        ticks, cfg.seed, evs.size());
+
+    if (evs.empty()) {
+        std::printf("(no recorded events)\n");
+        return 0;
     }
 
-    // Production stats
-    std::printf("\n--- PRODUCTION ---\n");
-    std::printf("  Factory health:   %.2f\n", sim.factory_health());
-    std::printf("  Machines built:   %d / %d\n", sim.total_machines_built(), machines);
-    std::printf("  Food produced:    %.1f\n", sim.total_food_produced());
-    std::printf("  Raw gathered:     %.1f\n", sim.total_raw_gathered());
-    std::printf("  Storage food:     %.1f\n", sim.total_storage_food());
-    std::printf("  Conveyors:        %d built / %d total\n",
-        sim.grid().built_conveyor_count(), sim.grid().conveyor_count());
+    // Print every event — full journal
+    char buf[64];
+    for (auto* ev : evs) {
+        std::snprintf(buf, sizeof(buf), "[%5d] ", ev->tick);
+        std::printf("  %s%s\n", buf, ev->text.c_str());
+    }
 
-    // Map resource state
-    float remaining_food = 0.0f, remaining_mat = 0.0f;
-    float storage_food = 0.0f, storage_raw = 0.0f, storage_mat = 0.0f;
-    for (int y = 0; y < sim.grid().height(); y++)
-        for (int x = 0; x < sim.grid().width(); x++) {
-            auto t = sim.grid().at(x, y);
-            const auto& d = sim.grid().data_at(x, y);
-            if (t == TileType::FoodSource) remaining_food += d.resource_amount;
-            if (t == TileType::ScrapPile) remaining_mat += d.resource_amount;
-            if (t == TileType::Storage) {
-                storage_food += d.stored_food;
-                storage_raw += d.stored_raw_food;
-                storage_mat += d.stored_raw_material;
+    std::printf("\n---\n%s\n", sim.chronicle().agent_arc(agent_id, arch).c_str());
+    return 0;
+}
+
+static int cmd_analysis(int argc, char* argv[]) {
+    int ticks = 500;
+    if (argc > 2) ticks = std::atoi(argv[2]);
+    if (ticks <= 0) ticks = 500;
+
+    Config cfg = make_config(argc, argv, 3);
+    Simulation sim(cfg);
+    for (int t = 0; t < ticks; t++) {
+        sim.advance();
+        if (sim.alive_count() == 0) break;
+    }
+
+    std::printf("# La Vida Misma — Ex-Post Analysis\n");
+    std::printf("# Ticks: %d  Seed: %d  Events: %zu\n\n",
+        ticks, cfg.seed, sim.chronicle().size());
+
+    // Event distribution
+    std::printf("%s", sim.chronicle().event_distribution().c_str());
+
+    // Faction arcs
+    std::printf("\n%s", sim.chronicle().faction_arcs().c_str());
+
+    // Crisis timeline
+    std::printf("\n%s", sim.chronicle().crisis_timeline().c_str());
+
+    // Death report
+    std::printf("\n%s", sim.chronicle().death_report().c_str());
+
+    // Per-agent arc summaries (compact)
+    std::printf("\n--- Agent Arcs ---\n");
+    auto all_view = sim.registry().view<const AgentComponent>();
+    for (auto e : all_view) {
+        auto& ag = sim.registry().get<AgentComponent>(e);
+        const char* arch = find_archetype_name(sim, ag.id);
+        std::printf("  A%-2d %-9s %s  %s\n", ag.id, arch,
+            ag.alive ? "ALIVE" : "DEAD ",
+            sim.chronicle().agent_arc(ag.id, arch).c_str());
+    }
+
+    // Aggregate stats
+    std::printf("\n--- Aggregate ---\n");
+    std::printf("  Factory health:    %.2f\n", sim.factory_health());
+    std::printf("  Total events:      %zu\n", sim.chronicle().size());
+    std::printf("  Machines built:    %d\n", sim.total_machines_built());
+    std::printf("  Food shipped:      %.1f\n", sim.total_food_shipped());
+    std::printf("  Sabotages:         %d\n", sim.sabotages_total());
+    std::printf("  Redemptions:       %d\n", sim.redemptions_total());
+    std::printf("  Suicides:          %d\n", sim.suicides_total());
+    std::printf("  Factions:          %d\n", sim.factions_formed());
+    std::printf("  Artifacts:         %d\n", sim.artifacts_created());
+
+    return 0;
+}
+
+static int cmd_jsonl(int argc, char* argv[]) {
+    int ticks = 500;
+    if (argc > 2) ticks = std::atoi(argv[2]);
+    if (ticks <= 0) ticks = 500;
+
+    Config cfg = make_config(argc, argv, 3);
+    Simulation sim(cfg);
+    for (int t = 0; t < ticks; t++) {
+        sim.advance();
+        if (sim.alive_count() == 0) break;
+    }
+
+    // Header comment with metadata
+    std::printf("# La Vida Misma JSONL | ticks=%d seed=%d grid=%dx%d agents=%d events=%zu\n",
+        ticks, cfg.seed, cfg.grid_width, cfg.grid_height,
+        cfg.initial_population, sim.chronicle().size());
+
+    // Dump all events as JSONL
+    std::printf("%s", sim.chronicle().to_jsonl().c_str());
+
+    return 0;
+}
+
+static int cmd_map(int argc, char* argv[]) {
+    Config cfg = make_config(argc, argv, 2);
+    Simulation sim(cfg);
+    auto& grid = sim.grid();
+
+    std::printf("=== Map Diagnostic (seed=%d) ===\n\n", cfg.seed);
+
+    // Count walls
+    int inner_walls = 0, boundary_walls = 0;
+    for (int y = 0; y < grid.height(); y++)
+        for (int x = 0; x < grid.width(); x++) {
+            if (grid.at(x, y) == TileType::Wall) {
+                if (x == 0 || x == grid.width()-1 || y == 0 || y == grid.height()-1)
+                    boundary_walls++;
+                else
+                    inner_walls++;
             }
         }
-    std::printf("  Wild food left:   %.1f / %.1f\n", remaining_food, total_raw_food);
-    std::printf("  Scrap left:       %.1f / %.1f\n", remaining_mat, total_raw_mat);
+    std::printf("  Walls: %d boundary, %d inner\n\n", boundary_walls, inner_walls);
 
-    // Conveyor stats
-    int conv_built = 0, conv_broken = 0;
-    float conv_contents = 0.0f, avg_condition = 0.0f;
-    for (int y = 0; y < sim.grid().height(); y++)
-        for (int x = 0; x < sim.grid().width(); x++) {
-            if (sim.grid().at(x, y) != TileType::Conveyor) continue;
-            const auto& d = sim.grid().data_at(x, y);
-            if (d.built) { conv_built++; avg_condition += d.conveyor_condition; }
-            if (d.built && d.conveyor_condition < 0.2f) conv_broken++;
-            conv_contents += d.conveyor_contents;
+    // All special tiles
+    for (int y = 0; y < grid.height(); y++)
+        for (int x = 0; x < grid.width(); x++) {
+            auto t = grid.at(x, y);
+            if (t == TileType::Machine) {
+                auto& d = grid.data_at(x, y);
+                const char* mt = d.machine_type == MachineType::Food ? "FOOD" :
+                                 d.machine_type == MachineType::Materials ? "MAT" : "OUT";
+                std::printf("  MACHINE %-4s at (%2d,%2d) built=%d\n", mt, x, y, d.built);
+            } else if (t == TileType::Storage) {
+                auto& d = grid.data_at(x, y);
+                std::printf("  STORAGE      at (%2d,%2d) cap=%.0f\n", x, y, d.storage_capacity);
+            } else if (t == TileType::Exit) {
+                std::printf("  EXIT         at (%2d,%2d)\n", x, y);
+            } else if (t == TileType::Entrance) {
+                std::printf("  ENTRANCE     at (%2d,%2d)\n", x, y);
+            } else if (t == TileType::Conveyor) {
+                auto& d = grid.data_at(x, y);
+                const char* dir = d.conveyor_dir == ConveyorDir::N ? "N" :
+                                  d.conveyor_dir == ConveyorDir::S ? "S" :
+                                  d.conveyor_dir == ConveyorDir::E ? "E" : "W";
+                std::printf("  CONVEYOR %-2s  at (%2d,%2d) built=%d\n", dir, x, y, d.built);
+            }
         }
-    if (conv_built > 0) avg_condition /= conv_built;
-    std::printf("  Conv condition:   %.2f avg, %d broken\n", avg_condition, conv_broken);
-    std::printf("  Conv contents:    %.1f on belts\n", conv_contents);
-    std::printf("  In storage:       food=%.1f raw_food=%.1f mat=%.1f\n",
-        storage_food, storage_raw, storage_mat);
 
-    // Narrative stats
-    std::printf("\n--- NARRATIVE ---\n");
-    std::printf("  Quota:            %.3f -> %.3f\n", cfg.quota_per_tick, sim.current_quota());
-    std::printf("  Restructures:     %d\n", sim.total_restructures());
-    std::printf("  Artifacts:        %d created, %d active\n",
-        sim.artifacts_created(), sim.artifacts_active());
-    std::printf("  Hidden spaces:    %d found, %d sealed\n",
-        sim.hidden_spaces_found(), sim.hidden_spaces_sealed());
-    std::printf("  Factions:         %d\n", sim.factions_formed());
-    std::printf("  Sabotages:        %d\n", sim.sabotages_total());
-    std::printf("  Redemptions:      %d\n", sim.redemptions_total());
-    std::printf("  Suicides:         %d\n", sim.suicides_total());
+    // Machine-Storage adjacency
+    std::printf("\n=== Machine Adjacency ===\n");
+    for (int y = 0; y < grid.height(); y++)
+        for (int x = 0; x < grid.width(); x++) {
+            if (grid.at(x, y) != TileType::Machine) continue;
+            auto& d = grid.data_at(x, y);
+            const char* mt = d.machine_type == MachineType::Food ? "FOOD" :
+                             d.machine_type == MachineType::Materials ? "MAT" : "OUT";
+            int adj_storage = 0, adj_conveyor = 0;
+            for (int dy2 = -2; dy2 <= 2; dy2++)
+                for (int dx2 = -2; dx2 <= 2; dx2++) {
+                    int nx = x + dx2, ny = y + dy2;
+                    if (nx < 0 || nx >= grid.width() || ny < 0 || ny >= grid.height()) continue;
+                    if (grid.at(nx, ny) == TileType::Storage) adj_storage++;
+                    if (grid.at(nx, ny) == TileType::Conveyor) adj_conveyor++;
+                }
+            std::printf("  Machine(%s) at (%d,%d): %d storages, %d conveyors within r=2\n",
+                mt, x, y, adj_storage, adj_conveyor);
+        }
 
-    // Noncompliance, meaning, stress, trauma stats
-    float avg_noncomp = 0.0f, avg_meaning = 0.0f, avg_stress = 0.0f, avg_trauma = 0.0f;
-    int meaning_crisis = 0;
-    int stress_states[5] = {0, 0, 0, 0, 0}; // NORMAL, DISSOCIATED, HOSTILE_EUPHORIA, BROKEN, REDEEMED
-    auto all_agents = sim.registry().view<const AgentComponent, const NeedsComponent, const StressComponent>();
-    int n_total = 0;
-    for (auto e : all_agents) {
-        auto& ag = sim.registry().get<AgentComponent>(e);
-        auto& nd = sim.registry().get<NeedsComponent>(e);
-        auto& st = sim.registry().get<StressComponent>(e);
-        avg_noncomp += ag.noncompliance;
-        avg_meaning += nd.meaning;
-        avg_stress += st.value;
-        avg_trauma += st.trauma;
-        if (nd.meaning > 0.7f) meaning_crisis++;
-        stress_states[static_cast<int>(st.state)]++;
-        n_total++;
-    }
-    if (n_total > 0) {
-        avg_noncomp /= n_total;
-        avg_meaning /= n_total;
-        avg_stress /= n_total;
-        avg_trauma /= n_total;
-    }
-    std::printf("  Avg noncompliance: %.2f\n", avg_noncomp);
-    std::printf("  Avg meaning need:  %.2f\n", avg_meaning);
-    std::printf("  Meaning crisis:    %d / %d agents\n", meaning_crisis, n_total);
-    std::printf("  Avg stress:        %.2f\n", avg_stress);
-    std::printf("  Avg trauma:        %.2f\n", avg_trauma);
-    std::printf("  Stress states:     N=%d D=%d E=%d B=%d R=%d\n",
-        stress_states[0], stress_states[1], stress_states[2],
-        stress_states[3], stress_states[4]);
-
-    // Hidden space count on map
-    int hidden_count = 0;
-    for (int y = 0; y < sim.grid().height(); y++)
-        for (int x = 0; x < sim.grid().width(); x++)
-            if (sim.grid().at(x, y) == TileType::HiddenSpace) hidden_count++;
-    std::printf("  Hidden on map:    %d\n", hidden_count);
-
-    // Chronicle: narrative summary + death report + first agent timeline
-    std::printf("\n--- CHRONICLE (%zu events) ---\n", sim.chronicle().size());
-    std::printf("%s", sim.chronicle().narrative_summary().c_str());
-    std::printf("%s", sim.chronicle().death_report().c_str());
-    // First agent timeline as sample
-    if (sim.chronicle().count_for_agent(0) > 0) {
-        const char* aname = archetype_name(
-            sim.registry().get<PersonalityComponent>(
-                *sim.alive_agents().begin()).archetype);
-        // Find agent 0's entity to get archetype — may be dead, just show ID
-        std::printf("%s", sim.chronicle().agent_timeline(0, "Agent0").c_str());
+    // Exit-Storage adjacency
+    std::printf("\n=== Exit Adjacency ===\n");
+    auto exits = grid.find_all(TileType::Exit);
+    for (auto [ex, ey] : exits) {
+        int adj_storage = 0;
+        for (int dy2 = -3; dy2 <= 3; dy2++)
+            for (int dx2 = -3; dx2 <= 3; dx2++) {
+                int nx = ex + dx2, ny = ey + dy2;
+                if (nx < 0 || nx >= grid.width() || ny < 0 || ny >= grid.height()) continue;
+                if (grid.at(nx, ny) == TileType::Storage) adj_storage++;
+            }
+        std::printf("  Exit at (%d,%d): %d storages within r=3\n", ex, ey, adj_storage);
     }
 
-    std::printf("\nDone.\n");
     return 0;
+}
+
+static void usage() {
+    std::fprintf(stderr,
+        "La Vida Misma — CLI\n"
+        "\n"
+        "Usage: vida_batch <command> [args]\n"
+        "\n"
+        "Commands:\n"
+        "  run     <ticks> [seed]          Numeric timeline (default)\n"
+        "  story   <ticks> [seed]          First-person narrative for all agents\n"
+        "  agent   <id> <ticks> [seed]     Full journal of one agent\n"
+        "  analysis <ticks> [seed]         Ex-post structured analysis\n"
+        "  jsonl   <ticks> [seed]          JSONL dump for external tools\n"
+        "\n"
+        "Defaults: ticks=500, seed from config/default.toml\n"
+    );
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) { usage(); return 1; }
+
+    std::string cmd = argv[1];
+    if (cmd == "run")          return cmd_run(argc, argv);
+    if (cmd == "story")        return cmd_story(argc, argv);
+    if (cmd == "agent")        return cmd_agent(argc, argv);
+    if (cmd == "analysis")     return cmd_analysis(argc, argv);
+    if (cmd == "jsonl")        return cmd_jsonl(argc, argv);
+    if (cmd == "map")          return cmd_map(argc, argv);
+
+    // Legacy: just a number = old run mode
+    if (std::isdigit(argv[1][0])) {
+        // Rewrite argv to match cmd_run expectations
+        std::vector<char*> args;
+        args.push_back(argv[0]);
+        args.push_back(const_cast<char*>("run"));
+        for (int i = 1; i < argc; i++) args.push_back(argv[i]);
+        args.push_back(nullptr);
+        return cmd_run(args.size() - 1, args.data());
+    }
+
+    std::fprintf(stderr, "Unknown command: %s\n", argv[1]);
+    usage();
+    return 1;
 }

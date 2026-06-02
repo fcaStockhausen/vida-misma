@@ -1,22 +1,15 @@
 #pragma once
 // A* pathfinding for La Vida Misma.
 // Operates on Grid, returns next step toward target.
-// Uses a simple per-agent path cache to avoid re-computation.
+// Uses a per-agent path cache to avoid re-computation every tick.
 
+#include "path_cache.h"
 #include "grid.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
 #include <queue>
 #include <unordered_map>
-
-struct PathCache {
-    int target_x = -1;
-    int target_y = -1;
-    int next_x = -1;
-    int next_y = -1;
-    int steps_left = 0;  // recompute after N steps (path may stale)
-};
 
 // A* on a grid. Returns the full path from (sx,sy) to (tx,ty).
 // If no path exists, returns empty vector.
@@ -98,13 +91,76 @@ inline std::vector<std::pair<int,int>> astar_find_path(
     return {};  // no path found
 }
 
-// Get the next step from (sx,sy) toward (tx,ty).
-// Returns (sx,sy) if already there or no path.
-inline std::pair<int,int> astar_next_step(
-    const Grid& grid, int sx, int sy, int tx, int ty)
+// Cached path-following: uses PathCache to avoid recomputing A* every tick.
+// Returns the next (x,y) step from (sx,sy) toward (tx,ty).
+// Recomputes when: target changes, path is stale (>20 ticks old), or path is blocked.
+inline std::pair<int,int> cached_next_step(
+    const Grid& grid, PathCache& cache, int sx, int sy, int tx, int ty, int tick)
 {
     if (sx == tx && sy == ty) return {sx, sy};
-    auto path = astar_find_path(grid, sx, sy, tx, ty);
-    if (path.empty()) return {sx, sy};
-    return path[0];
+
+    bool need_recompute = false;
+
+    // Recompute if target changed
+    if (cache.target_x != tx || cache.target_y != ty) {
+        need_recompute = true;
+    }
+    // Recompute if path is stale (map changes: conveyors built/dismantled)
+    if (!need_recompute && (tick - cache.computed_tick > 20)) {
+        need_recompute = true;
+    }
+    // Recompute if step_index is out of bounds (shouldn't happen normally)
+    if (!need_recompute && cache.step_index >= (int)cache.path.size()) {
+        need_recompute = true;
+    }
+    // Recompute if next step in path is no longer walkable
+    if (!need_recompute && cache.step_index < (int)cache.path.size()) {
+        auto [nx, ny] = cache.path[cache.step_index];
+        if (!grid.is_walkable(nx, ny)) {
+            need_recompute = true;
+        }
+    }
+
+    if (need_recompute) {
+        cache.path = astar_find_path(grid, sx, sy, tx, ty);
+        cache.target_x = tx;
+        cache.target_y = ty;
+        cache.step_index = 0;
+        cache.computed_tick = tick;
+
+        if (cache.path.empty()) return {sx, sy};  // no path exists
+    }
+
+    // Advance along the cached path: find the step closest to current position
+    // (handles the case where the agent moved away from the path due to external forces)
+    if (cache.step_index < (int)cache.path.size()) {
+        // Check if we are at the expected position; if not, try to reconnect
+        auto [px, py] = cache.path[cache.step_index];
+        if (sx != px || sy != py) {
+            // Agent diverged from path — look for current position in remaining path
+            bool found = false;
+            for (int i = cache.step_index; i < (int)cache.path.size(); i++) {
+                if (cache.path[i].first == sx && cache.path[i].second == sy) {
+                    cache.step_index = i;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Not on path at all — recompute from current position
+                cache.path = astar_find_path(grid, sx, sy, tx, ty);
+                cache.step_index = 0;
+                cache.computed_tick = tick;
+                if (cache.path.empty()) return {sx, sy};
+            }
+        }
+
+        if (cache.step_index < (int)cache.path.size()) {
+            auto [nx, ny] = cache.path[cache.step_index];
+            cache.step_index++;
+            return {nx, ny};
+        }
+    }
+
+    return {sx, sy};
 }

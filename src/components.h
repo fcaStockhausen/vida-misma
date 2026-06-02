@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include "path_cache.h"
 
 // --- Tile Types ---
 
@@ -27,7 +28,7 @@ enum class TileType : uint8_t {
 enum class MachineType : uint8_t {
     Food       = 0,  // raw_food → processed_food
     Materials  = 1,  // raw_material → construction_material + scrap byproduct
-    Output     = 2,  // construction_material → factory health restoration
+    Output     = 2,  // construction_material → output product (shipped as quota)
 };
 
 // Conveyor flow direction
@@ -61,7 +62,7 @@ enum class ActionType : uint8_t {
 // EAT/REST/SOCIALIZE/EXPLORE/IDLE/GET_FOOD have no hard tile requirement (return true).
 inline bool is_valid_action_tile(ActionType action, TileType tile) {
     switch (action) {
-        case ActionType::GATHER:   return tile == TileType::ScrapPile;
+        case ActionType::GATHER:   return tile == TileType::ScrapPile || tile == TileType::FoodSource;
         case ActionType::BUILD:    return tile == TileType::Machine
                                          || tile == TileType::EatingZone
                                          || tile == TileType::Floor   // start EZ or build adjacent Conveyor
@@ -81,7 +82,8 @@ enum class ResourceType : uint8_t {
     RAW_FOOD = 0,
     RAW_MATERIAL,
     FOOD,
-    CONSTRUCTION_MATERIAL,  // output of MaterialsMachine, input to OutputMachine
+    CONSTRUCTION_MATERIAL,
+    OUTPUT,
 };
 
 // --- Components ---
@@ -180,6 +182,9 @@ struct ActionComponent {
     int target_x = -1;
     int target_y = -1;
     bool at_target = false;
+
+    // Path cache for A* — avoids recomputing the full path every tick
+    PathCache path_cache;
 
     // Last computed utilities (for display/debugging)
     float last_utility_gather    = 0.0f;
@@ -305,6 +310,7 @@ struct TileData {
     float stored_raw_food     = 0.0f;
     float stored_raw_material = 0.0f;
     float stored_construction_material = 0.0f;  // from MaterialsMachine
+    float stored_output               = 0.0f;  // from OutputMachine — shipped as quota
     float storage_capacity    = 0.0f;
 
     // Conveyor state
