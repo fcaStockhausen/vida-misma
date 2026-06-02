@@ -206,6 +206,8 @@ void Simulation::system_compute_utility() {
         // GATHER: base drive from incomplete infrastructure + purpose/hunger.
         // Scales with infra_gap (fewer unbuilt → less urgency to gather).
         // ADD: food urgency boost when no food production exists.
+        // ONI "forage panic": when food supply is critically low and agent
+        // has no inputs, GATHER gets the same survival urgency as EAT.
         // ================================================================
         float u_gather = 0.0f;
         if (scrap_available) {
@@ -228,14 +230,25 @@ void Simulation::system_compute_utility() {
             float purpose_drive = effective_compliance * u_purpose * 0.4f;
             float hunger_drive = u_hunger * 0.2f;  // hungry agents know: no material → no food
 
-            // Raw food gathering: when food is low and FoodSource tiles exist
+            // Raw food gathering: ONI "forage panic" pattern.
+            // When food supply is LOW, gathering raw_food becomes a survival action.
+            // Uses exponential urgency so it can compete with EAT even when agent
+            // has no food (can't eat → must gather → then work → then eat).
             float raw_food_drive = 0.0f;
             if (inv.raw_food < 0.5f) {
                 bool food_source_available = grid_.find_nearest(TileType::FoodSource,
                     pos.x, pos.y).first >= 0;
                 if (food_source_available) {
                     float food_gap = std::min(1.0f, 1.0f - food_supply_ratio);
-                    raw_food_drive = u_hunger * 0.6f * (0.5f + food_gap);
+                    // Scale with community food deficit (exponential)
+                    raw_food_drive = u_hunger * 0.8f * (0.5f + food_gap);
+                    // Critical forage boost: when personal food AND storage food
+                    // are both low, gathering is the ONLY path to survival
+                    if (!can_eat && food_supply_ratio < 0.3f) {
+                        // Emergency: agent can't eat, must forage NOW.
+                        // Use critical spike for maximum urgency.
+                        raw_food_drive += critical_spike(needs.hunger) * 0.8f;
+                    }
                 }
             }
 

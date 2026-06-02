@@ -562,7 +562,9 @@ private:
     void place_food_sources(std::vector<Placement>& P) {
         // Renewable raw food sources across the map.
         // Food is plentiful but must be processed (raw_food → food via FoodMachine).
-        std::uniform_int_distribution<int> n_dist(8, 12);
+        // 14-20 sources for 24 agents: need ~0.12 raw_food/tick per agent,
+        // each source regenerates at 0.15/tick ≈ sustainable for ~30 agents.
+        std::uniform_int_distribution<int> n_dist(14, 20);
         int n_sources = n_dist(rng_);
         std::uniform_int_distribution<int> x_dist(2, width_ - 3);
         std::uniform_int_distribution<int> y_dist(2, height_ - 3);
@@ -585,10 +587,10 @@ private:
                 }
             if (too_close) continue;
 
-            // Don't place too close to other food sources (min 4 manhattan)
+            // Don't place too close to other food sources (min 3 manhattan)
             bool crowded = false;
-            for (int dy2 = -4; dy2 <= 4 && !crowded; dy2++)
-                for (int dx2 = -4; dx2 <= 4 && !crowded; dx2++) {
+            for (int dy2 = -3; dy2 <= 3 && !crowded; dy2++)
+                for (int dx2 = -3; dx2 <= 3 && !crowded; dx2++) {
                     if (dx2 == 0 && dy2 == 0) continue;
                     int nx = x + dx2, ny = y + dy2;
                     if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_
@@ -599,7 +601,7 @@ private:
 
             set_placement(P, x, y,
                 {x, y, TileType::FoodSource, MachineType::Food,
-                 12.0f, 15.0f, 0.10f, 0.0f, false, 0.0f, ConveyorDir::E});
+                 12.0f, 15.0f, 0.15f, 0.0f, false, 0.0f, ConveyorDir::E});
             placed++;
         }
     }
