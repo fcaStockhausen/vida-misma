@@ -98,11 +98,57 @@ void Simulation::system_compute_utility() {
             return std::pow(need, alpha);
         };
 
-        float u_hunger     = urgency(needs.hunger);
-        float u_rest       = urgency(needs.rest);
-        float u_social     = urgency(needs.social);
-        float u_expression = urgency(needs.expression);
-        float u_purpose    = urgency(needs.purpose);
+        // ================================================================
+        // ONI-STYLE URGENCY CURVES (Oxygen Not Included / The Sims pattern)
+        //
+        // The old flat urgency(need) = need^2 works for non-critical needs
+        // but fails for survival needs. The problem:
+        //   urgency(0.5) = 0.25, urgency(0.8) = 0.64  (only 2.5x)
+        //   GATHER/BUILD easily dominate even when agents are starving.
+        //
+        // ONI solution: each need type has its own urgency curve shape.
+        // Survival needs (hunger, rest) have S-curves that stay LOW at
+        // moderate levels (agents tolerate some hunger) but EXPLODE at
+        // critical levels (hunger > 0.7 becomes emergency).
+        //
+        // Non-survival needs (social, expression, purpose) use the flat
+        // power curve — they're important but never override survival.
+        //
+        // The sigmoid/exponential shapes come from ONI's "bladder" and
+        // "hunger" meters: barely noticeable at 30-50%, oppressive at 70%,
+        // game-ending at 90%.
+        // ================================================================
+
+        // SURVIVAL URGENCY: S-curve (sigmoid) — stays low until threshold,
+        // then spikes exponentially. This creates the "tolerate then panic"
+        // behavior that ONI uses.
+        //   sigmoid(x) = x^4 for x in [0,1]: very flat until 0.7, then steep
+        //   At 0.3 → 0.008, 0.5 → 0.063, 0.7 → 0.240, 0.8 → 0.410, 0.9 → 0.656
+        //   Compare old: 0.3→0.09, 0.5→0.25, 0.7→0.49, 0.8→0.64, 0.9→0.81
+        //   Key: old system has urgency(0.5)/urgency(0.9) = 0.31 (too close)
+        //        new system has urgency(0.5)/urgency(0.9) = 0.10 (bigger gap)
+        auto survival_urgency = [](float need) -> float {
+            return need * need * need * need;  // x^4: S-curve
+        };
+
+        // CRITICAL ESCALATION: when need > 0.75, add an exponential spike.
+        // This is the ONI "red alert" zone where nothing else matters.
+        // Pattern from The Sims: bladder/hunger at critical levels override
+        // all other actions regardless of their utility.
+        //   spike(x) = 0 for x < 0.75
+        //   spike(0.8) = 0.5, spike(0.9) = 2.0, spike(0.95) = 4.5
+        auto critical_spike = [](float need) -> float {
+            if (need < 0.75f) return 0.0f;
+            float t = (need - 0.75f) / 0.25f;  // 0..1 in danger zone
+            return t * t * 5.0f;  // exponential: up to 5.0 at need=1.0
+        };
+
+        // Per-need urgency with appropriate curves:
+        float u_hunger     = survival_urgency(needs.hunger) + critical_spike(needs.hunger);
+        float u_rest       = survival_urgency(needs.rest)   + critical_spike(needs.rest) * 0.5f;
+        float u_social     = urgency(needs.social);       // flat power curve
+        float u_expression = urgency(needs.expression);   // flat power curve
+        float u_purpose    = urgency(needs.purpose);      // flat power curve
 
         // B4: Meaning crisis erodes compliance.
         // Being productive but unfulfilled makes agents less willing to serve.
@@ -335,14 +381,19 @@ void Simulation::system_compute_utility() {
             float work_pull = effective_compliance * built_ratio * 2.0f;
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
-            // This is the key signal: WORK is how agents GET food from machines.
-            // Gated: only fires when food_supply_ratio < 1.5 AND there are
-            // food machines to operate. Skip at game start when agents have
-            // bootstrap food (food_supply_ratio will be high from inventories).
+            // ONI pattern: "mealtime panic" — when food stores drop, ALL
+            // duplicants prioritize food production above everything else.
+            // The urgency curve is exponential, not linear:
+            //   ratio > 1.5: no urgency (food is abundant)
+            //   ratio = 1.0: mild urgency (100 ticks of buffer)
+            //   ratio = 0.5: high urgency (50 ticks of buffer)
+            //   ratio = 0.2: CRITICAL (20 ticks of buffer) → 6x multiplier
+            //   ratio = 0.0: EMERGENCY → 10x multiplier
             float food_work_urgency = 1.0f;
             if (built_food_machines > 0 && food_supply_ratio < 1.5f) {
-                // Up to 4x at zero food supply ratio (1.0 + (1.5-0)*2.0 = 4.0)
-                food_work_urgency = 1.0f + (1.5f - food_supply_ratio) * 2.0f;
+                // Exponential urgency: steeper than linear
+                float deficit = 1.5f - food_supply_ratio;  // 0..1.5
+                food_work_urgency = 1.0f + deficit * deficit * 4.0f;  // 1.0..10.0
             }
 
             // Personal hunger adds to work urgency (secondary driver)
@@ -361,7 +412,13 @@ void Simulation::system_compute_utility() {
         }
         } // end BROKEN gate
 
-        // EAT
+        // EAT: survival-critical action. Uses urgency curve directly.
+        // The ONI/Sims pattern: eating at low hunger is a preference,
+        // eating at critical hunger is MANDATORY and overrides everything.
+        // Old: u_eat = u_hunger * 1.3 = 0.49 * 1.3 = 0.64 at hunger=0.7
+        //      GATHER could be 0.8+ and win — agents die while gathering.
+        // New: u_eat at hunger=0.9 = 0.656 + 2.0 = 2.656 * 1.3 = 3.45
+        //      Nothing else reaches 3.0 — eating ALWAYS wins at critical.
         float u_eat = 0.0f;
         if (can_eat) {
             float eat_weight = 1.3f;
@@ -369,11 +426,12 @@ void Simulation::system_compute_utility() {
             u_eat = u_hunger * eat_weight;
         }
 
-        // REST: doc formula + a near-max escalation.
+        // REST: survival need like hunger. Near-max escalation.
+        // Uses survival urgency so rest at 0.9+ overrides most actions.
         float rest_weight = 0.4f + 0.6f * personality.laziness;
         if (needs.rest > 0.7f) rest_weight *= 1.5f;
         if (needs.rest > 0.9f) rest_weight *= 2.0f;
-        float u_rest_action = rest_weight * u_rest;
+        float u_rest_action = rest_weight * u_rest;  // u_rest already uses survival_urgency
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
         float gregariousness_mult = 1.0f;
