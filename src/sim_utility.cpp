@@ -390,13 +390,45 @@ void Simulation::system_compute_utility() {
             u_build = std::max({u_build_mach, u_build_ez, u_build_new_ez});
         }
 
-        // Conveyor build: cheaper, independent sub-target.
-        // Boosted by infrastructure gap — conveyors connect the factory.
+        // Conveyor build: connect machines to Storage/Exit.
+        // Critical once machines are built — without conveyors, output doesn't reach Exit.
+        // This should OVERWHELM machine building once we have enough machines.
         {
             float u_build_conv = 0.0f;
-            if (unbuilt_conveyor && inv.raw_material > 0.05f) {
-                float conv_mat = std::min(1.0f, inv.raw_material / 1.0f);
+            // Check existing unbuilt conveyor frames AND new sites from Floor
+            bool can_build_conveyor = unbuilt_conveyor ||
+                grid_.find_conveyor_build_site(pos.x, pos.y).x >= 0;
+            if (can_build_conveyor && inv.raw_material > 0.05f) {
+                float conv_mat = std::min(1.0f, inv.raw_material / 0.5f);
+
+                // Count built machines and how many have conveyor connections
+                int built_mach = 0, connected_mach = 0;
+                for (int gy = 0; gy < grid_.height(); gy++)
+                    for (int gx = 0; gx < grid_.width(); gx++) {
+                        if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built) {
+                            built_mach++;
+                            // Check if machine has adjacent built conveyor
+                            for (int dy = -1; dy <= 1; dy++)
+                                for (int dx = -1; dx <= 1; dx++) {
+                                    int nx = gx+dx, ny = gy+dy;
+                                    if (nx >= 0 && nx < grid_.width() && ny >= 0 && ny < grid_.height() &&
+                                        grid_.at(nx, ny) == TileType::Conveyor && grid_.data_at(nx, ny).built) {
+                                        connected_mach++;
+                                        dy = 2; break; // break outer
+                                    }
+                                }
+                        }
+                    }
+
+                int unconnected = built_mach - connected_mach;
+                float connection_urgency = (built_mach > 0) ? (float)unconnected / (float)built_mach : 0.0f;
+
                 float conv_base = effective_compliance * conv_mat * build_infra_gap * 1.5f;
+                // Urgency scales with unconnected machines
+                conv_base += connection_urgency * 1.5f;
+                // Boost when many machines built but few connected
+                if (built_mach >= 4 && unconnected >= 2) conv_base *= 1.8f;
+
                 float conv_sup  = effective_compliance * u_purpose * 1.0f;
                 float conv_community = community_pressure * 1.2f * conv_mat;
                 u_build_conv = conv_base + conv_sup + conv_community;

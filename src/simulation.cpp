@@ -86,6 +86,15 @@ int Simulation::built_machine_count() const {
     return count;
 }
 
+int Simulation::built_conveyor_count() const {
+    int count = 0;
+    auto conveyors = grid_.find_all(TileType::Conveyor);
+    for (auto [x,y] : conveyors) {
+        if (grid_.data_at(x, y).built) count++;
+    }
+    return count;
+}
+
 float Simulation::total_storage_food() const {
     float total = 0.0f;
     auto storages = grid_.find_all(TileType::Storage);

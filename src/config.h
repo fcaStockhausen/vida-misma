@@ -21,9 +21,10 @@ struct Config {
     float purpose_decay    = 0.002f;
 
     // Action effects (per tick while executing)
-    float eat_satisfaction      = 0.018f;  // from processed food
-    float eat_raw_efficiency    = 0.5f;    // raw_food gives 50% of eat_satisfaction
-    float eat_food_per_tick     = 0.02f;   // how much food consumed per eat tick
+    float eat_satisfaction      = 1.0f;    // one portion fully resets hunger
+    float eat_raw_efficiency    = 0.6f;    // raw_food gives 60% of eat_satisfaction
+    float eat_food_per_tick     = 1.0f;    // one portion consumed per eat action
+    float portion_size          = 1.0f;    // one "vianda" = this much food units
     float rest_recovery         = 0.015f;
     float social_satisfaction   = 0.012f;
     float create_satisfaction   = 0.012f;
@@ -83,7 +84,7 @@ struct Config {
     float health_recovery_per_hit  = 0.002f; // factory_health rise when quota met
     float machine_break_threshold  = 0.25f;  // below this, machines may revert to unbuilt
     float machine_break_prob       = 0.0003f;// per-tick probability per built machine
-    float initial_food_per_agent   = 3.0f;   // bootstrap so agents survive while building
+    float initial_food_per_agent   = 5.0f;   // 5 portions: enough to survive 1000 ticks while building
     float selection_temperature    = 0.4f;   // Boltzmann selection: 0=greedy, higher=more random
     float quota_growth_rate         = 0.00002f; // quota increase per tick (factory demands more)
     int   restructure_interval     = 800;    // ticks between restructure checks
@@ -91,7 +92,7 @@ struct Config {
     float noncompliance_stress     = 0.002f; // stress per tick per noncompliance level
 
     // Eating zones / social pressure
-    float inv_food_cap              = 2.0f;  // "una vianda" — max food an agent can carry
+    float inv_food_cap              = 5.0f;  // 5 "viandas" — enough for ~1000 ticks of survival
     int   eatingzone_min_dist_machine = 5;   // Manhattan ≥ this from any Machine for an EatingZone
     float eatingzone_build_cost     = 2.0f;  // raw_material required (~17 BUILD ticks at rate 0.12)
     float eat_at_work_health_decay  = 0.002f;// factory_health drop per eat-at-work tick

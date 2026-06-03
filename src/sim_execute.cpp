@@ -174,7 +174,7 @@ void Simulation::system_execute_actions() {
                         }
                     }
 
-                    // Priority 2: Build adjacent unbuilt conveyor
+                    // Priority 2: Build adjacent unbuilt conveyor (existing frames)
                     int conv_x = -1, conv_y = -1;
                     float conv_progress = -1.0f;
                     for (int dy = -1; dy <= 1; dy++)
@@ -207,6 +207,29 @@ void Simulation::system_execute_actions() {
                             }
                         }
                         break;
+                    }
+
+                    // Priority 2b: Create new conveyor tile from Floor
+                    // Strategy: find best site connecting machines → Storage/Exit
+                    {
+                        auto site = grid_.find_conveyor_build_site(pos.x, pos.y);
+                        if (site.x >= 0) {
+                            int d = std::abs(site.x - pos.x) + std::abs(site.y - pos.y);
+                            if (d <= 1) {
+                                grid_.place_new_conveyor(site.x, site.y, site.dir, 0.5f);
+                                auto& td = grid_.data_at(site.x, site.y);
+                                // Immediately contribute some build progress
+                                float use = std::min(effective_build_rate, inv.raw_material);
+                                if (use > 0.0f) {
+                                    inv.raw_material -= use;
+                                    td.build_progress += use;
+                                    emit_log(agent.id, "PLACED conveyor frame at (" +
+                                             std::to_string(site.x) + "," + std::to_string(site.y) +
+                                             ") dir=" + std::to_string((int)site.dir));
+                                }
+                                break;
+                            }
+                        }
                     }
 
                     // Priority 3: Start a new EatingZone (max 1)
@@ -328,10 +351,11 @@ void Simulation::system_execute_actions() {
                             }
                             float efficiency = total_consumed / raw_needed;
                             float food_produced = config_.machine_output * efficiency * collab * health_eff;
-                            // Worker keeps 30% of food produced (self-sustenance),
+                            // Worker keeps 40% for self-sustenance,
                             // rest goes to storage for the community.
-                            inv.food += food_produced * 0.3f;
-                            float to_store = food_produced * 0.7f;
+                            float worker_keep = food_produced * 0.4f;
+                            inv.food = std::min(config_.inv_food_cap, inv.food + worker_keep);
+                            float to_store = food_produced - worker_keep;
                             float food_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                 ResourceType::FOOD, to_store);
                             float food_left = to_store - food_dep;
@@ -341,7 +365,9 @@ void Simulation::system_execute_actions() {
                             }
                             deposited = food_dep;
                             total_food_produced_ += food_produced;
-                            log_detail = "+" + ff2(food_produced) + " food (ate " + ff2(total_consumed) + " raw, kept " + ff2(food_produced * 0.3f) + ")";
+                            // FoodMachine work also recovers factory health (productive labor)
+                            factory_health_ = std::min(1.0f, factory_health_ + food_dep * 0.02f);
+                            log_detail = "+" + ff2(food_produced) + " food (ate " + ff2(total_consumed) + " raw, kept " + ff2(worker_keep) + ")";
                             break;
                         }
                         case MachineType::Materials: {
@@ -484,6 +510,11 @@ void Simulation::system_execute_actions() {
                 if (inv.food >= config_.eat_food_per_tick) {
                     inv.food -= config_.eat_food_per_tick;
                     satisfaction_mul = 1.0f;
+                    ate = true;
+                } else if (inv.food > 0.01f) {
+                    // Partial portion: eat what's available, proportional satisfaction
+                    satisfaction_mul = inv.food / config_.eat_food_per_tick;
+                    inv.food = 0.0f;
                     ate = true;
                 } else if (inv.raw_food >= config_.eat_food_per_tick) {
                     // Eat raw food from inventory (reduced efficiency, disease risk)

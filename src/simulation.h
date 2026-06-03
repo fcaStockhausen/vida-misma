@@ -64,6 +64,7 @@ public:
 
     int alive_count() const;
     int built_machine_count() const;
+    int built_conveyor_count() const;
     float total_storage_food() const;
     float total_storage_output() const;
     float total_storage_constr_mat() const;

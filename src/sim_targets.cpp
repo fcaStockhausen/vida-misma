@@ -72,6 +72,7 @@ void Simulation::system_find_targets() {
                 // Priority: nearest unbuilt structure with strategic bias.
                 auto machine_t = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
                 auto conv_t    = grid_.find_nearest_conveyor_to_build(pos.x, pos.y);
+                auto conv_site = grid_.find_conveyor_build_site(pos.x, pos.y);  // new conveyor on Floor
                 auto ez_t      = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y);
                 auto stor_t    = grid_.find_storage_build_site(pos.x, pos.y);
                 auto fs_t      = grid_.find_nearest_free_foodsource(pos.x, pos.y, agent.id);
@@ -83,6 +84,8 @@ void Simulation::system_find_targets() {
                     ? std::abs(machine_t.first - pos.x) + std::abs(machine_t.second - pos.y) : 999999;
                 int conv_dist = (conv_t.first >= 0)
                     ? std::abs(conv_t.first - pos.x) + std::abs(conv_t.second - pos.y) : 999999;
+                int csite_dist = (conv_site.x >= 0)
+                    ? std::abs(conv_site.x - pos.x) + std::abs(conv_site.y - pos.y) : 999999;
                 int ez_dist = (ez_t.first >= 0)
                     ? std::abs(ez_t.first - pos.x) + std::abs(ez_t.second - pos.y) : 999999;
                 int stor_dist = (stor_t.first >= 0)
@@ -93,10 +96,21 @@ void Simulation::system_find_targets() {
                     ? std::abs(sp_t.first - pos.x) + std::abs(sp_t.second - pos.y) : 999999;
 
                 // Bonuses (negative = higher priority)
-                int conv_bonus = (total_storage_food() < 3.0f) ? -10 : -3;
+                // Conveyors become high priority once machines are built
+                // (connecting output to Storage/Exit is critical for quota)
+                // Bonuses (negative = higher priority)
+                // Conveyors get high priority when machines are built but unconnected
+                int built_m = 0;
+                for (int gy = 0; gy < grid_.height(); gy++)
+                    for (int gx = 0; gx < grid_.width(); gx++)
+                        if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built)
+                            built_m++;
+                int conv_bonus = (built_m >= 4) ? -6 : -3;  // conveyors important when infra is up
                 int stor_bonus = -5;
                 int fs_bonus = -8;  // FoodMachine on FoodSource
                 int sp_bonus = -8;  // OutputMachine on ScrapPile
+                // Suppress machine building once we have enough
+                if (built_m >= 8) { fs_bonus = -2; sp_bonus = -2; }
 
                 int best_dist = 999999;
                 if (machine_t.first >= 0 && mach_dist < best_dist) best_dist = mach_dist;
@@ -104,6 +118,7 @@ void Simulation::system_find_targets() {
                 if (sp_t.first >= 0 && (sp_dist + sp_bonus) < best_dist) best_dist = sp_dist + sp_bonus;
                 if (stor_t.first >= 0 && (stor_dist + stor_bonus) < best_dist) best_dist = stor_dist + stor_bonus;
                 if (conv_t.first >= 0 && (conv_dist + conv_bonus) < best_dist) best_dist = conv_dist + conv_bonus;
+                if (conv_site.x >= 0 && (csite_dist + conv_bonus) < best_dist) best_dist = csite_dist + conv_bonus;
                 if (ez_t.first >= 0 && ez_dist < best_dist) best_dist = ez_dist;
 
                 if (machine_t.first >= 0 && mach_dist <= best_dist) {
@@ -116,6 +131,8 @@ void Simulation::system_find_targets() {
                     tx = stor_t.first; ty = stor_t.second;
                 } else if (conv_t.first >= 0 && (conv_dist + conv_bonus) <= best_dist) {
                     tx = conv_t.first; ty = conv_t.second;
+                } else if (conv_site.x >= 0 && (csite_dist + conv_bonus) <= best_dist) {
+                    tx = conv_site.x; ty = conv_site.y;
                 } else if (ez_t.first >= 0) {
                     tx = ez_t.first; ty = ez_t.second;
                 } else if (!any_built_ez) {

@@ -338,6 +338,7 @@ public:
     std::pair<int,int> find_nearest_conveyor_to_build(int fx, int fy) const {
         int best_dist = 999999;
         std::pair<int,int> best = {-1, -1};
+        // Existing unbuilt or degraded conveyor frames
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Conveyor) continue;
@@ -346,6 +347,20 @@ public:
                 int dist = std::abs(x - fx) + std::abs(y - fy);
                 if (dist < best_dist) { best_dist = dist; best = {x, y}; }
             }
+        // Also check Floor tiles that are good conveyor creation sites
+        // (adjacent to built machines that lack conveyor output)
+        if (best.first < 0) {
+            auto site = find_conveyor_build_site(fx, fy);
+            if (site.x >= 0) {
+                int dist = std::abs(site.x - fx) + std::abs(site.y - fy);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    // Agent walks to a Floor tile adjacent to the conveyor site
+                    // But the site IS a Floor tile, so return it directly
+                    best = {site.x, site.y};
+                }
+            }
+        }
         return best;
     }
 
@@ -503,6 +518,138 @@ public:
         d.conveyor_condition = 1.0f;
         d.conveyor_contents = 0.0f;
         return cost;
+    }
+
+    // Find a Floor tile adjacent to agent where a new conveyor should be placed.
+    // Strategy: extend a chain from the nearest built machine (that has no adjacent
+    // built conveyor flowing away) toward the nearest Storage or Exit.
+    // Returns {x, y, direction} or {-1, -1, N} if no valid site.
+    struct ConveyorSite { int x, y; ConveyorDir dir; };
+    ConveyorSite find_conveyor_build_site(int agent_x, int agent_y) const {
+        // 1. Find nearest built machine that needs conveyor connection
+        int mach_x = -1, mach_y = -1, mach_dist = 999999;
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                if (at(x, y) != TileType::Machine) continue;
+                const auto& d = data_at(x, y);
+                if (!d.built) continue;
+                // Check if machine already has an adjacent built conveyor flowing away
+                bool has_output_conveyor = false;
+                for (int dy2 = -1; dy2 <= 1 && !has_output_conveyor; dy2++)
+                    for (int dx2 = -1; dx2 <= 1 && !has_output_conveyor; dx2++) {
+                        if (dx2 == 0 && dy2 == 0) continue;
+                        int nx = x + dx2, ny = y + dy2;
+                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                        if (at(nx, ny) == TileType::Conveyor && data_at(nx, ny).built) {
+                            has_output_conveyor = true;
+                        }
+                    }
+                if (has_output_conveyor) continue;
+                int dist = std::abs(x - agent_x) + std::abs(y - agent_y);
+                if (dist < mach_dist) { mach_dist = dist; mach_x = x; mach_y = y; }
+            }
+
+        // 2. Find nearest Storage or Exit as target
+        int targ_x = -1, targ_y = -1, targ_dist = 999999;
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                TileType t = at(x, y);
+                if (t != TileType::Storage && t != TileType::Exit) continue;
+                // Only Storage that's built, or Exit
+                if (t == TileType::Storage && !data_at(x, y).built) continue;
+                int dist = std::abs(x - agent_x) + std::abs(y - agent_y);
+                if (dist < targ_dist) { targ_dist = dist; targ_x = x; targ_y = y; }
+            }
+
+        // If no machine needs connection or no target, try extending from
+        // existing built conveyors toward target
+        if (mach_x < 0) {
+            // Find a built conveyor that is a dead-end (its target is not useful)
+            for (int y = 1; y < height_ - 1; y++)
+                for (int x = 1; x < width_ - 1; x++) {
+                    if (at(x, y) != TileType::Conveyor) continue;
+                    const auto& d = data_at(x, y);
+                    if (!d.built) continue;
+                    auto [tx, ty] = conveyor_target(x, y);
+                    if (tx < 0 || tx >= width_ || ty < 0 || ty >= height_) continue;
+                    TileType tt = at(tx, ty);
+                    if (tt == TileType::Storage || tt == TileType::Exit ||
+                        (tt == TileType::Conveyor && data_at(tx, ty).built))
+                        continue;  // flows somewhere useful, skip
+                    // Dead-end conveyor! Find adjacent Floor to extend chain
+                    int dx = (tx > x) ? 1 : (tx < x) ? -1 : 0;
+                    int dy = (ty > y) ? 1 : (ty < y) ? -1 : 0;
+                    // Try the dead-end's target direction first
+                    for (int ddy = -1; ddy <= 1; ddy++)
+                        for (int ddx = -1; ddx <= 1; ddx++) {
+                            if (ddx == 0 && ddy == 0) continue;
+                            int nx = x + ddx, ny = y + ddy;
+                            if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                            if (at(nx, ny) != TileType::Floor) continue;
+                            int dist = std::abs(nx - agent_x) + std::abs(ny - agent_y);
+                            if (dist < mach_dist) {
+                                mach_dist = dist;
+                                mach_x = nx; mach_y = ny;
+                                // Direction: toward storage/exit or away from dead-end conveyor
+                                targ_x = targ_x; // already set above
+                            }
+                        }
+                }
+        }
+
+        if (mach_x < 0) return {-1, -1, ConveyorDir::E};
+
+        // 3. Find the best adjacent Floor tile to the machine (or dead-end)
+        //    Prefer tiles closer to the target
+        // If we found a machine, look at tiles adjacent to the machine
+        int best_x = -1, best_y = -1, best_score = 999999;
+        int src_x = mach_x, src_y = mach_y;
+        // If source is a Floor tile (from dead-end extension), use it directly
+        if (at(src_x, src_y) == TileType::Floor) {
+            // Compute direction toward target
+            int dx = (targ_x > src_x) ? 1 : (targ_x < src_x) ? -1 : 0;
+            int dy = (targ_y > src_y) ? 1 : (targ_y < src_y) ? -1 : 0;
+            ConveyorDir dir = ConveyorDir::E;
+            if (std::abs(dx) >= std::abs(dy)) {
+                dir = (dx > 0) ? ConveyorDir::E : ConveyorDir::W;
+            } else {
+                dir = (dy > 0) ? ConveyorDir::S : ConveyorDir::N;
+            }
+            return {src_x, src_y, dir};
+        }
+
+        // Look at tiles adjacent to the machine
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = src_x + dx, ny = src_y + dy;
+                if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                if (at(nx, ny) != TileType::Floor) continue;
+                if (targ_x < 0) continue;
+                // Score: distance from this tile to target (lower = better)
+                int to_target = std::abs(nx - targ_x) + std::abs(ny - targ_y);
+                int to_agent = std::abs(nx - agent_x) + std::abs(ny - agent_y);
+                int score = to_target * 3 + to_agent;  // prefer toward target, tiebreak by nearness
+                if (score < best_score) {
+                    best_score = score;
+                    best_x = nx; best_y = ny;
+                }
+            }
+
+        if (best_x < 0) return {-1, -1, ConveyorDir::E};
+
+        // Direction: toward target
+        ConveyorDir dir = ConveyorDir::E;
+        if (targ_x >= 0) {
+            int dx = (targ_x > best_x) ? 1 : (targ_x < best_x) ? -1 : 0;
+            int dy = (targ_y > best_y) ? 1 : (targ_y < best_y) ? -1 : 0;
+            if (std::abs(dx) >= std::abs(dy)) {
+                dir = (dx > 0) ? ConveyorDir::E : ConveyorDir::W;
+            } else {
+                dir = (dy > 0) ? ConveyorDir::S : ConveyorDir::N;
+            }
+        }
+        return {best_x, best_y, dir};
     }
 
     // Place a new conveyor frame at a floor tile (for rearranging).

@@ -96,8 +96,9 @@ static int cmd_run(int argc, char* argv[]) {
         }
     }
 
-    std::printf("\nDone. alive=%d  built=%d  food=%.1f  quota=%.0f%%\n",
+    std::printf("\nDone. alive=%d  built=%d  conv=%d  food=%.1f  quota=%.0f%%\n",
         sim.alive_count(), sim.total_machines_built(),
+        sim.built_conveyor_count(),
         sim.total_storage_food(), sim.last_quota_fill() * 100);
     return 0;
 }
