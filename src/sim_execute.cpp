@@ -62,10 +62,119 @@ void Simulation::system_execute_actions() {
             }
 
             case ActionType::BUILD: {
-                // Agent stands on their own tile and builds whatever is here.
-                // Special case for Floor: may create a new EatingZone or build an adjacent conveyor.
+                // Collaboration bonus: multiple agents building the same tile
+                // are more efficient. Diminishing returns: 1 agent = 1x, 2 = 1.6x, 3 = 2.0x, 4 = 2.3x
+                int builders_on_tile = 1;
+                {
+                    auto v2 = registry_.view<ActionComponent, PositionComponent, const AgentComponent>();
+                    for (auto e2 : v2) {
+                        if (!registry_.get<AgentComponent>(e2).alive) continue;
+                        if (registry_.get<AgentComponent>(e2).id == agent.id) continue;
+                        auto& a2 = registry_.get<ActionComponent>(e2);
+                        auto& p2 = registry_.get<PositionComponent>(e2);
+                        if (a2.current == ActionType::BUILD && a2.at_target &&
+                            p2.x == pos.x && p2.y == pos.y) {
+                            builders_on_tile++;
+                        }
+                    }
+                }
+                // Diminishing returns: 1 + 0.6*(n-1) + 0.2*(n-2) + ... capped at 3x
+                float collab_mult = 1.0f;
+                for (int i = 1; i < builders_on_tile; i++)
+                    collab_mult += std::max(0.2f, 0.6f - 0.15f * (i - 1));
+                collab_mult = std::min(collab_mult, 3.0f);
+                float effective_build_rate = config_.build_rate * collab_mult;
+
+                // FoodSource: build a FoodMachine on top of it
+                if (here == TileType::FoodSource) {
+                    auto& td = grid_.data_at(pos.x, pos.y);
+                    if (inv.raw_material > 0.05f) {
+                        float needed = 0.5f;
+                        float use = std::min({effective_build_rate, needed, inv.raw_material});
+                        inv.raw_material -= use;
+                        grid_.set(pos.x, pos.y, TileType::Machine);
+                        td.machine_type = MachineType::Food;
+                        td.build_progress += use;
+                        td.build_cost = 0.5f;
+                        td.built_on_resource = true;
+                        if (td.build_progress >= td.build_cost) {
+                            td.built = true;
+                            td.build_progress = td.build_cost;
+                            td.claimed_by = -1;  // release claim
+                            emit_log(agent.id, "BUILT FoodMachine on FoodSource at (" +
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                        } else {
+                            td.built = false;
+                            emit_log(agent.id, "building FoodMachine on FoodSource (" +
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) +
+                                     ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                        }
+                    }
+                    break;
+                }
+
+                // ScrapPile: build an OutputMachine on top of it
+                if (here == TileType::ScrapPile) {
+                    auto& td = grid_.data_at(pos.x, pos.y);
+                    if (inv.raw_material > 0.05f) {
+                        float needed = 0.5f;
+                        float use = std::min({effective_build_rate, needed, inv.raw_material});
+                        inv.raw_material -= use;
+                        grid_.set(pos.x, pos.y, TileType::Machine);
+                        td.machine_type = MachineType::Output;
+                        td.build_progress += use;
+                        td.build_cost = 0.5f;
+                        td.built_on_resource = true;
+                        if (td.build_progress >= td.build_cost) {
+                            td.built = true;
+                            td.build_progress = td.build_cost;
+                            td.claimed_by = -1;  // release claim
+                            emit_log(agent.id, "BUILT OutputMachine on ScrapPile at (" +
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                        } else {
+                            td.built = false;
+                            emit_log(agent.id, "building OutputMachine on ScrapPile (" +
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) +
+                                     ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                        }
+                    }
+                    break;
+                }
+
+                // Floor tile: can create Storage, Conveyor, or EatingZone.
                 if (here == TileType::Floor) {
-                    // Check for adjacent unbuilt conveyor to build from beside
+                    // Priority 1: Build Storage near a built machine that lacks storage
+                    {
+                        auto site = grid_.find_storage_build_site(pos.x, pos.y);
+                        // Only if the site is adjacent to us (we're on a Floor nearby)
+                        // OR if we're standing ON the site
+                        if (site.first >= 0) {
+                            int d = std::abs(site.first - pos.x) + std::abs(site.second - pos.y);
+                            if (d <= 1) {
+                                // Build storage at the site (or where we're standing if it matches)
+                                int sx = site.first, sy = site.second;
+                                if (d == 0) {
+                                    // We're on the build site
+                                    grid_.set(sx, sy, TileType::Storage);
+                                    auto& sd = grid_.data_at(sx, sy);
+                                    sd.storage_capacity = 20.0f;
+                                    sd.stored_food = 0.0f;
+                                    sd.stored_raw_food = 0.0f;
+                                    sd.stored_raw_material = 0.0f;
+                                    sd.stored_output = 0.0f;
+                                    sd.built = true;
+                                    emit_log(agent.id, "BUILT storage at (" +
+                                             std::to_string(sx) + "," + std::to_string(sy) + ")");
+                                    break;
+                                } else {
+                                    // Move toward it next tick, for now contribute if we have material
+                                    // (no-op: agent will path there via target system)
+                                }
+                            }
+                        }
+                    }
+
+                    // Priority 2: Build adjacent unbuilt conveyor
                     int conv_x = -1, conv_y = -1;
                     float conv_progress = -1.0f;
                     for (int dy = -1; dy <= 1; dy++)
@@ -83,7 +192,7 @@ void Simulation::system_execute_actions() {
                     if (conv_x >= 0) {
                         auto& td = grid_.data_at(conv_x, conv_y);
                         float needed = td.build_cost - td.build_progress;
-                        float use = std::min({config_.build_rate, needed, inv.raw_material});
+                        float use = std::min({effective_build_rate, needed, inv.raw_material});
                         if (use > 0.0f) {
                             inv.raw_material -= use;
                             td.build_progress += use;
@@ -100,7 +209,7 @@ void Simulation::system_execute_actions() {
                         break;
                     }
 
-                    // No adjacent conveyor — try starting a new EatingZone (max 1)
+                    // Priority 3: Start a new EatingZone (max 1)
                     if (grid_.built_eatingzone_count() >= 1) {
                         emit_log(agent.id, "no need for another eating zone");
                         break;
@@ -126,7 +235,7 @@ void Simulation::system_execute_actions() {
                 auto& td = grid_.data_at(pos.x, pos.y);
                 if (!td.built && td.build_progress < td.build_cost) {
                     float needed = td.build_cost - td.build_progress;
-                    float collab_rate = config_.build_rate;
+                    float collab_rate = effective_build_rate;
                     // Check if other agents are building the same tile or adjacent tiles
                     {
                         auto builders = alive_agents();
@@ -188,19 +297,31 @@ void Simulation::system_execute_actions() {
                     switch (td.machine_type) {
                         case MachineType::Food: {
                             // FoodMachine: raw_food → processed_food
-                            // Consume raw_food from agent inventory, then adjacent storage
+                            // Sources (in order): own tile (auto-gathered), agent inventory, adjacent storage
                             // Mild health effect: 80-100% efficiency based on factory health
                             float health_eff = 0.8f + 0.2f * factory_health_;
                             float raw_needed = config_.machine_input;
-                            float from_inv = std::min(raw_needed, inv.raw_food);
+
+                            // Source 1: machine's own auto-gathered raw_food (from FoodSource underneath)
+                            float from_self = 0.0f;
+                            if (td.built_on_resource && td.stored_raw_food > 0.01f) {
+                                from_self = std::min(raw_needed, td.stored_raw_food);
+                                td.stored_raw_food -= from_self;
+                            }
+
+                            // Source 2: agent inventory
+                            float remaining = raw_needed - from_self;
+                            float from_inv = std::min(remaining, inv.raw_food);
                             inv.raw_food -= from_inv;
+
+                            // Source 3: adjacent storage
                             float from_storage = 0.0f;
-                            if (from_inv < raw_needed) {
-                                from_storage = std::min(raw_needed - from_inv,
+                            if (from_inv < remaining) {
+                                from_storage = std::min(remaining - from_inv,
                                     get_adjacent_raw_food(pos.x, pos.y));
                                 consume_adjacent_raw_food(pos.x, pos.y, from_storage);
                             }
-                            float total_consumed = from_inv + from_storage;
+                            float total_consumed = from_self + from_inv + from_storage;
                             if (total_consumed < 0.001f) {
                                 log_detail = "no raw_food";
                                 break;
@@ -275,14 +396,30 @@ void Simulation::system_execute_actions() {
                             break;
                         }
                         case MachineType::Output: {
-                            // OutputMachine: construction_material → output product (shipped as quota)
+                            // OutputMachine: raw_material → output product + scrap byproduct (self-sustaining)
+                            // Sources (in order): own tile (auto-gathered from ScrapPile), adjacent storage
                             // Also directly heals factory health — the factory's existential anchor.
-                            // Production efficiency scales with factory_health (positive feedback).
                             float health_eff = 0.5f + 0.5f * factory_health_;  // 50-100% based on health
-                            float pulled = pull_construction_material_from_adjacent_storage(
-                                pos.x, pos.y, config_.machine_out_output);
-                            if (pulled > 0.001f) {
-                                float output_produced = pulled * 2.0f * health_eff;
+
+                            float total_consumed = 0.0f;
+
+                            // Source 1: machine's own auto-gathered raw_material
+                            if (td.built_on_resource && td.stored_raw_material > 0.01f) {
+                                float from_self = std::min(config_.machine_out_output, td.stored_raw_material);
+                                td.stored_raw_material -= from_self;
+                                total_consumed += from_self;
+                            }
+
+                            // Source 2: adjacent storage construction_material
+                            float remaining = config_.machine_out_output - total_consumed;
+                            if (remaining > 0.01f) {
+                                float pulled = pull_construction_material_from_adjacent_storage(
+                                    pos.x, pos.y, remaining);
+                                total_consumed += pulled;
+                            }
+
+                            if (total_consumed > 0.001f) {
+                                float output_produced = total_consumed * 2.0f * health_eff;
                                 float out_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                     ResourceType::OUTPUT, output_produced);
                                 float out_left = output_produced - out_dep;
@@ -292,26 +429,29 @@ void Simulation::system_execute_actions() {
                                 }
                                 deposited = out_dep;
                                 total_output_produced_ += out_dep;
-                                // Direct factory health heal: OutputMachine is the factory's purpose.
-                                // Each unit of output produced heals a small amount.
                                 factory_health_ = std::min(1.0f, factory_health_ + out_dep * 0.03f);
-                                // Scrap byproduct: OutputMachine also recycles material
-                                float scrap = pulled * 0.15f;
-                                for (int dy = -3; dy <= 3; dy++)
-                                    for (int dx = -3; dx <= 3; dx++) {
+
+                                // Scrap byproduct: OutputMachine recycles material back to nearby ScrapPiles
+                                float scrap = total_consumed * 0.15f;
+                                for (int dy = -3; dy <= 3 && scrap > 0.001f; dy++)
+                                    for (int dx = -3; dx <= 3 && scrap > 0.001f; dx++) {
                                         int nx = pos.x + dx, ny = pos.y + dy;
                                         if (grid_.at(nx, ny) == TileType::ScrapPile) {
                                             auto& sd = grid_.data_at(nx, ny);
                                             float add = std::min(scrap, sd.resource_max - sd.resource_amount);
                                             sd.resource_amount += add;
                                             scrap -= add;
-                                            if (scrap < 0.001f) break;
                                         }
-                                        if (scrap < 0.001f) break;
                                     }
-                                log_detail = "+" + ff2(out_dep) + " output (used " + ff2(pulled) + " mat, eff " + ff2(health_eff) + ")";
+                                // Self-sustaining: also return scrap to own resource_amount
+                                if (scrap > 0.001f && td.built_on_resource) {
+                                    float add = std::min(scrap, td.resource_max - td.resource_amount);
+                                    td.resource_amount += add;
+                                    scrap -= add;
+                                }
+                                log_detail = "+" + ff2(out_dep) + " output (ate " + ff2(total_consumed) + " scrap, eff " + ff2(health_eff) + ")";
                             } else {
-                                log_detail = "no mat available";
+                                log_detail = "no scrap available";
                             }
                             break;
                         }

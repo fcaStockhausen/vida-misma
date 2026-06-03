@@ -9,6 +9,7 @@ void Simulation::system_compute_utility() {
     // ================================================================
     int total_machines = 0, built_machines = 0;
     int built_food_machines = 0;
+    int unbuilt_resources = 0;  // FoodSource + ScrapPile not yet built on
     float total_stor_food = 0.0f;
     float total_stor_raw_food = 0.0f;
     for (int gy = 0; gy < grid_.height(); gy++)
@@ -20,14 +21,21 @@ void Simulation::system_compute_utility() {
                     if (grid_.data_at(gx, gy).machine_type == MachineType::Food)
                         built_food_machines++;
                 }
+            } else if (grid_.at(gx, gy) == TileType::FoodSource) {
+                unbuilt_resources++;  // potential FoodMachine site
+            } else if (grid_.at(gx, gy) == TileType::ScrapPile) {
+                unbuilt_resources++;  // potential OutputMachine site
             } else if (grid_.at(gx, gy) == TileType::Storage) {
                 total_stor_food += grid_.data_at(gx, gy).stored_food;
                 total_stor_raw_food += grid_.data_at(gx, gy).stored_raw_food;
             }
         }
 
-    float built_ratio = (total_machines > 0)
-        ? (float)built_machines / (float)total_machines : 0.0f;
+    // infra_gap: measures how much infrastructure is still unbuilt.
+    // Includes both Machine frames AND resource tiles that can have machines built on them.
+    int total_infra = total_machines + unbuilt_resources;
+    float built_ratio = (total_infra > 0)
+        ? (float)built_machines / (float)total_infra : 0.0f;
     float infra_gap = 1.0f - built_ratio;
 
     // Food supply ratio: how much food we have vs how much we need.
@@ -271,7 +279,27 @@ void Simulation::system_compute_utility() {
                 }
             }
 
-            u_gather = (gather_base + purpose_drive + hunger_drive + raw_food_drive)
+            // Scrap gathering drive: agents need raw_material to build machines
+            // on resource tiles. This drive fires when there are unbuilt resource
+            // tiles and the agent has no material.
+            float raw_material_drive = 0.0f;
+            {
+                bool scrap_available_local = grid_.find_nearest(TileType::ScrapPile,
+                    pos.x, pos.y).first >= 0;
+                bool free_foodsources = grid_.find_nearest_free_foodsource(
+                    pos.x, pos.y).first >= 0;
+                bool free_scrappiles = grid_.find_nearest_free_scrappile(
+                    pos.x, pos.y).first >= 0;
+                if (scrap_available_local && inv.raw_material < 1.0f &&
+                    (free_foodsources || free_scrappiles)) {
+                    float mat_deficit = std::max(0.0f, 1.0f - inv.raw_material);
+                    raw_material_drive = effective_compliance * u_purpose * mat_deficit * 2.0f;
+                    // Stronger when there are many unbuilt resource tiles
+                    raw_material_drive += infra_gap * mat_deficit * 1.5f;
+                }
+            }
+
+            u_gather = (gather_base + purpose_drive + hunger_drive + raw_food_drive + raw_material_drive)
                       * mood_factor * gather_urgency;
         }
 
@@ -375,6 +403,55 @@ void Simulation::system_compute_utility() {
                 u_build_conv *= mood_factor * build_urgency;
             }
             u_build = std::max(u_build, u_build_conv);
+        }
+
+        // Storage build: build storage adjacent to built machines that lack it.
+        // High priority because machines can't output without nearby storage.
+        {
+            float u_build_storage = 0.0f;
+            auto storage_site = grid_.find_storage_build_site(pos.x, pos.y);
+            if (storage_site.first >= 0 && inv.raw_material > 0.05f) {
+                float stor_mat = std::min(1.0f, inv.raw_material / 1.0f);
+                float stor_base = effective_compliance * stor_mat * build_infra_gap * 2.5f;
+                float stor_sup  = effective_compliance * u_purpose * 0.8f;
+                u_build_storage = stor_base + stor_sup;
+                u_build_storage *= mood_factor * build_urgency;
+            }
+            u_build = std::max(u_build, u_build_storage);
+        }
+
+        // FoodMachine on FoodSource: build a FoodMachine on top of a FoodSource.
+        // Very high priority — this is the primary food production path.
+        // Auto-gathers raw_food, no need for agents to carry inputs.
+        {
+            float u_build_food = 0.0f;
+            auto fs = grid_.find_nearest_free_foodsource(pos.x, pos.y);
+            if (fs.first >= 0 && inv.raw_material > 0.05f) {
+                float food_mat = std::min(1.0f, inv.raw_material / 2.0f);
+                // Urgency scales inversely with food supply
+                float food_urg = 1.0f + std::max(0.0f, 1.0f - food_supply_ratio) * 3.0f;
+                float food_base = effective_compliance * food_mat * build_infra_gap * 3.0f * food_urg;
+                float food_sup  = effective_compliance * u_purpose * 1.0f;
+                u_build_food = food_base + food_sup;
+                u_build_food *= mood_factor * build_urgency;
+            }
+            u_build = std::max(u_build, u_build_food);
+        }
+
+        // OutputMachine on ScrapPile: build an OutputMachine on top of a ScrapPile.
+        // High priority — self-sustaining output production (scrap → output + scrap byproduct).
+        {
+            float u_build_output = 0.0f;
+            auto sp = grid_.find_nearest_free_scrappile(pos.x, pos.y);
+            if (sp.first >= 0 && inv.raw_material > 0.05f) {
+                float out_mat = std::min(1.0f, inv.raw_material / 2.0f);
+                // Urgency scales with purpose (factory wants output)
+                float out_base = effective_compliance * out_mat * build_infra_gap * 2.5f;
+                float out_sup  = effective_compliance * u_purpose * 1.2f;
+                u_build_output = out_base + out_sup;
+                u_build_output *= mood_factor * build_urgency;
+            }
+            u_build = std::max(u_build, u_build_output);
         }
 
         // ================================================================
@@ -614,7 +691,39 @@ void Simulation::system_compute_utility() {
         if (gatherer_nearby >= 3) u_gather *= 1.0f / (1.0f + (gatherer_nearby - 2) * 0.3f);
         if (builder_nearby >= 3) u_build *= 1.0f / (1.0f + (builder_nearby - 2) * 0.3f);
 
+        // === RESPONSE THRESHOLDS (Bonabeau et al. 1996) ===
+        // Each agent has per-action sensitivity derived from personality.
+        // Low theta = responds eagerly (specialist). High theta = reluctant.
+        // This makes agents naturally lean toward different roles.
+        auto bonabeau = [](float stimulus, float theta) -> float {
+            float s2 = stimulus * stimulus;
+            float t2 = theta * theta;
+            return s2 / (s2 + t2 + 0.001f);
+        };
+        float th_gather    = 0.4f - 0.3f * personality.compliance;
+        float th_build     = 0.4f - 0.3f * personality.compliance;
+        float th_work      = 0.4f - 0.3f * (1.0f - personality.laziness);
+        float th_eat       = 0.05f;  // everyone eats eagerly (survival)
+        float th_rest      = 0.4f - 0.3f * personality.laziness;
+        float th_socialize = 0.4f - 0.3f * personality.gregariousness;
+        float th_create    = 0.4f - 0.3f * personality.artistry;
+        float th_explore   = 0.4f - 0.3f * personality.curiosity;
+
+        u_gather     *= bonabeau(u_gather,     th_gather);
+        u_build      *= bonabeau(u_build,      th_build);
+        u_work       *= bonabeau(u_work,       th_work);
+        u_eat        *= bonabeau(u_eat,        th_eat);
+        u_rest_action *= bonabeau(u_rest_action, th_rest);
+        u_socialize  *= bonabeau(u_socialize,  th_socialize);
+        u_create     *= bonabeau(u_create,     th_create);
+        u_explore    *= bonabeau(u_explore,    th_explore);
+
         // Pick best action
+        // === BOLTZMANN ACTION SELECTION ===
+        // Replace greedy argmax with probabilistic softmax selection.
+        // Agents USUALLY pick the highest-utility action but have a
+        // temperature-controlled chance of picking alternatives.
+        // This prevents all 24 agents from choosing the same action.
         struct Scored { ActionType type; float score; };
         Scored options[] = {
             {ActionType::GATHER,    u_gather},
@@ -630,38 +739,52 @@ void Simulation::system_compute_utility() {
             {ActionType::DISMANTLE, u_dismantle},
             {ActionType::SABOTAGE,  u_sabotage},
         };
+        constexpr int N = sizeof(options) / sizeof(options[0]);
 
-        float best_score = -1.0f;
-        ActionType best_action = ActionType::IDLE;
-        for (auto& opt : options) {
-            if (opt.score > best_score) {
-                best_score = opt.score;
-                best_action = opt.type;
+        float tau = config_.selection_temperature;
+        if (tau <= 0.001f) {
+            // Degenerate: greedy argmax (legacy behavior)
+            float best_score = -1.0f;
+            for (auto& opt : options)
+                if (opt.score > best_score) {
+                    best_score = opt.score;
+                    action.current = opt.type;
+                }
+        } else {
+            // Boltzmann: compute softmax weights
+            float max_u = options[0].score;
+            for (int i = 1; i < N; i++)
+                if (options[i].score > max_u) max_u = options[i].score;
+
+            float weights[N];
+            float sum_w = 0.0f;
+            for (int i = 0; i < N; i++) {
+                float u = std::max(0.0f, options[i].score);
+                weights[i] = std::exp((u - max_u) / tau);
+                sum_w += weights[i];
+            }
+
+            // Weighted random selection
+            std::uniform_real_distribution<float> pick(0.0f, sum_w);
+            float r = pick(rng_);
+            float cumulative = 0.0f;
+            action.current = ActionType::IDLE;
+            for (int i = 0; i < N; i++) {
+                cumulative += weights[i];
+                if (r <= cumulative) {
+                    action.current = options[i].type;
+                    break;
+                }
             }
         }
-
-        // Small noise: random action
-        std::uniform_real_distribution<float> noise(0.0f, 1.0f);
-        if (noise(rng_) < 0.02f) {
-            std::uniform_int_distribution<int> pick(0, 10);
-            ActionType random_actions[] = {
-                ActionType::GATHER, ActionType::BUILD, ActionType::WORK,
-                ActionType::EAT, ActionType::REST, ActionType::SOCIALIZE,
-                ActionType::CREATE, ActionType::EXPLORE, ActionType::GET_FOOD,
-                ActionType::MAINTAIN, ActionType::DISMANTLE
-            };
-            best_action = random_actions[pick(rng_)];
-        }
-
-        action.current = best_action;
 
         // Set stickiness for WORK actions (The Sims pattern):
         // WORK requires walking to machines, then sustained execution.
         // BUILD doesn't need stickiness (it has build_progress for sustained execution).
         // GATHER doesn't need it (agents gather where they stand).
-        if (best_action == ActionType::WORK) {
-            if (action.sticky_action != best_action || action.sticky_ticks <= 0) {
-                action.sticky_action = best_action;
+        if (action.current == ActionType::WORK) {
+            if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
+                action.sticky_action = action.current;
                 // Estimate distance to target machine for commitment duration.
                 // Walk time + 15 ticks of actual work.
                 // If no target yet, default to 30.

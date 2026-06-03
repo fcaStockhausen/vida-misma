@@ -19,11 +19,7 @@ Simulation::Simulation(const Config& cfg)
     , social_(cfg.initial_population)
     , current_quota_per_tick_(cfg.quota_per_tick)
 {
-    if (cfg.use_wfc) {
-        grid_.generate_wfc(cfg.seed);
-    } else {
-        grid_.generate_default();
-    }
+    grid_.generate_wfc(cfg.seed);
     spawn_initial_agents();
 }
 
@@ -196,9 +192,9 @@ void Simulation::spawn_initial_agents() {
         personality.archetype      = at;
         registry_.emplace<PersonalityComponent>(entity, personality);
 
-        // Needs start near zero
+        // Needs start staggered — wider jitter desynchronizes agent cycles
         NeedsComponent needs;
-        std::uniform_real_distribution<float> nd(0.0f, 0.15f);
+        std::uniform_real_distribution<float> nd(0.0f, 0.25f);
         needs.hunger    = nd(rng_);
         needs.rest      = nd(rng_);
         needs.social    = nd(rng_);
@@ -334,6 +330,29 @@ void Simulation::system_regen_resources() {
                 if (d.resource_regen > 0.0f && d.resource_amount < d.resource_max) {
                     d.resource_amount = std::min(d.resource_max,
                         d.resource_amount + d.resource_regen);
+                }
+            }
+            // Machine on resource tile: auto-gathers from the tile it sits on.
+            // FoodMachine on FoodSource → auto-gathers raw_food into stored_raw_food
+            // OutputMachine on ScrapPile → auto-gathers raw_material into stored_raw_material
+            if (t == TileType::Machine) {
+                auto& d = grid_.data_at(x, y);
+                if (d.built && d.built_on_resource) {
+                    // Regen the underlying resource
+                    if (d.resource_regen > 0.0f && d.resource_amount < d.resource_max) {
+                        d.resource_amount = std::min(d.resource_max,
+                            d.resource_amount + d.resource_regen);
+                    }
+                    // Auto-gather into appropriate stored resource
+                    if (d.resource_amount > 0.01f) {
+                        float gather = std::min(d.resource_amount, 0.15f);
+                        d.resource_amount -= gather;
+                        if (d.machine_type == MachineType::Food) {
+                            d.stored_raw_food += gather;
+                        } else {
+                            d.stored_raw_material += gather;
+                        }
+                    }
                 }
             }
         }

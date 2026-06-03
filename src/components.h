@@ -12,8 +12,8 @@ enum class TileType : uint8_t {
     Floor = 0,
     Wall,
     Machine,      // Factory machine (needs building, then produces food)
-    Storage,      // Holds resources for communal use (machine output lands here)
-    Entrance,
+    Storage,      // Holds resources for communal use
+    Entrance,     // DEPRECATED: no longer placed, kept for enum compatibility
     Exit,
     OpenSpace,    // Social/creative area
     FoodSource,   // Wild food (legacy, unused in current model)
@@ -65,8 +65,10 @@ inline bool is_valid_action_tile(ActionType action, TileType tile) {
         case ActionType::GATHER:   return tile == TileType::ScrapPile || tile == TileType::FoodSource;
         case ActionType::BUILD:    return tile == TileType::Machine
                                          || tile == TileType::EatingZone
-                                         || tile == TileType::Floor   // start EZ or build adjacent Conveyor
-                                         || tile == TileType::Conveyor; // stand on unbuilt frame to build
+                                         || tile == TileType::Floor
+                                         || tile == TileType::Conveyor
+                                         || tile == TileType::FoodSource
+                                         || tile == TileType::ScrapPile;
         case ActionType::WORK:     return tile == TileType::Machine;
         case ActionType::CREATE:   return tile == TileType::OpenSpace;
         case ActionType::MAINTAIN: return true;  // agent stands ADJACENT to conveyor
@@ -311,6 +313,7 @@ struct TileData {
     float build_progress = 0.0f;    // [0, build_cost]
     float build_cost     = 0.0f;    // raw_material needed
     MachineType machine_type = MachineType::Food;  // subtype: Food, Materials, or Output
+    bool  built_on_resource = false;  // Machine sits atop a resource tile (FoodSource/ScrapPile): auto-gathers
     int claimed_by = -1;  // agent ID that claimed this machine (-1 = unclaimed)
                          // Pattern from RimWorld/DF: prevents all agents from
                          // targeting the same machine. Soft claim: other agents

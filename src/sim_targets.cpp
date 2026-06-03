@@ -10,9 +10,11 @@ void Simulation::system_find_targets() {
         auto& action = registry_.get<ActionComponent>(e);
         auto& pos    = registry_.get<PositionComponent>(e);
         auto& inv    = registry_.get<InventoryComponent>(e);
+        auto& agent  = registry_.get<AgentComponent>(e);
 
-        // Release machine claim when switching away from WORK
+        // Release claims when switching away from WORK or BUILD
         if (action.current != ActionType::WORK &&
+            action.current != ActionType::BUILD &&
             action.target_x >= 0 && action.target_y >= 0) {
             auto& td = grid_.data_at(action.target_x, action.target_y);
             int my_id = registry_.get<AgentComponent>(e).id;
@@ -68,10 +70,12 @@ void Simulation::system_find_targets() {
 
             case ActionType::BUILD: {
                 // Priority: nearest unbuilt structure with strategic bias.
-                // When food is scarce, machines get priority over conveyors.
                 auto machine_t = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
                 auto conv_t    = grid_.find_nearest_conveyor_to_build(pos.x, pos.y);
                 auto ez_t      = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y);
+                auto stor_t    = grid_.find_storage_build_site(pos.x, pos.y);
+                auto fs_t      = grid_.find_nearest_free_foodsource(pos.x, pos.y, agent.id);
+                auto sp_t      = grid_.find_nearest_free_scrappile(pos.x, pos.y, agent.id);
                 bool any_built_ez = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
 
                 // Compute distances
@@ -81,17 +85,35 @@ void Simulation::system_find_targets() {
                     ? std::abs(conv_t.first - pos.x) + std::abs(conv_t.second - pos.y) : 999999;
                 int ez_dist = (ez_t.first >= 0)
                     ? std::abs(ez_t.first - pos.x) + std::abs(ez_t.second - pos.y) : 999999;
+                int stor_dist = (stor_t.first >= 0)
+                    ? std::abs(stor_t.first - pos.x) + std::abs(stor_t.second - pos.y) : 999999;
+                int fs_dist = (fs_t.first >= 0)
+                    ? std::abs(fs_t.first - pos.x) + std::abs(fs_t.second - pos.y) : 999999;
+                int sp_dist = (sp_t.first >= 0)
+                    ? std::abs(sp_t.first - pos.x) + std::abs(sp_t.second - pos.y) : 999999;
 
-                // When storage food is low, strongly prefer machines over conveyors
+                // Bonuses (negative = higher priority)
                 int conv_bonus = (total_storage_food() < 3.0f) ? -10 : -3;
+                int stor_bonus = -5;
+                int fs_bonus = -8;  // FoodMachine on FoodSource
+                int sp_bonus = -8;  // OutputMachine on ScrapPile
 
                 int best_dist = 999999;
                 if (machine_t.first >= 0 && mach_dist < best_dist) best_dist = mach_dist;
+                if (fs_t.first >= 0 && (fs_dist + fs_bonus) < best_dist) best_dist = fs_dist + fs_bonus;
+                if (sp_t.first >= 0 && (sp_dist + sp_bonus) < best_dist) best_dist = sp_dist + sp_bonus;
+                if (stor_t.first >= 0 && (stor_dist + stor_bonus) < best_dist) best_dist = stor_dist + stor_bonus;
                 if (conv_t.first >= 0 && (conv_dist + conv_bonus) < best_dist) best_dist = conv_dist + conv_bonus;
                 if (ez_t.first >= 0 && ez_dist < best_dist) best_dist = ez_dist;
 
                 if (machine_t.first >= 0 && mach_dist <= best_dist) {
                     tx = machine_t.first; ty = machine_t.second;
+                } else if (fs_t.first >= 0 && (fs_dist + fs_bonus) <= best_dist) {
+                    tx = fs_t.first; ty = fs_t.second;
+                } else if (sp_t.first >= 0 && (sp_dist + sp_bonus) <= best_dist) {
+                    tx = sp_t.first; ty = sp_t.second;
+                } else if (stor_t.first >= 0 && (stor_dist + stor_bonus) <= best_dist) {
+                    tx = stor_t.first; ty = stor_t.second;
                 } else if (conv_t.first >= 0 && (conv_dist + conv_bonus) <= best_dist) {
                     tx = conv_t.first; ty = conv_t.second;
                 } else if (ez_t.first >= 0) {
@@ -101,6 +123,16 @@ void Simulation::system_find_targets() {
                         pos.x, pos.y, config_.eatingzone_min_dist_machine);
                     if (site.first >= 0) {
                         tx = site.first; ty = site.second;
+                    }
+                }
+
+                // Claim resource tiles when chosen as BUILD target
+                // (prevents other agents from targeting the same tile)
+                if (tx >= 0 && ty >= 0) {
+                    TileType tt = grid_.at(tx, ty);
+                    if (tt == TileType::FoodSource || tt == TileType::ScrapPile) {
+                        auto& td = grid_.data_at(tx, ty);
+                        td.claimed_by = agent.id;
                     }
                 }
                 break;

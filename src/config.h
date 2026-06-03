@@ -84,6 +84,7 @@ struct Config {
     float machine_break_threshold  = 0.25f;  // below this, machines may revert to unbuilt
     float machine_break_prob       = 0.0003f;// per-tick probability per built machine
     float initial_food_per_agent   = 3.0f;   // bootstrap so agents survive while building
+    float selection_temperature    = 0.4f;   // Boltzmann selection: 0=greedy, higher=more random
     float quota_growth_rate         = 0.00002f; // quota increase per tick (factory demands more)
     int   restructure_interval     = 800;    // ticks between restructure checks
     float restructure_probability  = 0.2f;   // chance per check

@@ -235,6 +235,103 @@ public:
         return n;
     }
 
+    // --- FoodSource helpers ---
+
+    // Find nearest FoodSource tile that hasn't been built over with a machine
+    std::pair<int,int> find_nearest_free_foodsource(int fx, int fy, int agent_id = -1) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) == TileType::FoodSource) {
+                    const auto& td = data_at(x, y);
+                    // Skip tiles claimed by other agents
+                    if (td.claimed_by >= 0 && td.claimed_by != agent_id) continue;
+                    int d = std::abs(x - fx) + std::abs(y - fy);
+                    if (d < best_dist) {
+                        best_dist = d;
+                        best = {x, y};
+                    }
+                }
+            }
+        return best;
+    }
+
+    // Find nearest ScrapPile tile that hasn't been built over with a machine
+    std::pair<int,int> find_nearest_free_scrappile(int fx, int fy, int agent_id = -1) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) == TileType::ScrapPile) {
+                    const auto& td = data_at(x, y);
+                    // Skip tiles claimed by other agents
+                    if (td.claimed_by >= 0 && td.claimed_by != agent_id) continue;
+                    int d = std::abs(x - fx) + std::abs(y - fy);
+                    if (d < best_dist) {
+                        best_dist = d;
+                        best = {x, y};
+                    }
+                }
+            }
+        return best;
+    }
+
+    // --- Storage helpers ---
+
+    // Count storage tiles within manhattan radius of (cx, cy)
+    int count_storage_near(int cx, int cy, int radius = 3) const {
+        int n = 0;
+        for (int dy = -radius; dy <= radius; dy++)
+            for (int dx = -radius; dx <= radius; dx++) {
+                int nx = cx + dx, ny = cy + dy;
+                if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                if (at(nx, ny) == TileType::Storage) n++;
+            }
+        return n;
+    }
+
+    // Find a Floor tile adjacent to a built machine that lacks nearby storage.
+    // Returns the best Floor tile to build storage on, closest to (fx, fy).
+    std::pair<int,int> find_storage_build_site(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                if (at(x, y) != TileType::Floor) continue;
+                // Must be adjacent to a built machine (8-connectivity)
+                bool adj_built_machine = false;
+                for (int dy = -1; dy <= 1 && !adj_built_machine; dy++)
+                    for (int dx = -1; dx <= 1 && !adj_built_machine; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                        if (at(nx, ny) == TileType::Machine && data_at(nx, ny).built)
+                            adj_built_machine = true;
+                    }
+                if (!adj_built_machine) continue;
+                // The machine must lack nearby storage
+                bool machine_needs_storage = false;
+                for (int dy = -1; dy <= 1 && !machine_needs_storage; dy++)
+                    for (int dx = -1; dx <= 1 && !machine_needs_storage; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                        if (at(nx, ny) == TileType::Machine && data_at(nx, ny).built) {
+                            if (count_storage_near(nx, ny, 2) == 0)
+                                machine_needs_storage = true;
+                        }
+                    }
+                if (!machine_needs_storage) continue;
+                int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d < best_dist) {
+                    best_dist = d;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
     // --- Conveyor helpers ---
 
     // Find nearest unbuilt or degraded conveyor
@@ -441,173 +538,6 @@ public:
 
     // --- Factory Layout ---
 
-    void generate_default() {
-        // Clear everything
-        for (int y = 0; y < height_; y++)
-            for (int x = 0; x < width_; x++) {
-                set(x, y, TileType::Floor);
-            }
-
-        // Perimeter walls
-        for (int x = 0; x < width_; x++) {
-            set(x, 0, TileType::Wall);
-            set(x, height_ - 1, TileType::Wall);
-        }
-        for (int y = 0; y < height_; y++) {
-            set(0, y, TileType::Wall);
-            set(width_ - 1, y, TileType::Wall);
-        }
-
-        // Entrances (left wall, middle)
-        int mid_y = height_ / 2;
-        set(0, mid_y - 1, TileType::Entrance);
-        set(0, mid_y,     TileType::Entrance);
-        set(0, mid_y + 1, TileType::Entrance);
-
-        // Exits (right wall, middle)
-        set(width_ - 1, mid_y - 1, TileType::Exit);
-        set(width_ - 1, mid_y,     TileType::Exit);
-        set(width_ - 1, mid_y + 1, TileType::Exit);
-
-        // Storage adjacent to Exit — required for quota system to drain food.
-        // Without this, factory health can never be maintained.
-        place_storage(width_ - 2, mid_y);
-
-        // NOTE: FoodSource tiles intentionally removed. In this model, food is only
-        // produced by Machines (industrial pathway). Agents who don't operate machines
-        // can't sustain themselves — that is what creates the cooperation pressure.
-
-        // === SCRAP PILES (raw material, finite) ===
-        // North corridor
-        place_scrap_pile(width_ / 2 - 2, 3);
-        place_scrap_pile(width_ / 2, 3);
-        place_scrap_pile(width_ / 2 + 2, 3);
-
-        // South corridor
-        place_scrap_pile(width_ / 2 - 2, height_ - 4);
-        place_scrap_pile(width_ / 2, height_ - 4);
-        place_scrap_pile(width_ / 2 + 2, height_ - 4);
-
-        // West mid
-        place_scrap_pile(3, mid_y - 5);
-        place_scrap_pile(3, mid_y + 5);
-
-        // East mid
-        place_scrap_pile(width_ - 4, mid_y - 5);
-        place_scrap_pile(width_ - 4, mid_y + 5);
-
-        // === MACHINE FRAMES (unbuilt, need construction) ===
-        // North-west cluster: FOOD machines (4)
-        int m1x = width_ / 4;
-        int m1y = height_ / 4;
-        place_machine(m1x - 1, m1y - 1, MachineType::Food);
-        place_machine(m1x + 1, m1y - 1, MachineType::Food);
-        place_machine(m1x - 1, m1y + 1, MachineType::Food);
-        place_machine(m1x + 1, m1y + 1, MachineType::Food);
-
-        // South-west cluster: FOOD machines (4)
-        int m2x = width_ / 4;
-        int m2y = 3 * height_ / 4;
-        place_machine(m2x - 1, m2y - 1, MachineType::Food);
-        place_machine(m2x + 1, m2y - 1, MachineType::Food);
-        place_machine(m2x - 1, m2y + 1, MachineType::Food);
-        place_machine(m2x + 1, m2y + 1, MachineType::Food);
-
-        // North-east cluster: MATERIALS machines (4)
-        int m3x = 3 * width_ / 4;
-        int m3y = height_ / 4;
-        place_machine(m3x - 1, m3y - 1, MachineType::Materials);
-        place_machine(m3x + 1, m3y - 1, MachineType::Materials);
-        place_machine(m3x - 1, m3y + 1, MachineType::Materials);
-        place_machine(m3x + 1, m3y + 1, MachineType::Materials);
-
-        // South-east cluster: OUTPUT machines (4)
-        int m4x = 3 * width_ / 4;
-        int m4y = 3 * height_ / 4;
-        place_machine(m4x - 1, m4y - 1, MachineType::Output);
-        place_machine(m4x + 1, m4y - 1, MachineType::Output);
-        place_machine(m4x - 1, m4y + 1, MachineType::Output);
-        place_machine(m4x + 1, m4y + 1, MachineType::Output);
-
-        // === STORAGE BAYS — placed at (mx, my±2) so they are 8-adjacent to
-        // all 4 machines in a cluster. This is what makes WORK/EAT actually
-        // reach the storage helpers (3x3 neighborhood).
-        place_storage(m1x, m1y - 2);
-        place_storage(m1x, m1y + 2);
-
-        place_storage(m2x, m2y - 2);
-        place_storage(m2x, m2y + 2);
-
-        place_storage(m3x, m3y - 2);
-        place_storage(m3x, m3y + 2);
-
-        place_storage(m4x, m4y - 2);
-        place_storage(m4x, m4y + 2);
-
-        // Central storage (mid-grid hub)
-        place_storage(width_ / 2 - 2, mid_y);
-        place_storage(width_ / 2 + 2, mid_y);
-
-        // === OPEN SPACES (social/creative) ===
-        // Center area
-        int ox = width_ / 2;
-        int oy = mid_y;
-        for (int dy = -2; dy <= 2; dy++)
-            for (int dx = -3; dx <= 3; dx++) {
-                int px = ox + dx, py = oy + dy;
-                if (at(px, py) == TileType::Floor)
-                    set(px, py, TileType::OpenSpace);
-            }
-
-        // Open floor plan — no internal walls.
-        // The factory is a single open space with machines, storage,
-        // and conveyors. This maximizes agent mobility and keeps
-        // path distances short for the supply chain.
-        // (WFC generator already forbids inner walls.)
-
-        // === CONVEYOR LINES (production pipelines) ===
-        // Connect each factory cluster's storage to the central hub,
-        // then from central hub to Exit (right wall).
-        //
-        // Layout: Machine cluster → Storage → Conveyor chain → Central Storage → Conveyor → Exit
-        // Agents BUILD these; placed as unbuilt frames.
-
-        // SE cluster (m4) → East toward Exit
-        place_conveyor(m4x + 3, m4y, ConveyorDir::E);
-        place_conveyor(m4x + 4, m4y, ConveyorDir::E);
-        place_conveyor(m4x + 5, m4y, ConveyorDir::E);
-
-        // NE cluster (m3) → East toward Exit
-        place_conveyor(m3x + 3, m3y, ConveyorDir::E);
-        place_conveyor(m3x + 4, m3y, ConveyorDir::E);
-        place_conveyor(m3x + 5, m3y, ConveyorDir::E);
-
-        // Central hub → Exit (horizontal line at mid_y)
-        int hub_x = width_ / 2 + 3;
-        for (int cx = hub_x; cx < width_ - 2; cx++) {
-            place_conveyor(cx, mid_y, ConveyorDir::E);
-        }
-
-        // NW cluster (m1) → South to central hub
-        place_conveyor(m1x, m1y + 3, ConveyorDir::S);
-        place_conveyor(m1x, m1y + 4, ConveyorDir::S);
-        place_conveyor(m1x, m1y + 5, ConveyorDir::S);
-
-        // SW cluster (m2) → North to central hub
-        place_conveyor(m2x, m2y - 3, ConveyorDir::N);
-        place_conveyor(m2x, m2y - 4, ConveyorDir::N);
-        place_conveyor(m2x, m2y - 5, ConveyorDir::N);
-
-        // === PRE-BUILT BOOTSTRAP ===
-        // The factory starts with 2 Food machines already built.
-        // This represents a minimally operational factory — without it,
-        // agents die before building anything (chicken-and-egg problem).
-        auto& pb1 = data_at(m1x - 1, m1y - 1);
-        pb1.built = true; pb1.build_progress = pb1.build_cost;
-        auto& pb2 = data_at(m1x + 1, m1y + 1);
-        pb2.built = true; pb2.build_progress = pb2.build_cost;
-    }
-
     void generate_wfc(uint32_t seed) {
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
@@ -656,49 +586,4 @@ private:
     std::vector<TileType> tiles_;
     std::vector<TileData> tile_data_;
 
-    void place_food_source(int x, int y) {
-        set(x, y, TileType::FoodSource);
-        auto& d = data_at(x, y);
-        d.resource_amount = 5.0f;
-        d.resource_max    = 8.0f;
-        d.resource_regen  = 0.02f;  // regenerates: ~250 ticks to refill
-    }
-
-    void place_scrap_pile(int x, int y) {
-        set(x, y, TileType::ScrapPile);
-        auto& d = data_at(x, y);
-        d.resource_amount = 10.0f;
-        d.resource_max    = 10.0f;
-        d.resource_regen  = 0.08f;  // regenerates: ~125 ticks to refill, sustains economy
-    }
-
-    void place_machine(int x, int y, MachineType mtype = MachineType::Food) {
-        set(x, y, TileType::Machine);
-        auto& d = data_at(x, y);
-        d.built          = false;
-        d.build_progress = 0.0f;
-        d.build_cost     = 2.0f;
-        d.machine_type   = mtype;
-    }
-
-    void place_storage(int x, int y) {
-        set(x, y, TileType::Storage);
-        auto& d = data_at(x, y);
-        d.storage_capacity    = 20.0f;
-        d.stored_food         = 0.0f;
-        d.stored_raw_food     = 0.0f;
-        d.stored_raw_material = 0.0f;
-        d.stored_output       = 0.0f;
-    }
-
-    void place_conveyor(int x, int y, ConveyorDir dir) {
-        set(x, y, TileType::Conveyor);
-        auto& d = data_at(x, y);
-        d.built = false;
-        d.build_progress = 0.0f;
-        d.build_cost = 1.5f;  // cheaper than machines
-        d.conveyor_dir = dir;
-        d.conveyor_condition = 1.0f;
-        d.conveyor_contents = 0.0f;
-    }
 };

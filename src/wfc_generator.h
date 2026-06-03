@@ -40,13 +40,29 @@ public:
         float storage_capacity = 0.0f;
         bool built = false;
         float build_cost = 0.0f;
+        bool built_on_resource = false;  // Machine sits on FoodSource: auto-gathers
         ConveyorDir conveyor_dir = ConveyorDir::E;
     };
 
+    // ================================================================
+    // WFC generates ONLY the bare map skeleton:
+    //   - Wall perimeter
+    //   - Floor tiles (majority)
+    //   - OpenSpace clusters (4+ tiles, for social/expression)
+    //   - 1 Exit tile (right wall, random Y)
+    //   - 2 initial Storage tiles near the Exit
+    //   - Machine frames (UNBUILT, agents build them)
+    //   - FoodSource tiles (renewable raw food)
+    //   - ScrapPile tiles (renewable raw material)
+    //
+    // Everything else (conveyors, eating zones, extra storage)
+    // is built BY AGENTS through the BUILD action.
+    // ================================================================
+
     std::vector<Placement> generate() {
         pre_collapse_boundaries();
-        pre_collapse_portals();
-        // Open floor plan: no internal walls (permanent design choice)
+        pre_collapse_exit();
+        // Open floor plan: no internal walls
         for (int y = 1; y < height_ - 1; y++)
             for (int x = 1; x < width_ - 1; x++) {
                 auto& s = slots_[idx(x, y)];
@@ -109,50 +125,11 @@ private:
         }
     }
 
-    void pre_collapse_portals() {
-        int mid_y = height_ / 2;
-        for (int dy = -1; dy <= 1; dy++) {
-            force_collapse(0, mid_y + dy, TileType::Entrance);
-            force_collapse(width_ - 1, mid_y + dy, TileType::Exit);
-        }
-    }
-
-    void stamp_internal_walls() {
-        std::uniform_int_distribution<int> n_walls_dist(2, 5);
-        int n_walls = n_walls_dist(rng_);
-
-        for (int w = 0; w < n_walls; w++) {
-            std::uniform_int_distribution<int> horiz_dist(0, 1);
-            bool horizontal = horiz_dist(rng_) == 0;
-
-            if (horizontal) {
-                std::uniform_int_distribution<int> y_dist(4, height_ - 5);
-                int wy = y_dist(rng_);
-                std::uniform_int_distribution<int> x0_dist(2, width_ / 3);
-                std::uniform_int_distribution<int> x1_dist(2 * width_ / 3, width_ - 3);
-                int x0 = x0_dist(rng_);
-                int x1 = x1_dist(rng_);
-
-                int gap_pos = std::uniform_int_distribution<int>(x0 + 1, x1 - 1)(rng_);
-                for (int x = x0; x <= x1; x++) {
-                    if (x == gap_pos) continue;
-                    force_collapse(x, wy, TileType::Wall);
-                }
-            } else {
-                std::uniform_int_distribution<int> x_dist(4, width_ - 5);
-                int wx = x_dist(rng_);
-                std::uniform_int_distribution<int> y0_dist(2, height_ / 3);
-                std::uniform_int_distribution<int> y1_dist(2 * height_ / 3, height_ - 3);
-                int y0 = y0_dist(rng_);
-                int y1 = y1_dist(rng_);
-
-                int gap_pos = std::uniform_int_distribution<int>(y0 + 1, y1 - 1)(rng_);
-                for (int y = y0; y <= y1; y++) {
-                    if (y == gap_pos) continue;
-                    force_collapse(wx, y, TileType::Wall);
-                }
-            }
-        }
+    // Single Exit on right wall at random Y position
+    void pre_collapse_exit() {
+        std::uniform_int_distribution<int> y_dist(3, height_ - 4);
+        int ey = y_dist(rng_);
+        force_collapse(width_ - 1, ey, TileType::Exit);
     }
 
     void force_collapse(int x, int y, TileType t) {
@@ -311,6 +288,12 @@ private:
         return slots_[idx(x, y)].value;
     }
 
+    // ================================================================
+    // build_placements: stamp all non-WFC entities onto the grid.
+    // WFC provides: Floor, OpenSpace, Wall, Exit
+    // We add: 2 Storage near Exit, Machine frames, FoodSource, ScrapPile, OpenSpace clusters
+    // ================================================================
+
     std::vector<Placement> build_placements() {
         std::vector<Placement> P;
 
@@ -319,12 +302,10 @@ private:
                 P.push_back({x, y, slot_type(x, y)});
             }
 
-        place_exit_storage(P);
-        place_machines(P);
-        place_food_sources(P);
-        place_scrap_piles(P);
-        place_open_spaces(P);
-        stamp_conveyors(P);
+        place_open_spaces(P);      // OpenSpace clusters (4+ tiles, guaranteed)
+        place_exit_storage(P);     // 2 Storage tiles near Exit
+        place_food_sources(P);     // Renewable raw food (agents build FoodMachine on top)
+        place_scrap_piles(P);      // Renewable raw material (agents build OutputMachine on top)
 
         return P;
     }
@@ -338,12 +319,108 @@ private:
         P[y * width_ + x] = pl;
     }
 
-    void place_exit_storage(std::vector<Placement>& P) {
+    // ================================================================
+    // OpenSpace: guaranteed clusters of 4+ tiles.
+    // Place 1 large central plaza + 2-4 smaller clusters.
+    // Minimum radius 2 (5x5 = 25 tiles, well above 4 minimum).
+    // ================================================================
+
+    void place_open_spaces(std::vector<Placement>& P) {
+        // Central plaza: large gathering space
+        int mid_x = width_ / 2;
         int mid_y = height_ / 2;
-        set_placement(P, width_ - 2, mid_y,
-            {width_ - 2, mid_y, TileType::Storage, MachineType::Food,
-             0, 0, 0, 20.0f, false, 0.0f, ConveyorDir::E});
+        std::uniform_int_distribution<int> rx_dist(3, 5);
+        std::uniform_int_distribution<int> ry_dist(2, 3);
+        int radius_x = rx_dist(rng_);
+        int radius_y = ry_dist(rng_);
+
+        for (int dy = -radius_y; dy <= radius_y; dy++)
+            for (int dx = -radius_x; dx <= radius_x; dx++) {
+                int px = mid_x + dx;
+                int py = mid_y + dy;
+                if (px > 0 && px < width_ - 1 && py > 0 && py < height_ - 1) {
+                    if (peek(P, px, py) == TileType::Floor) {
+                        set_placement(P, px, py, {px, py, TileType::OpenSpace});
+                    }
+                }
+            }
+
+        // Additional clusters: each guaranteed 4+ tiles (2x2 minimum)
+        std::uniform_int_distribution<int> n_extra_dist(2, 4);
+        int n_extra = n_extra_dist(rng_);
+        std::uniform_int_distribution<int> x_dist(5, width_ - 6);
+        std::uniform_int_distribution<int> y_dist(5, height_ - 6);
+
+        for (int i = 0; i < n_extra; i++) {
+            int cx = x_dist(rng_);
+            int cy = y_dist(rng_);
+            // Radius 2 = 5x5 cluster (guaranteed > 4 tiles)
+            // Radius 1 = 3x3 cluster (9 tiles, well above minimum)
+            // Never use radius 0 (single tile)
+            std::uniform_int_distribution<int> r_dist(1, 2);
+            int r = r_dist(rng_);
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++) {
+                    int px = cx + dx;
+                    int py = cy + dy;
+                    if (px > 0 && px < width_ - 1 && py > 0 && py < height_ - 1) {
+                        if (peek(P, px, py) == TileType::Floor) {
+                            set_placement(P, px, py, {px, py, TileType::OpenSpace});
+                        }
+                    }
+                }
+        }
     }
+
+    // ================================================================
+    // Exit-adjacent Storage: 2 tiles near the Exit.
+    // This is where agents deliver food and where Output gets shipped.
+    // Exit position is found from the collapsed WFC grid.
+    // ================================================================
+
+    void place_exit_storage(std::vector<Placement>& P) {
+        // Find the Exit tile
+        int exit_x = -1, exit_y = -1;
+        for (int y = 1; y < height_ - 1; y++) {
+            if (slot_type(width_ - 1, y) == TileType::Exit) {
+                exit_x = width_ - 1;
+                exit_y = y;
+                break;
+            }
+        }
+        if (exit_x < 0) return;  // shouldn't happen
+
+        // Place 2 Storage tiles adjacent to Exit (inside the wall)
+        // Try positions: (exit_x-1, exit_y-1) and (exit_x-1, exit_y+1)
+        // or (exit_x-1, exit_y) and (exit_x-2, exit_y)
+        std::vector<std::pair<int,int>> candidates = {
+            {exit_x - 1, exit_y},
+            {exit_x - 2, exit_y},
+            {exit_x - 1, exit_y - 1},
+            {exit_x - 1, exit_y + 1},
+            {exit_x - 2, exit_y - 1},
+            {exit_x - 2, exit_y + 1},
+        };
+
+        int placed = 0;
+        for (auto [sx, sy] : candidates) {
+            if (placed >= 2) break;
+            if (sx > 0 && sx < width_ - 1 && sy > 0 && sy < height_ - 1) {
+                if (peek(P, sx, sy) == TileType::Floor || peek(P, sx, sy) == TileType::OpenSpace) {
+                    set_placement(P, sx, sy,
+                        {sx, sy, TileType::Storage, MachineType::Food,
+                         0, 0, 0, 20.0f, true, 0.0f, false, ConveyorDir::E});  // built=true: initial infrastructure
+                    placed++;
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    // Machine frames: UNBUILT, agents must construct them.
+    // Materials in NE quadrant, Output in SE quadrant.
+    // FoodMachines are placed on FoodSource tiles (see place_food_sources).
+    // ================================================================
 
     void place_machines(std::vector<Placement>& P) {
         struct Quadrant {
@@ -356,8 +433,6 @@ private:
         int zone_h = height_ / 4;
 
         std::vector<Quadrant> quads = {
-            { margin, margin, margin + zone_w, margin + zone_h, MachineType::Food },
-            { margin, height_ - margin - zone_h, margin + zone_w, height_ - margin, MachineType::Food },
             { width_ - margin - zone_w, margin, width_ - margin, margin + zone_h, MachineType::Materials },
             { width_ - margin - zone_w, height_ - margin - zone_h, width_ - margin, height_ - margin, MachineType::Output },
         };
@@ -400,46 +475,62 @@ private:
                     }
                 if (too_close) continue;
 
+                // UNBUILT machine frame -- agents must construct it
                 set_placement(P, mx, my,
                     {mx, my, TileType::Machine, q.mtype,
-                     0, 0, 0, 0, false, 2.0f, ConveyorDir::E});
+                     0, 0, 0, 0, false, 2.0f, false, ConveyorDir::E});
                 placed++;
-
-                place_storage_near(P, mx, my);
-            }
-        }
-
-        int mid_x = width_ / 2;
-        int midy = height_ / 2;
-        set_placement(P, mid_x - 2, midy,
-            {mid_x - 2, midy, TileType::Storage, MachineType::Food,
-             0, 0, 0, 20.0f, false, 0.0f, ConveyorDir::E});
-        set_placement(P, mid_x + 2, midy,
-            {mid_x + 2, midy, TileType::Storage, MachineType::Food,
-             0, 0, 0, 20.0f, false, 0.0f, ConveyorDir::E});
-    }
-
-    void place_storage_near(std::vector<Placement>& P, int mx, int my) {
-        constexpr int ddx[] = {0, 0, -2, 2};
-        constexpr int ddy[] = {-2, 2, 0, 0};
-        int dirs[] = {0, 1, 2, 3};
-        std::shuffle(dirs, dirs + 4, rng_);
-
-        for (int d = 0; d < 4; d++) {
-            int nx = mx + ddx[dirs[d]];
-            int ny = my + ddy[dirs[d]];
-            if (nx > 0 && nx < width_ - 1 && ny > 0 && ny < height_ - 1 &&
-                peek(P, nx, ny) == TileType::Floor) {
-                set_placement(P, nx, ny,
-                    {nx, ny, TileType::Storage, MachineType::Food,
-                     0, 0, 0, 20.0f, false, 0.0f, ConveyorDir::E});
-                return;
             }
         }
     }
+
+    // ================================================================
+    // FoodSource: renewable raw food scattered across the map.
+    // 10-14 sources, regen 0.15/tick. Agents can BUILD a FoodMachine
+    // on top of any FoodSource tile.
+    // ================================================================
+
+    void place_food_sources(std::vector<Placement>& P) {
+        std::uniform_int_distribution<int> n_dist(10, 14);
+        int n_sources = n_dist(rng_);
+        std::uniform_int_distribution<int> x_dist(3, width_ - 4);
+        std::uniform_int_distribution<int> y_dist(3, height_ - 4);
+
+        int placed = 0;
+        int attempts = 0;
+        while (placed < n_sources && attempts < n_sources * 30) {
+            attempts++;
+            int x = x_dist(rng_);
+            int y = y_dist(rng_);
+            if (peek(P, x, y) != TileType::Floor) continue;
+
+            // Min distance 4 from other food sources
+            bool crowded = false;
+            for (int dy2 = -4; dy2 <= 4 && !crowded; dy2++)
+                for (int dx2 = -4; dx2 <= 4 && !crowded; dx2++) {
+                    if (dx2 == 0 && dy2 == 0) continue;
+                    int nx = x + dx2, ny = y + dy2;
+                    if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_
+                        && peek(P, nx, ny) == TileType::FoodSource)
+                        crowded = true;
+                }
+            if (crowded) continue;
+
+            set_placement(P, x, y,
+                {x, y, TileType::FoodSource, MachineType::Food,
+                 12.0f, 15.0f, 0.15f, 0.0f, false, 0.0f, false, ConveyorDir::E});
+            placed++;
+        }
+    }
+
+    // ================================================================
+    // ScrapPile: renewable raw material scattered across the map.
+    // 8-16 piles, regen 0.08/tick each.
+    // ================================================================
 
     void place_scrap_piles(std::vector<Placement>& P) {
-        std::uniform_int_distribution<int> n_dist(8, 16);
+        // More ScrapPiles than FoodSources: agents need scrap to build everything
+        std::uniform_int_distribution<int> n_dist(12, 20);
         int n_piles = n_dist(rng_);
         std::uniform_int_distribution<int> x_dist(2, width_ - 3);
         std::uniform_int_distribution<int> y_dist(2, height_ - 3);
@@ -452,156 +543,20 @@ private:
             int y = y_dist(rng_);
             if (peek(P, x, y) != TileType::Floor) continue;
 
-            bool too_close = false;
-            for (int dy = -3; dy <= 3 && !too_close; dy++)
-                for (int dx = -3; dx <= 3 && !too_close; dx++) {
-                    if (dx == 0 && dy == 0) continue;
-                    if (peek(P, x + dx, y + dy) == TileType::Machine)
-                        too_close = true;
-                }
-            if (too_close) continue;
-
-            set_placement(P, x, y,
-                {x, y, TileType::ScrapPile, MachineType::Food,
-                 10.0f, 10.0f, 0.08f, 0.0f, false, 0.0f, ConveyorDir::E});
-            placed++;
-        }
-    }
-
-    void place_open_spaces(std::vector<Placement>& P) {
-        int mid_x = width_ / 2;
-        int mid_y = height_ / 2;
-        std::uniform_int_distribution<int> rx_dist(3, 5);
-        std::uniform_int_distribution<int> ry_dist(2, 3);
-        int radius_x = rx_dist(rng_);
-        int radius_y = ry_dist(rng_);
-
-        for (int dy = -radius_y; dy <= radius_y; dy++)
-            for (int dx = -radius_x; dx <= radius_x; dx++) {
-                int px = mid_x + dx;
-                int py = mid_y + dy;
-                if (px > 0 && px < width_ - 1 && py > 0 && py < height_ - 1) {
-                    if (peek(P, px, py) == TileType::Floor) {
-                        set_placement(P, px, py, {px, py, TileType::OpenSpace});
-                    }
-                }
-            }
-
-        std::uniform_int_distribution<int> n_extra_dist(1, 3);
-        int n_extra = n_extra_dist(rng_);
-        std::uniform_int_distribution<int> x_dist(5, width_ - 6);
-        std::uniform_int_distribution<int> y_dist(5, height_ - 6);
-        for (int i = 0; i < n_extra; i++) {
-            int cx = x_dist(rng_);
-            int cy = y_dist(rng_);
-            std::uniform_int_distribution<int> r_dist(1, 2);
-            int r = r_dist(rng_);
-            for (int dy = -r; dy <= r; dy++)
-                for (int dx = -r; dx <= r; dx++) {
-                    int px = cx + dx;
-                    int py = cy + dy;
-                    if (px > 0 && px < width_ - 1 && py > 0 && py < height_ - 1) {
-                        if (peek(P, px, py) == TileType::Floor) {
-                            set_placement(P, px, py, {px, py, TileType::OpenSpace});
-                        }
-                    }
-                }
-        }
-    }
-
-    void stamp_conveyors(std::vector<Placement>& P) {
-        int mid_y = height_ / 2;
-        for (int cx = width_ / 2 + 3; cx < width_ - 2; cx++) {
-            if (peek(P, cx, mid_y) == TileType::Floor) {
-                set_placement(P, cx, mid_y,
-                    {cx, mid_y, TileType::Conveyor, MachineType::Food,
-                     0, 0, 0, 0, false, 1.5f, ConveyorDir::E});
-            }
-        }
-
-        std::vector<std::pair<int,int>> machines;
-        std::vector<std::pair<int,int>> storages;
-        for (auto& p : P) {
-            if (p.type == TileType::Machine) machines.push_back({p.x, p.y});
-            if (p.type == TileType::Storage) storages.push_back({p.x, p.y});
-        }
-
-        for (auto [mx, my] : machines) {
-            std::pair<int,int> best_s = {-1, -1};
-            int best_d = 999999;
-            for (auto [sx, sy] : storages) {
-                int d = std::abs(mx - sx) + std::abs(my - sy);
-                if (d < best_d && d >= 2) { best_d = d; best_s = {sx, sy}; }
-            }
-            if (best_s.first < 0) continue;
-
-            int cx = mx, cy = my;
-            int steps = 0;
-            while ((cx != best_s.first || cy != best_s.second) && steps < 40) {
-                if (cx != best_s.first) cx += (best_s.first > cx) ? 1 : -1;
-                else if (cy != best_s.second) cy += (best_s.second > cy) ? 1 : -1;
-                else break;
-
-                if (peek(P, cx, cy) == TileType::Floor) {
-                    ConveyorDir dir;
-                    if (cx != best_s.first) dir = (best_s.first > cx) ? ConveyorDir::E : ConveyorDir::W;
-                    else dir = (best_s.second > cy) ? ConveyorDir::S : ConveyorDir::N;
-                    set_placement(P, cx, cy,
-                        {cx, cy, TileType::Conveyor, MachineType::Food,
-                         0, 0, 0, 0, false, 1.5f, dir});
-                }
-                steps++;
-            }
-        }
-    }
-
-    void place_food_sources(std::vector<Placement>& P) {
-        // Renewable raw food sources across the map.
-        // Food is plentiful but must be processed (raw_food → food via FoodMachine).
-        // 14-20 sources for 24 agents: need ~0.12 raw_food/tick per agent,
-        // each source regenerates at 0.15/tick ≈ sustainable for ~30 agents.
-        std::uniform_int_distribution<int> n_dist(14, 20);
-        int n_sources = n_dist(rng_);
-        std::uniform_int_distribution<int> x_dist(2, width_ - 3);
-        std::uniform_int_distribution<int> y_dist(2, height_ - 3);
-
-        int placed = 0;
-        int attempts = 0;
-        while (placed < n_sources && attempts < n_sources * 30) {
-            attempts++;
-            int x = x_dist(rng_);
-            int y = y_dist(rng_);
-            if (peek(P, x, y) != TileType::Floor) continue;
-
-            // Don't place too close to machines
-            bool too_close = false;
-            for (int dy = -3; dy <= 3 && !too_close; dy++)
-                for (int dx = -3; dx <= 3 && !too_close; dx++) {
-                    if (dx == 0 && dy == 0) continue;
-                    if (peek(P, x + dx, y + dy) == TileType::Machine)
-                        too_close = true;
-                }
-            if (too_close) continue;
-
-            // Don't place too close to other food sources (min 3 manhattan)
+            // Min distance 3 from other scrap piles
             bool crowded = false;
             for (int dy2 = -3; dy2 <= 3 && !crowded; dy2++)
                 for (int dx2 = -3; dx2 <= 3 && !crowded; dx2++) {
                     if (dx2 == 0 && dy2 == 0) continue;
-                    int nx = x + dx2, ny = y + dy2;
-                    if (nx >= 0 && nx < width_ && ny >= 0 && ny < height_
-                        && peek(P, nx, ny) == TileType::FoodSource)
+                    if (peek(P, x + dx2, y + dy2) == TileType::ScrapPile)
                         crowded = true;
                 }
             if (crowded) continue;
 
             set_placement(P, x, y,
-                {x, y, TileType::FoodSource, MachineType::Food,
-                 12.0f, 15.0f, 0.15f, 0.0f, false, 0.0f, ConveyorDir::E});
+                {x, y, TileType::ScrapPile, MachineType::Output,
+                 10.0f, 10.0f, 0.08f, 0.0f, false, 0.0f, false, ConveyorDir::E});
             placed++;
         }
     }
-
-    // REMOVED: all machines must be built from scratch by agents.
-    void bootstrap_machines(std::vector<Placement>&) {}
 };
