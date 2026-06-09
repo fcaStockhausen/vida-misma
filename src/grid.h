@@ -34,9 +34,8 @@ public:
     bool is_walkable(int x, int y) const {
         TileType t = at(x, y);
         if (t == TileType::Wall) return false;
-        // Unbuilt conveyor frames are walkable (construction markers).
-        // Only built conveyors block movement (physical infrastructure).
-        if (t == TileType::Conveyor && data_at(x, y).built) return false;
+        // Conveyors are walkable — agents walk over conveyor belts.
+        // The factory is already hostile; conveyors shouldn't create impassable walls.
         return true;
     }
 
@@ -104,8 +103,16 @@ public:
                 int score = 1;  // base: any built machine
                 if (prefer_food && data_at(x, y).machine_type == MachineType::Food)
                     score = 100;
-                if (prefer_output && data_at(x, y).machine_type == MachineType::Output)
+                if (prefer_output && data_at(x, y).machine_type == MachineType::Output) {
                     score = 80;
+                    // Bonus for OutputMachines near Exit (output pipeline)
+                    auto exits = find_all(TileType::Exit);
+                    for (auto& [ex, ey] : exits) {
+                        int d_exit = std::abs(x - ex) + std::abs(y - ey);
+                        if (d_exit <= 3) score += 50;      // right next to Exit: highest priority
+                        else if (d_exit <= 8) score += 20;  // nearby: good
+                    }
+                }
                 if (prefer_materials && data_at(x, y).machine_type == MachineType::Materials)
                     score = 70;
                 // Soft claim penalty (RimWorld/ONI pattern):
@@ -259,7 +266,9 @@ public:
 
     // Find nearest ScrapPile tile that hasn't been built over with a machine
     std::pair<int,int> find_nearest_free_scrappile(int fx, int fy, int agent_id = -1) const {
-        int best_dist = 999999;
+        // Find all Exit tiles for proximity scoring
+        auto exits = find_all(TileType::Exit);
+        int best_score = 999999;
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
@@ -267,9 +276,18 @@ public:
                     const auto& td = data_at(x, y);
                     // Skip tiles claimed by other agents
                     if (td.claimed_by >= 0 && td.claimed_by != agent_id) continue;
-                    int d = std::abs(x - fx) + std::abs(y - fy);
-                    if (d < best_dist) {
-                        best_dist = d;
+                    int d_agent = std::abs(x - fx) + std::abs(y - fy);
+                    // Score: prioritize ScrapPiles near Exit so OutputMachines
+                    // can feed Exit-adjacent Storage directly (no conveyors needed).
+                    int d_exit = 999999;
+                    if (!exits.empty())
+                        for (auto& [ex, ey] : exits)
+                            d_exit = std::min(d_exit, std::abs(x - ex) + std::abs(y - ey));
+                    // Heavy weight on Exit proximity: d_exit * 2 makes near-Exit piles
+                    // win even when far from the agent.
+                    int score = d_agent / 2 + d_exit * 2;
+                    if (score < best_score) {
+                        best_score = score;
                         best = {x, y};
                     }
                 }

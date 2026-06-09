@@ -4,32 +4,38 @@
 // ============================================================
 // SYSTEM: Conveyor Transport
 // Moves resources along conveyor chains each tick.
-// Process downstream-first to avoid double-moving.
+// Process downstream-first (nearest to Exit first) to avoid double-moving.
 // ============================================================
 
 void Simulation::system_conveyor_transport() {
     float decay = config_.conveyor_decay_rate;
     float throughput = config_.conveyor_throughput;
 
-    // Collect all built conveyor tiles
-    struct ConvTile { int x, y; int dist_to_exit; };
-    std::vector<ConvTile> convs;
+    // Find actual Exit tile positions (not hardcoded estimate)
+    auto exits = grid_.find_all(TileType::Exit);
+    if (exits.empty()) return;
 
-    int exit_x = grid_.width() - 1;
-    int mid_y  = grid_.height() / 2;
+    // Collect all built conveyor tiles
+    struct ConvTile { int x, y; int min_dist_to_exit; };
+    std::vector<ConvTile> convs;
 
     for (int y = 1; y < grid_.height() - 1; y++)
         for (int x = 1; x < grid_.width() - 1; x++) {
             if (grid_.at(x, y) != TileType::Conveyor) continue;
             auto& d = grid_.data_at(x, y);
             if (!d.built) continue;
-            int dist = std::abs(x - exit_x) + std::abs(y - mid_y);
-            convs.push_back({x, y, dist});
+            // Distance to nearest Exit tile
+            int best_dist = 999999;
+            for (auto& [ex, ey] : exits) {
+                int dist = std::abs(x - ex) + std::abs(y - ey);
+                if (dist < best_dist) best_dist = dist;
+            }
+            convs.push_back({x, y, best_dist});
         }
 
     // Process nearest-to-Exit first so items don't double-move
     std::sort(convs.begin(), convs.end(),
-        [](const ConvTile& a, const ConvTile& b) { return a.dist_to_exit < b.dist_to_exit; });
+        [](const ConvTile& a, const ConvTile& b) { return a.min_dist_to_exit < b.min_dist_to_exit; });
 
     for (auto& c : convs) {
         auto& d = grid_.data_at(c.x, c.y);
@@ -45,9 +51,10 @@ void Simulation::system_conveyor_transport() {
         float amount = std::min(d.conveyor_contents, throughput);
 
         if (target == TileType::Storage) {
+            // Deposit into Storage, respecting capacity and content type
             auto& sd = grid_.data_at(tx, ty);
             float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
-                       - sd.stored_output;
+                       - sd.stored_output - sd.stored_construction_material;
             float deposit = std::min(amount, room);
             if (deposit > 0.0f) {
                 if (d.conveyor_contents_type == ResourceType::FOOD)
@@ -63,8 +70,36 @@ void Simulation::system_conveyor_transport() {
                 d.conveyor_contents -= deposit;
             }
         } else if (target == TileType::Exit) {
-            total_food_shipped_ += amount;
-            d.conveyor_contents -= amount;
+            // Conveyor dumps into Exit — deposit into adjacent Storage instead
+            // so the quota system (system_ship_out_food) can pick it up.
+            // If no adjacent Storage, contents stay on belt (backs up).
+            bool deposited = false;
+            constexpr int ddx[] = {1, -1, 0, 0};
+            constexpr int ddy[] = {0, 0, 1, -1};
+            for (int i = 0; i < 4 && amount > 0.001f; i++) {
+                int sx = tx + ddx[i], sy = ty + ddy[i];
+                if (grid_.at(sx, sy) != TileType::Storage) continue;
+                auto& sd = grid_.data_at(sx, sy);
+                float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
+                           - sd.stored_output - sd.stored_construction_material;
+                float dep = std::min(amount, room);
+                if (dep > 0.0f) {
+                    if (d.conveyor_contents_type == ResourceType::OUTPUT)
+                        sd.stored_output += dep;
+                    else if (d.conveyor_contents_type == ResourceType::FOOD)
+                        sd.stored_food += dep;
+                    else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL)
+                        sd.stored_construction_material += dep;
+                    else
+                        sd.stored_raw_material += dep;
+                    amount -= dep;
+                    deposited = true;
+                }
+            }
+            if (deposited) {
+                d.conveyor_contents -= std::min(d.conveyor_contents, throughput);
+            }
+            // If no adjacent Storage, contents stay on belt — will try again next tick
         } else if (target == TileType::Conveyor) {
             auto& nd = grid_.data_at(tx, ty);
             if (!nd.built || nd.conveyor_condition < 0.2f) continue;

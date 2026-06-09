@@ -69,6 +69,7 @@ static int cmd_run(int argc, char* argv[]) {
             for (auto e : av) {
                 auto& a = sim.registry().get<ActionComponent>(e);
                 auto& iv = sim.registry().get<InventoryComponent>(e);
+                auto& p = sim.registry().get<PositionComponent>(e);
                 act_counts[(int)a.current]++;
                 inv_rf += iv.raw_food;
                 inv_rm += iv.raw_material;
@@ -96,10 +97,60 @@ static int cmd_run(int argc, char* argv[]) {
         }
     }
 
-    std::printf("\nDone. alive=%d  built=%d  conv=%d  food=%.1f  quota=%.0f%%\n",
+    float avg_quota = 0.0f;
+    if (ticks > 0) {
+        float total_quota = 0.0f;
+        float qpt = cfg.quota_per_tick;
+        for (int t = 1; t <= ticks; t++)
+            total_quota += qpt * (1.0f + (float)t * cfg.quota_growth_rate);
+        if (total_quota > 0.001f)
+            avg_quota = sim.total_food_shipped() / total_quota;
+    }
+    std::printf("\nDone. alive=%d  built=%d  conv=%d  food=%.1f  quota=%.0f%% (avg=%.0f%%)\n",
         sim.alive_count(), sim.total_machines_built(),
         sim.built_conveyor_count(),
-        sim.total_storage_food(), sim.last_quota_fill() * 100);
+        sim.total_storage_food(), sim.last_quota_fill() * 100, std::min(avg_quota, 1.0f) * 100);
+
+    // Built machines summary
+    {
+        auto& g2 = sim.grid();
+        int nf=0, no=0, nm=0;
+        for (int y = 0; y < g2.height(); y++)
+            for (int x = 0; x < g2.width(); x++)
+                if (g2.at(x,y) == TileType::Machine && g2.data_at(x,y).built) {
+                    auto& d2 = g2.data_at(x,y);
+                    const char* mt2 = d2.machine_type == MachineType::Food ? "FOOD" :
+                                     d2.machine_type == MachineType::Materials ? "MAT" : "OUT";
+                    if (d2.machine_type == MachineType::Food) nf++;
+                    else if (d2.machine_type == MachineType::Output) no++;
+                    else nm++;
+                    std::printf("  M(%s) (%d,%d) out=%.2f food=%.2f raw_mat=%.2f res_amt=%.2f bor=%d\n",
+                        mt2, x, y, d2.stored_output, d2.stored_food, d2.stored_raw_material,
+                        d2.resource_amount, d2.built_on_resource);
+                }
+        std::printf("  Summary: %d Food, %d Output, %d Mat\n", nf, no, nm);
+        std::printf("  Total storage: food=%.1f output=%.1f constr_mat=%.1f\n",
+            sim.total_storage_food(), sim.total_storage_output(), sim.total_storage_constr_mat());
+        // Debug: show all ScrapPiles and their claim status
+        for (int y = 0; y < g2.height(); y++)
+            for (int x = 0; x < g2.width(); x++)
+                if (g2.at(x,y) == TileType::ScrapPile) {
+                    auto& dd = g2.data_at(x,y);
+                    std::printf("  SP(%d,%d) claimed=%d has_machine=%d\n",
+                        x, y, dd.claimed_by, (int)(g2.at(x,y) == TileType::ScrapPile));
+                }
+        // Exit-adjacent Storage
+        for (auto& [ex,ey] : g2.find_all(TileType::Exit))
+            for (int dy = -3; dy <= 3; dy++)
+                for (int dx = -3; dx <= 3; dx++) {
+                    int nx=ex+dx, ny=ey+dy;
+                    if (nx<0||nx>=g2.width()||ny<0||ny>=g2.height()) continue;
+                    if (g2.at(nx,ny) == TileType::Storage)
+                        std::printf("  ExitStorage(%d,%d) out=%.2f food=%.2f raw=%.2f\n",
+                            nx,ny, g2.data_at(nx,ny).stored_output, g2.data_at(nx,ny).stored_food,
+                            g2.data_at(nx,ny).stored_raw_material);
+                }
+    }
     return 0;
 }
 
@@ -157,6 +208,39 @@ static int cmd_story(int argc, char* argv[]) {
     std::printf("\n== EPILOGUE ==\n");
     std::printf("  Factory health: %.0f%%\n", sim.factory_health() * 100);
     std::printf("  Machines built: %d\n", sim.total_machines_built());
+
+    // Show built machines with type and position
+    auto& g = sim.grid();
+    int n_food = 0, n_out = 0, n_mat = 0;
+    for (int y = 0; y < g.height(); y++)
+        for (int x = 0; x < g.width(); x++) {
+            if (g.at(x, y) == TileType::Machine && g.data_at(x, y).built) {
+                auto& d = g.data_at(x, y);
+                const char* mt = d.machine_type == MachineType::Food ? "FOOD" :
+                                 d.machine_type == MachineType::Materials ? "MAT" : "OUT";
+                if (d.machine_type == MachineType::Food) n_food++;
+                else if (d.machine_type == MachineType::Output) n_out++;
+                else n_mat++;
+                std::printf("    Machine(%s) at (%d,%d) stored_out=%.2f stored_food=%.2f\n",
+                    mt, x, y, d.stored_output, d.stored_food);
+            }
+        }
+    std::printf("  Summary: %d Food, %d Output, %d Materials\n", n_food, n_out, n_mat);
+
+    // Show Exit-adjacent Storage contents
+    auto exits = g.find_all(TileType::Exit);
+    for (auto& [ex, ey] : exits) {
+        for (int dy = -3; dy <= 3; dy++)
+            for (int dx = -3; dx <= 3; dx++) {
+                int nx = ex+dx, ny = ey+dy;
+                if (nx < 0 || nx >= g.width() || ny < 0 || ny >= g.height()) continue;
+                if (g.at(nx, ny) == TileType::Storage) {
+                    auto& d = g.data_at(nx, ny);
+                    std::printf("    Exit-r3 Storage(%d,%d): out=%.2f food=%.2f raw=%.2f\n",
+                        nx, ny, d.stored_output, d.stored_food, d.stored_raw_material);
+                }
+            }
+    }
     std::printf("  Food shipped: %.1f\n", sim.total_food_shipped());
     std::printf("  Sabotages: %d  Redemptions: %d  Suicides: %d\n",
         sim.sabotages_total(), sim.redemptions_total(), sim.suicides_total());
@@ -321,6 +405,11 @@ static int cmd_map(int argc, char* argv[]) {
                                   d.conveyor_dir == ConveyorDir::S ? "S" :
                                   d.conveyor_dir == ConveyorDir::E ? "E" : "W";
                 std::printf("  CONVEYOR %-2s  at (%2d,%2d) built=%d\n", dir, x, y, d.built);
+            } else if (t == TileType::ScrapPile) {
+                auto& d = grid.data_at(x, y);
+                std::printf("  SCRAPPILE    at (%2d,%2d) amt=%.1f\n", x, y, d.resource_amount);
+            } else if (t == TileType::FoodSource) {
+                std::printf("  FOODSOURCE   at (%2d,%2d) amt=%.1f\n", x, y, grid.data_at(x, y).resource_amount);
             }
         }
 

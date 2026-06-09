@@ -428,6 +428,12 @@ void Simulation::system_compute_utility() {
                 conv_base += connection_urgency * 1.5f;
                 // Boost when many machines built but few connected
                 if (built_mach >= 4 && unconnected >= 2) conv_base *= 1.8f;
+                // CRITICAL: massive urgency when quota is failing — conveyors are the
+                // only way to move output from distant machines to Exit-adjacent Storage.
+                if (last_quota_fill_ < 0.5f) {
+                    float quota_urgency = (1.0f - last_quota_fill_) * 4.0f;
+                    conv_base += quota_urgency;
+                }
 
                 float conv_sup  = effective_compliance * u_purpose * 1.0f;
                 float conv_community = community_pressure * 1.2f * conv_mat;
@@ -480,6 +486,10 @@ void Simulation::system_compute_utility() {
                 // Urgency scales with purpose (factory wants output)
                 float out_base = effective_compliance * out_mat * build_infra_gap * 2.5f;
                 float out_sup  = effective_compliance * u_purpose * 1.2f;
+                // Extra urgency when quota is failing: output pipeline is critical
+                if (last_quota_fill_ < 0.5f) {
+                    out_base += (1.0f - last_quota_fill_) * 5.0f;
+                }
                 u_build_output = out_base + out_sup;
                 u_build_output *= mood_factor * build_urgency;
             }

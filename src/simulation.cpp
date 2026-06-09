@@ -242,7 +242,8 @@ void Simulation::system_ship_out_food() {
     float quota = current_quota_per_tick_;
     float to_ship = quota;
 
-    // Drain output from any Storage near an Exit (radius 3 first, then all storages).
+    // Phase 1: drain from Exit-adjacent Storage (radius 3).
+    // This is the primary, physically-connected pipeline.
     auto exits = grid_.find_all(TileType::Exit);
     for (int radius = 1; radius <= 3 && to_ship > 0.001f; radius++) {
         for (auto [ex, ey] : exits) {
@@ -252,6 +253,7 @@ void Simulation::system_ship_out_food() {
                     if (dx == 0 && dy == 0) continue;
                     if (std::max(std::abs(dx), std::abs(dy)) != radius) continue;
                     int nx = ex + dx, ny = ey + dy;
+                    if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
                     if (grid_.at(nx, ny) != TileType::Storage) continue;
                     auto& d = grid_.data_at(nx, ny);
                     float take = std::min(to_ship, d.stored_output);
@@ -263,14 +265,31 @@ void Simulation::system_ship_out_food() {
         }
     }
 
-    // Fallback: if Exit-adjacent storages are empty, drain from ANY storage on the map.
+    // Phase 2: fallback — drain from ANY Storage with output.
+    // Less efficient (implies off-screen transport) but keeps quota filled
+    // while conveyor infrastructure is being built up.
     if (to_ship > 0.001f) {
-        auto storages = grid_.find_all(TileType::Storage);
-        for (auto [sx, sy] : storages) {
+        auto all_storage = grid_.find_all(TileType::Storage);
+        for (auto [sx, sy] : all_storage) {
             if (to_ship <= 0.001f) break;
             auto& d = grid_.data_at(sx, sy);
             float take = std::min(to_ship, d.stored_output);
             if (take > 0.0f) {
+                d.stored_output -= take;
+                to_ship -= take;
+            }
+        }
+    }
+
+    // Phase 3: fallback — drain from OutputMachines with stored_output.
+    // Output accumulates in the machine when no Storage/conveyor is nearby.
+    if (to_ship > 0.001f) {
+        auto all_machines = grid_.find_all(TileType::Machine);
+        for (auto [mx, my] : all_machines) {
+            if (to_ship <= 0.001f) break;
+            auto& d = grid_.data_at(mx, my);
+            if (d.stored_output > 0.0f) {
+                float take = std::min(to_ship, d.stored_output);
                 d.stored_output -= take;
                 to_ship -= take;
             }

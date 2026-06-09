@@ -101,21 +101,47 @@ void Simulation::system_find_targets() {
                 // Bonuses (negative = higher priority)
                 // Conveyors get high priority when machines are built but unconnected
                 int built_m = 0;
+                int built_food_m = 0;
                 for (int gy = 0; gy < grid_.height(); gy++)
                     for (int gx = 0; gx < grid_.width(); gx++)
-                        if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built)
+                        if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built) {
                             built_m++;
+                            if (grid_.data_at(gx, gy).machine_type == MachineType::Food)
+                                built_food_m++;
+                        }
                 int conv_bonus = (built_m >= 4) ? -6 : -3;  // conveyors important when infra is up
                 int stor_bonus = -5;
                 int fs_bonus = -8;  // FoodMachine on FoodSource
                 int sp_bonus = -8;  // OutputMachine on ScrapPile
+
+                // Ensure food production before output: FoodMachine must come first
+                if (built_food_m == 0) {
+                    fs_bonus = -15;  // urgently need FoodMachine first
+                } else if (built_food_m < 2) {
+                    fs_bonus = -12;  // still need more food production
+                }
+
                 // Suppress machine building once we have enough
                 if (built_m >= 8) { fs_bonus = -2; sp_bonus = -2; }
+
+                // Bonus for ScrapPiles close to Exit: OutputMachines near Exit
+                // can deposit output directly into Exit-adjacent Storage, making
+                // the quota pipeline work without conveyors.
+                auto exits = grid_.find_all(TileType::Exit);
+                int sp_exit_bonus = 0;
+                if (sp_t.first >= 0 && !exits.empty()) {
+                    int sp_exit_dist = 999999;
+                    for (auto& [ex, ey] : exits)
+                        sp_exit_dist = std::min(sp_exit_dist,
+                            std::abs(sp_t.first - ex) + std::abs(sp_t.second - ey));
+                    if (sp_exit_dist <= 3) sp_exit_bonus = -10;       // adjacent to Exit: top priority
+                    else if (sp_exit_dist <= 8) sp_exit_bonus = -5;   // nearby: significant boost
+                }
 
                 int best_dist = 999999;
                 if (machine_t.first >= 0 && mach_dist < best_dist) best_dist = mach_dist;
                 if (fs_t.first >= 0 && (fs_dist + fs_bonus) < best_dist) best_dist = fs_dist + fs_bonus;
-                if (sp_t.first >= 0 && (sp_dist + sp_bonus) < best_dist) best_dist = sp_dist + sp_bonus;
+                if (sp_t.first >= 0 && (sp_dist + sp_bonus + sp_exit_bonus) < best_dist) best_dist = sp_dist + sp_bonus + sp_exit_bonus;
                 if (stor_t.first >= 0 && (stor_dist + stor_bonus) < best_dist) best_dist = stor_dist + stor_bonus;
                 if (conv_t.first >= 0 && (conv_dist + conv_bonus) < best_dist) best_dist = conv_dist + conv_bonus;
                 if (conv_site.x >= 0 && (csite_dist + conv_bonus) < best_dist) best_dist = csite_dist + conv_bonus;
@@ -125,7 +151,7 @@ void Simulation::system_find_targets() {
                     tx = machine_t.first; ty = machine_t.second;
                 } else if (fs_t.first >= 0 && (fs_dist + fs_bonus) <= best_dist) {
                     tx = fs_t.first; ty = fs_t.second;
-                } else if (sp_t.first >= 0 && (sp_dist + sp_bonus) <= best_dist) {
+                } else if (sp_t.first >= 0 && (sp_dist + sp_bonus + sp_exit_bonus) <= best_dist) {
                     tx = sp_t.first; ty = sp_t.second;
                 } else if (stor_t.first >= 0 && (stor_dist + stor_bonus) <= best_dist) {
                     tx = stor_t.first; ty = stor_t.second;
@@ -174,20 +200,20 @@ void Simulation::system_find_targets() {
 
                 if (inv.raw_food > 0.1f) {
                     prefer_food = true;  // carry raw_food → work FoodMachine
-                } else if (inv.construction_material > 0.1f) {
-                    prefer_output = true; // carry constr_mat → work OutputMachine
                 } else if (inv.raw_material > 0.1f) {
-                    prefer_materials = true;  // carry scrap → work MaterialsMachine
+                    prefer_output = true; // carry raw_material → work OutputMachine (auto-sustaining)
                 } else {
-                    // No inputs in inventory — fall back to production chain priority
-                    prefer_food = total_storage_food() < 15.0f;
-                    if (!prefer_food) {
-                        float constr_mat = total_storage_constr_mat();
-                        if (constr_mat > 0.3f || factory_health_ < 0.5f) {
-                            prefer_output = true;
-                        } else {
-                            prefer_materials = true;
-                        }
+                    // No inputs in inventory — balance food and output
+                    float food_avail = total_storage_food();
+                    if (food_avail < 10.0f) {
+                        prefer_food = true;   // food emergency: keep everyone fed
+                    } else if (food_avail < 20.0f) {
+                        // Mix: some agents do food, some do output
+                        // Use agent id to stagger (50/50 split)
+                        prefer_food = (agent.id % 2 == 0);
+                        prefer_output = !prefer_food;
+                    } else {
+                        prefer_output = true;  // food secure: focus on output for quota
                     }
                 }
                 auto target = grid_.find_nearest_built_machine(
@@ -342,6 +368,14 @@ void Simulation::system_find_targets() {
                 tx = pos.x;
                 ty = pos.y;
                 break;
+        }
+
+        // If target is invalid for the current action, release the agent
+        // so it can do something productive instead of being stuck.
+        if (tx < 0 && ty < 0 &&
+            (action.current == ActionType::WORK || action.current == ActionType::BUILD)) {
+            action.current = ActionType::IDLE;
+            action.sticky_ticks = 0;
         }
 
         action.target_x = tx;

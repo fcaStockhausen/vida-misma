@@ -308,8 +308,8 @@ void Simulation::system_execute_actions() {
 
             case ActionType::WORK: {
                 auto& td = grid_.data_at(pos.x, pos.y);
+                TileType tile = grid_.at(pos.x, pos.y);
                 if (td.built) {
-                    // Collaboration bonus: friends working adjacent boost output
                     auto alive_list = alive_agents();
                     float collab = social_.collaboration_bonus(
                         agent.id, registry_, alive_list, e);
@@ -422,24 +422,25 @@ void Simulation::system_execute_actions() {
                             break;
                         }
                         case MachineType::Output: {
-                            // OutputMachine: raw_material → output product + scrap byproduct (self-sustaining)
-                            // Sources (in order): own tile (auto-gathered from ScrapPile), adjacent storage
-                            // Also directly heals factory health — the factory's existential anchor.
-                            float health_eff = 0.5f + 0.5f * factory_health_;  // 50-100% based on health
+                            // OutputMachine: converts raw_material → output product.
+                            // Self-sustaining on ScrapPile (auto-gather from tile).
+                            // Also pulls raw_material from adjacent Storage if own tile runs dry.
+                            float health_eff = 0.5f + 0.5f * factory_health_;
 
                             float total_consumed = 0.0f;
+                            float want = config_.machine_out_output;
 
-                            // Source 1: machine's own auto-gathered raw_material
+                            // Source 1: machine's own auto-gathered raw_material (ScrapPile)
                             if (td.built_on_resource && td.stored_raw_material > 0.01f) {
-                                float from_self = std::min(config_.machine_out_output, td.stored_raw_material);
+                                float from_self = std::min(want, td.stored_raw_material);
                                 td.stored_raw_material -= from_self;
                                 total_consumed += from_self;
                             }
 
-                            // Source 2: adjacent storage construction_material
-                            float remaining = config_.machine_out_output - total_consumed;
+                            // Source 2: raw_material from adjacent Storage
+                            float remaining = want - total_consumed;
                             if (remaining > 0.01f) {
-                                float pulled = pull_construction_material_from_adjacent_storage(
+                                float pulled = pull_raw_material_from_adjacent_storage(
                                     pos.x, pos.y, remaining);
                                 total_consumed += pulled;
                             }
@@ -452,6 +453,13 @@ void Simulation::system_execute_actions() {
                                 if (out_left > 0.01f) {
                                     out_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
                                         ResourceType::OUTPUT, out_left);
+                                    out_left = output_produced - out_dep;
+                                }
+                                // If nowhere to deposit, store in the machine itself
+                                if (out_left > 0.01f) {
+                                    auto& md = grid_.data_at(pos.x, pos.y);
+                                    md.stored_output += out_left;
+                                    out_dep += out_left;
                                 }
                                 deposited = out_dep;
                                 total_output_produced_ += out_dep;

@@ -482,6 +482,41 @@ private:
                 placed++;
             }
         }
+
+        // Place built Storage tiles adjacent to each machine.
+        // These give machines local deposit targets; conveyors then transport to Exit.
+        place_machine_storage(P);
+    }
+
+    void place_machine_storage(std::vector<Placement>& P) {
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                if (peek(P, x, y) != TileType::Machine) continue;
+                // Check if already has adjacent Storage
+                bool has_storage = false;
+                for (int dy = -1; dy <= 1 && !has_storage; dy++)
+                    for (int dx = -1; dx <= 1 && !has_storage; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        if (peek(P, x + dx, y + dy) == TileType::Storage)
+                            has_storage = true;
+                    }
+                if (has_storage) continue;
+                // Place one Storage in an adjacent Floor tile
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int sx = x + dx, sy = y + dy;
+                        if (sx > 0 && sx < width_ - 1 && sy > 0 && sy < height_ - 1 &&
+                            peek(P, sx, sy) == TileType::Floor) {
+                            set_placement(P, sx, sy,
+                                {sx, sy, TileType::Storage, MachineType::Food,
+                                 0, 0, 0, 20.0f, true, 0.0f, false, ConveyorDir::E});
+                            break;  // one per machine
+                        }
+                    }
+                    break;  // stop after first row of neighbors
+                }
+            }
     }
 
     // ================================================================
@@ -535,7 +570,60 @@ private:
         std::uniform_int_distribution<int> x_dist(2, width_ - 3);
         std::uniform_int_distribution<int> y_dist(2, height_ - 3);
 
+        // First: ensure at least 1 ScrapPile near the Exit (radius 5)
+        // so OutputMachines can produce output near Exit-adjacent Storage.
+        auto exits = std::vector<std::pair<int,int>>();
+        for (int y2 = 0; y2 < height_; y2++)
+            for (int x2 = 0; x2 < width_; x2++)
+                if (peek(P, x2, y2) == TileType::Exit)
+                    exits.push_back({x2, y2});
+
         int placed = 0;
+        if (!exits.empty()) {
+            auto [ex, ey] = exits[0];
+            // Strategy: find Storage tiles near Exit, place ScrapPile adjacent to one of them
+            auto storages = std::vector<std::pair<int,int>>();
+            for (int dy = -3; dy <= 3; dy++)
+                for (int dx = -3; dx <= 3; dx++) {
+                    int nx = ex + dx, ny = ey + dy;
+                    if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                    if (peek(P, nx, ny) == TileType::Storage)
+                        storages.push_back({nx, ny});
+                }
+            // Try to place ScrapPile adjacent to each Storage
+            for (auto [sx, sy] : storages) {
+                if (placed >= 2) break;
+                int dirs[4][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+                for (auto& [ddx, ddy] : dirs) {
+                    int nx = sx + ddx, ny = sy + ddy;
+                    if (nx < 2 || nx >= width_ - 2 || ny < 2 || ny >= height_ - 2) continue;
+                    if (peek(P, nx, ny) != TileType::Floor) continue;
+                    // Place a ScrapPile adjacent to Exit-Storage so agents can
+                    // build OutputMachine here and feed output directly to Exit.
+                    set_placement(P, nx, ny,
+                        {nx, ny, TileType::ScrapPile, MachineType::Output,
+                         10.0f, 10.0f, 0.08f, 0.0f, false, 0.0f, false, ConveyorDir::E});
+                    placed++;
+                    break;
+                }
+            }
+            // Fallback: random near Exit
+            if (placed == 0) {
+                std::uniform_int_distribution<int> off_dist(-5, 5);
+                for (int attempt = 0; attempt < 100 && placed < 2; attempt++) {
+                    int x = ex + off_dist(rng_);
+                    int y = ey + off_dist(rng_);
+                    if (x < 2 || x >= width_ - 2 || y < 2 || y >= height_ - 2) continue;
+                    if (peek(P, x, y) != TileType::Floor) continue;
+                    set_placement(P, x, y,
+                        {x, y, TileType::ScrapPile, MachineType::Output,
+                         10.0f, 10.0f, 0.08f, 0.0f, false, 0.0f, false, ConveyorDir::E});
+                    placed++;
+                }
+            }
+        }
+
+        // Fill the rest randomly
         int attempts = 0;
         while (placed < n_piles && attempts < n_piles * 30) {
             attempts++;
