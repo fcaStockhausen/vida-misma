@@ -788,6 +788,23 @@ void Simulation::system_execute_actions() {
                         if (grid_.at(nx, ny) != TileType::Conveyor) continue;
                         const auto& cd = grid_.data_at(nx, ny);
                         if (!cd.built) continue;
+
+                        // Grace: don't dismantle conveyors adjacent to machines
+                        // or other conveyors — they're part of a chain being built.
+                        bool adj_to_machine_or_conv = false;
+                        constexpr int dd[] = {1, -1, 0, 0};
+                        constexpr int de[] = {0, 0, 1, -1};
+                        for (int i = 0; i < 4 && !adj_to_machine_or_conv; i++) {
+                            int ax = nx + dd[i], ay = ny + de[i];
+                            if (ax < 0 || ax >= grid_.width() || ay < 0 || ay >= grid_.height()) continue;
+                            TileType at2 = grid_.at(ax, ay);
+                            if (at2 == TileType::Machine && grid_.data_at(ax, ay).built)
+                                adj_to_machine_or_conv = true;
+                            if (at2 == TileType::Conveyor && grid_.data_at(ax, ay).built)
+                                adj_to_machine_or_conv = true;
+                        }
+                        if (adj_to_machine_or_conv) continue;  // skip — chain in progress
+
                         float score = 0.0f;
                         if (grid_.is_conveyor_blocking_path(nx, ny))
                             score += 2.0f;  // strong reason: blocks passage

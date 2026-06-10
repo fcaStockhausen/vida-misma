@@ -109,7 +109,7 @@ void Simulation::system_find_targets() {
                             if (grid_.data_at(gx, gy).machine_type == MachineType::Food)
                                 built_food_m++;
                         }
-                int conv_bonus = (built_m >= 4) ? -6 : -3;  // conveyors important when infra is up
+                int conv_bonus = (built_m >= 4) ? -12 : -6;  // conveyors important when infra is up
                 int stor_bonus = -5;
                 int fs_bonus = -8;  // FoodMachine on FoodSource
                 int sp_bonus = -8;  // OutputMachine on ScrapPile
