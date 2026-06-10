@@ -13,39 +13,41 @@ self-actualization.
 
 ## Status
 
-Full factory cycle operational. Agents build all machines from scratch, operate the
-supply chain (gather raw_food/raw_material, build machines, work machines for
-processed food/materials/output), and sustain a colony of 20+ agents past 500
-ticks across multiple seeds (best seed: 24/24 alive at 500).
+Full factory cycle operational. 7/7 seeds reach quota=100% over 500 ticks with avg 23.7/24 agents alive. Pipeline: OutputMachine → Storage → Exit (3-phase drain).
 
-### Benchmark (4 seeds, 500 ticks)
+### Benchmark (7 seeds, 500 ticks)
 
 ```
-Seed  Alive  Built  Food    Notes
-42      20     10    65.8    Stable GATH/WORK mix through tick 500
-137     20     10    62.9    24 alive until tick ~400
-271     17      9    58.2    Rebounded from 2 alive (pre-fix)
-999     24      8    33.7    ALL AGENTS SURVIVE
-AVG    20.25    --     --    +107% vs original
+Seed  Alive  Built  Conv  Quota  Avg_Quota  Notes
+42      24     18     0    100%     91%     Stable, food secure
+7       24     23    10    100%     76%     Heavy infrastructure
+123     22     24     5    100%     98%     Best avg quota
+256     24     13     0    100%     96%     Was built=0 before fix
+999     24     26     9    100%     92%     Most machines built
+1337    24     17     0    100%     91%     Stable
+2024    24     14     0    100%     96%     High food reserves
+AVG    23.7    --     --   100%     91%     7/7 seeds pass
 ```
 
 ## Production Chain
 
 ```
-FoodSource tiles --GATHER-> raw_food in inventory
-ScrapPile tiles  --GATHER-> raw_material in inventory
-raw_material     --BUILD--> Machine (FoodMachine / MaterialsMachine / OutputMachine)
-raw_food         --WORK---> processed food (via FoodMachine)
-raw_material     --WORK---> construction_material (via MaterialsMachine)
-construction_mat --WORK---> factory output (via OutputMachine) -> heals factory
-processed food   --EAT----> hunger reduced
-Storage tiles    --EAT----> agents pull food from adjacent storage
+ScrapPile tiles   --GATHER-> raw_material in inventory
+FoodSource tiles  --GATHER-> raw_food in inventory  
+raw_material      --BUILD--> Machine on ScrapPile (OutputMachine) or FoodSource (FoodMachine)
+raw_food          --WORK---> processed food (via FoodMachine, 60/40 worker/storage split)
+raw_material      --WORK---> output product (via OutputMachine on ScrapPile, auto-gather)
+output product    --STORAGE-> Storage tiles (deposit in radius 3)
+output product    --EXIT----> shipped via Exit tiles → meets quota
+processed food    --EAT----> hunger reduced
 ```
 
-Three machine types form a supply chain:
-- **FoodMachine**: converts raw_food into processed food (60% to worker, 40% to storage)
-- **MaterialsMachine**: converts raw_material into construction_material (60/40 split)
-- **OutputMachine**: converts construction_material into factory output; heals factory health
+Two active machine types form the supply chain:
+
+- **FoodMachine**: placed on FoodSource tiles. Converts raw_food into processed food (60% to worker, 40% to storage).
+- **OutputMachine**: placed on ScrapPile tiles. Auto-gathers raw_material from the ScrapPile, converts it to output product. Self-sustaining -- no separate materials step needed.
+
+(Note: MaterialsMachine exists in code but is superseded by OutputMachine's auto-gather on ScrapPile.)
 
 Agents start with nothing. Wild food sources keep them alive at subsistence level.
 To thrive (satisfy higher needs like expression and purpose), they must build
@@ -69,10 +71,9 @@ balancing. Hardcoded fallbacks in `src/config.h` for quick iteration.
 ## Build & Run
 
 ```bash
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(sysctl -n hw.ncpu)   # macOS
-# cmake --build . -j$(nproc)             # Linux
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(sysctl -n hw.ncpu)   # macOS
+# cmake --build build -j$(nproc)             # Linux
 ```
 
 Two binaries:
@@ -180,8 +181,10 @@ doc/
   and obstacles are now navigable
 - **WFC map generation** -- procedural factory layouts with guaranteed machine
   placement, storage adjacency, and conveyor routes
-- **No bootstrap machines** -- all machines must be built from scratch by agents.
-  No pre-built structures.
+- **No pre-built machines** -- all machines built dynamically by agents on resource
+  tiles (FoodSource/ScrapPile). NEVER pre-built in WFC.
+- **Build cost 0.15** -- machines complete in 1-2 ticks. Previously 0.5 (5+ ticks)
+  caused agents to abandon half-built machines.
 - **All parameters external** -- TOML config for all decay rates, satisfaction
   amounts, personality ranges, grid size, population
 
@@ -202,11 +205,18 @@ doc/
 10. Conveyor belts connecting machines to storage/exit
 
 ### Phase 3 -- AI tuning (IN PROGRESS)
-11. Urgency curves (ONI-style S-curves for survival needs)
-12. Action stickiness (The Sims pattern)
-13. Task claiming (RimWorld/DF pattern)
-14. Supply-chain foraging (ONI "haul to workshop" pattern)
-15. 1000-tick sustainability (current: stable at 500, collapses by 1000)
+11. Urgency curves (ONI-style S-curves for survival needs) -- DONE
+12. Action stickiness (The Sims pattern) -- DONE
+13. Task claiming (RimWorld/DF pattern) -- DONE
+14. Supply-chain foraging (ONI "haul to workshop" pattern) -- DONE
+15. 1000-tick sustainability -- 500-tick stable (7/7 quota). 1000-tick still needs
+    testing. Conveyors barely functional (conv=0 in most seeds).
+
+Key fixes enabling 7/7 pass rate:
+- Agents released from sticky loops when target becomes invalid
+- Build cost reduced to 0.15 (was 0.5) -- machines complete in 1-2 ticks instead of 5+
+- 3-phase drain system: OutputMachine → Storage → Exit
+- ScrapPile placement near Exit in WFC generator
 
 ### Phase 4 -- Emergent social behavior
 16. Affinity matrix between agent pairs (stress contagion, cooperation, grief cascades)
