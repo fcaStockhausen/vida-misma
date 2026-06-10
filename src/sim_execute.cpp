@@ -89,13 +89,13 @@ void Simulation::system_execute_actions() {
                 if (here == TileType::FoodSource) {
                     auto& td = grid_.data_at(pos.x, pos.y);
                     if (inv.raw_material > 0.05f) {
-                        float needed = 0.5f;
+                        float needed = 0.15f;
                         float use = std::min({effective_build_rate, needed, inv.raw_material});
                         inv.raw_material -= use;
                         grid_.set(pos.x, pos.y, TileType::Machine);
                         td.machine_type = MachineType::Food;
                         td.build_progress += use;
-                        td.build_cost = 0.5f;
+                        td.build_cost = 0.15f;
                         td.built_on_resource = true;
                         if (td.build_progress >= td.build_cost) {
                             td.built = true;
@@ -117,13 +117,13 @@ void Simulation::system_execute_actions() {
                 if (here == TileType::ScrapPile) {
                     auto& td = grid_.data_at(pos.x, pos.y);
                     if (inv.raw_material > 0.05f) {
-                        float needed = 0.5f;
+                        float needed = 0.15f;
                         float use = std::min({effective_build_rate, needed, inv.raw_material});
                         inv.raw_material -= use;
                         grid_.set(pos.x, pos.y, TileType::Machine);
                         td.machine_type = MachineType::Output;
                         td.build_progress += use;
-                        td.build_cost = 0.5f;
+                        td.build_cost = 0.15f;
                         td.built_on_resource = true;
                         if (td.build_progress >= td.build_cost) {
                             td.built = true;
