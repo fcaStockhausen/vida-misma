@@ -13,20 +13,22 @@ self-actualization.
 
 ## Status
 
-Full factory cycle operational. 7/7 seeds reach quota=100% over 500 ticks with avg 23.7/24 agents alive. Pipeline: OutputMachine → Storage → Exit (3-phase drain).
+Full factory cycle operational with conveyor transport. 7/7 seeds reach quota=100%
+over 500 ticks with avg 23.0/24 agents alive. Conveyors now functional (17-65 per
+seed) via BFS chain planning from machines to Storage/Exit.
 
 ### Benchmark (7 seeds, 500 ticks)
 
 ```
 Seed  Alive  Built  Conv  Quota  Avg_Quota  Notes
-42      24     18     0    100%     91%     Stable, food secure
-7       24     23    10    100%     76%     Heavy infrastructure
-123     22     24     5    100%     98%     Best avg quota
-256     24     13     0    100%     96%     Was built=0 before fix
-999     24     26     9    100%     92%     Most machines built
-1337    24     17     0    100%     91%     Stable
-2024    24     14     0    100%     96%     High food reserves
-AVG    23.7    --     --   100%     91%     7/7 seeds pass
+42      24     16    53    100%     94%     Conveyor-heavy, food secure
+7       24     27    50    100%     80%     Heavy infrastructure
+123     21     33    65    100%     91%     Most conveyors
+256     22     16    40    100%     92%     Was built=0 before fix
+999     22     27    47    100%     89%     Balanced build
+1337    24     25    65    100%     85%     Was quota=0% before conv fix
+2024    24     14    17    100%     93%     Lightest infrastructure
+AVG    23.0    --     --   100%     89%     7/7 seeds pass
 ```
 
 ## Production Chain
@@ -37,7 +39,8 @@ FoodSource tiles  --GATHER-> raw_food in inventory
 raw_material      --BUILD--> Machine on ScrapPile (OutputMachine) or FoodSource (FoodMachine)
 raw_food          --WORK---> processed food (via FoodMachine, 60/40 worker/storage split)
 raw_material      --WORK---> output product (via OutputMachine on ScrapPile, auto-gather)
-output product    --STORAGE-> Storage tiles (deposit in radius 3)
+output product    --CONVEYOR-> conveyor chains carry output to Storage/Exit
+output product    --STORAGE-> Storage tiles (deposit in radius 3, or conveyor-fed)
 output product    --EXIT----> shipped via Exit tiles → meets quota
 processed food    --EAT----> hunger reduced
 ```
@@ -52,6 +55,24 @@ Two active machine types form the supply chain:
 Agents start with nothing. Wild food sources keep them alive at subsistence level.
 To thrive (satisfy higher needs like expression and purpose), they must build
 machines and produce processed food -- freeing ticks for non-survival actions.
+
+## Conveyor System
+
+Conveyors transport output from machines to Storage/Exit tiles automatically each
+tick. The system uses BFS chain planning:
+
+1. **Chain Planning**: When an agent triggers conveyor construction, a BFS from
+   the nearest machine (lacking conveyor output) to the nearest Storage/Exit
+   traces the optimal path. All conveyor frames along the route are placed at once
+   as unbuilt tiles.
+2. **Collaborative Build**: Agents then complete unbuilt frames. Build cost is 0.15
+   (1-2 ticks per tile). Multiple agents can contribute.
+3. **Transport**: Built conveyors move contents downstream (nearest-to-Exit first)
+   each tick. Contents deposit into Storage or adjacent-to-Exit Storage.
+4. **Maintenance**: Conveyors degrade over time. Agents with high compliance
+   prioritize repair when condition drops. Grace period prevents premature
+   dismantling of chains adjacent to machines or other conveyors.
+5. **Caps**: Maximum 20 unbuilt / 50 total conveyors to prevent over-infrastructuring.
 
 ## Architecture
 
@@ -126,7 +147,7 @@ Design patterns imported from game AI research:
 ## Needs Model
 
 | Need       | Decay (/tick) | Death if maxed for | Satisfaction                    |
-|------------|:---:|:---:|---|
+|------------|:---:|:---:|---:|
 | Hunger     | 0.005 | ~200 ticks (starvation) | Eat (raw or processed food) |
 | Rest       | 0.006 | ~167 ticks (exhaustion) | Rest action                 |
 | Social     | 0.003 | no death | Socialize (requires adjacent agent) |
@@ -148,7 +169,7 @@ src/
   sim_targets.cpp  # Per-action target selection + task claiming
   sim_movement.cpp # A* pathfinding + cached movement
   sim_execute.cpp  # Action execution + adjacent-storage helpers
-  sim_conveyor.cpp # Conveyor belt system
+  sim_conveyor.cpp # Conveyor belt system (BFS chain planning, transport, degradation)
   pathfinding.h    # A* implementation with path cache
   wfc_generator.h  # Wave Function Collapse map generator
   social.h         # Opinion dynamics, trust, affinity
@@ -185,6 +206,10 @@ doc/
   tiles (FoodSource/ScrapPile). NEVER pre-built in WFC.
 - **Build cost 0.15** -- machines complete in 1-2 ticks. Previously 0.5 (5+ ticks)
   caused agents to abandon half-built machines.
+- **BFS conveyor chains** -- full route planned at once from machine to Storage/Exit,
+  preventing the dead-end dismantle cycle that kept conveyors at 0.
+- **3-phase drain** -- OutputMachine stored_output → Exit-adjacent Storage (radius 3)
+  → any Storage → any Machine. Ensures quota pipeline works even without conveyors.
 - **All parameters external** -- TOML config for all decay rates, satisfaction
   amounts, personality ranges, grid size, population
 
@@ -204,17 +229,18 @@ doc/
 9. GET_FOOD action + food cap ("vianda" to-go)
 10. Conveyor belts connecting machines to storage/exit
 
-### Phase 3 -- AI tuning (IN PROGRESS)
-11. Urgency curves (ONI-style S-curves for survival needs) -- DONE
-12. Action stickiness (The Sims pattern) -- DONE
-13. Task claiming (RimWorld/DF pattern) -- DONE
-14. Supply-chain foraging (ONI "haul to workshop" pattern) -- DONE
-15. 1000-tick sustainability -- 500-tick stable (7/7 quota). 1000-tick still needs
-    testing. Conveyors barely functional (conv=0 in most seeds).
+### Phase 3 -- AI tuning (DONE)
+11. Urgency curves (ONI-style S-curves for survival needs)
+12. Action stickiness (The Sims pattern)
+13. Task claiming (RimWorld/DF pattern)
+14. Supply-chain foraging (ONI "haul to workshop" pattern)
+15. 500-tick stability -- 7/7 quota=100%, conveyors functional (17-65/seed)
 
-Key fixes enabling 7/7 pass rate:
+Key fixes enabling stable 7/7 pass rate:
 - Agents released from sticky loops when target becomes invalid
-- Build cost reduced to 0.15 (was 0.5) -- machines complete in 1-2 ticks instead of 5+
+- Build cost reduced to 0.15 (was 0.5) -- machines complete in 1-2 ticks
+- BFS conveyor chain planning -- full route placed at once, ending dead-end cycle
+- Conveyor grace period -- no dismantle of chains adjacent to machines/other conveyors
 - 3-phase drain system: OutputMachine → Storage → Exit
 - ScrapPile placement near Exit in WFC generator
 
