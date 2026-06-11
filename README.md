@@ -244,16 +244,55 @@ Key fixes enabling stable 7/7 pass rate:
 - 3-phase drain system: OutputMachine → Storage → Exit
 - ScrapPile placement near Exit in WFC generator
 
-### Phase 4 -- Emergent social behavior
-16. Affinity matrix between agent pairs (stress contagion, cooperation, grief cascades)
-17. Skills that improve with use (factory_work, artistic, gathering)
-18. Generational replacement -- new agents arrive at Entrance when population drops
+### Phase 4 -- Robustness & sustainability (IN PROGRESS)
 
-### Phase 5 -- Long-term engagement
-19. Random external events (storms, supplier dropouts, sabotage)
-20. Aging + inherited personality traits
-21. Narrative event log surface
-22. Director interface -- quota setting, machine placement overlay, agent inspector
+Known issues at 500 ticks:
+- Stress-induced suicides (seed 42: 3 suicides by tick 500) -- stress curve may be too aggressive
+- Seed 123 alive=21/24 -- survival variance across seeds needs investigation
+- Conveyor transport not verified -- belts are built but actual item throughput is unmeasured
+- MaterialsMachine unused in practice -- OutputMachine bypasses the raw→construction→output chain
+- 3-phase drain carries the pipeline; conveyors are decorative infrastructure, not load-bearing
+
+16. **1000-tick stability test** -- run 10+ seeds at 1000 ticks, identify collapse patterns
+17. **Stress/suicide tuning** -- adjust stress accumulation curves to reduce irrational deaths
+    while keeping tension. Current stress threshold (0.92) may be too low for long runs.
+18. **Conveyor transport verification** -- add metrics for actual conveyor throughput
+    (items moved per tick). Verify belts carry goods, not just exist.
+19. **MaterialsMachine role** -- decide: activate as intermediate step in the chain
+    (raw_material → construction_material → output) or remove entirely.
+    Currently OutputMachine auto-gathers and converts directly, making MaterialsMachine dead code.
+20. **Multi-seed extended benchmark** -- 10+ seeds at 1000 ticks, track alive/quota/conveyor
+    throughput per seed. Establish baseline for regression testing.
+
+### Phase 5 -- Emergent social behavior
+21. Affinity matrix between agent pairs (stress contagion, cooperation, grief cascades)
+    -- social.h has opinion dynamics infrastructure; integrate with utility scoring
+22. Skills that improve with use (factory_work, artistic, gathering) -- agents become
+    faster at repeated tasks, creating personality-driven specialization
+23. Generational replacement -- new agents arrive at Entrance when population drops.
+    Younger agents inherit partial personality from predecessors + random mutation.
+24. Social spaces and rituals -- EatingZones become gathering points that boost social
+    need satisfaction. Agents develop location preferences and routines.
+
+### Phase 6 -- Long-term engagement
+25. Random external events (storms, supplier dropouts, machine damage) -- factory
+    faces external shocks that require collective response
+26. Aging and mortality curves -- agents slow down over time, retire, or die of old age.
+    Creates urgency for generational knowledge transfer.
+27. Narrative event log surface -- chronicle.h already logs events; surface as a
+    readable timeline the player/director can browse
+28. Director interface -- quota setting, machine placement overlay, agent inspector.
+    The player becomes the factory management the agents fight against.
+
+### Open design questions
+- **Conveyor dependency**: Should conveyors be required (remove drain fallback) or
+  remain optional? Current design: drain handles the real work, conveyors are bonus.
+- **MaterialsMachine**: Does the 3-step chain add interesting decisions, or just
+  complexity without depth?
+- **Stress balance**: How much agent death is "correct"? Zero deaths = no tension.
+  Full colony wipe = broken. Target: 0-3 deaths per 1000-tick run across seeds.
+- **Agent count**: 24 agents on 60x40 grid -- is this dense enough for social
+  mechanics to matter? Or should population scale with factory size?
 
 ## Academic Document
 
