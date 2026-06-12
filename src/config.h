@@ -8,7 +8,7 @@ struct Config {
     int grid_height = 40;
 
     // Simulation
-    int   initial_population = 24;
+    int   initial_population = 36;  // C: 24→36 for higher density (1 per 67 tiles vs 100)
     int   max_population     = 200;
     int   seed               = 0;
     bool  use_wfc            = true;  // wave function collapse map generation
@@ -26,7 +26,7 @@ struct Config {
     float eat_food_per_tick     = 1.0f;    // one portion consumed per eat action
     float portion_size          = 1.0f;    // one "vianda" = this much food units
     float rest_recovery         = 0.015f;
-    float social_satisfaction   = 0.012f;
+    float social_satisfaction   = 0.05f;  // was 0.012 — higher to compensate social_decay=0.003
     float create_satisfaction   = 0.012f;
     float explore_satisfaction  = 0.008f;
     float work_purpose_gain     = 0.004f;

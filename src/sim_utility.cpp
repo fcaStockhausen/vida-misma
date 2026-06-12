@@ -537,6 +537,14 @@ void Simulation::system_compute_utility() {
 
             // WORK pull: scales with built_ratio (more built = more to operate)
             float work_pull = effective_compliance * built_ratio * 2.0f;
+            // A: Maslow dampener — when higher needs are starving, WORK loses appeal.
+            // Gradual reduction so agents occasionally socialize/create instead of grinding.
+            // Only dampens when factory is functional (built_ratio > 0.3).
+            float higher_need_deficit = needs.social + needs.expression + needs.purpose;
+            if (higher_need_deficit > 1.5f && built_ratio > 0.3f) {
+                float dampen = 1.0f - (higher_need_deficit - 1.5f) * 0.25f;
+                work_pull *= std::max(0.3f, dampen);
+            }
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
             // ONI pattern: "mealtime panic" — when food stores drop, ALL
@@ -600,32 +608,48 @@ void Simulation::system_compute_utility() {
         float u_socialize = effective_gregariousness * u_social;
         u_socialize *= (0.5f + 0.5f * nearby_trust);  // high trust = more rewarding
         u_socialize += soc.influence * 0.1f;           // influential agents socialize more
+        // A: Maslow boost — when basic needs are satisfied, socializing becomes attractive
+        if (needs.hunger < 0.3f && needs.rest < 0.3f) {
+            u_socialize *= 2.5f;
+        } else if (needs.hunger < 0.5f && needs.rest < 0.5f) {
+            u_socialize *= 1.5f;
+        }
 
         // CREATE: only viable if there's an OpenSpace tile to reach
         bool open_space_available = grid_.find_nearest(TileType::OpenSpace,
             pos.x, pos.y).first >= 0;
         float u_create = 0.0f;
         if (open_space_available) {
-            u_create = personality.artistry * u_expression;
+            u_create = personality.artistry * u_expression * 1.5f;  // A: base multiplier
             // B4: CREATE is more attractive when meaning is unfulfilled
             if (needs.meaning > 0.4f) {
-                u_create += personality.artistry * needs.meaning * 0.3f;
+                u_create += personality.artistry * needs.meaning * 0.5f;
             }
             // S2: DISSOCIATED agents are drawn to CREATE (retreat into art)
             if (stress.state == StressState::DISSOCIATED) {
                 u_create *= 1.3f;
             }
+            // A: Maslow boost — creativity flourishes when fed and rested
+            if (needs.hunger < 0.3f && needs.rest < 0.3f) {
+                u_create *= 2.0f;
+            } else if (needs.hunger < 0.5f && needs.rest < 0.5f) {
+                u_create *= 1.3f;
+            }
         }
 
         // EXPLORE
-        float u_explore = personality.curiosity * u_purpose * 0.5f;
+        float u_explore = personality.curiosity * u_purpose * 1.0f;  // A: doubled from 0.5
         // B4: Agents with unfulfilled meaning are drawn to explore
         if (needs.meaning > 0.4f) {
-            u_explore += personality.curiosity * needs.meaning * 0.3f;
+            u_explore += personality.curiosity * needs.meaning * 0.5f;
         }
         // S2: DISSOCIATED agents seek escape through exploration
         if (stress.state == StressState::DISSOCIATED) {
             u_explore *= 1.3f;
+        }
+        // A: Maslow boost — explore when basic needs are met
+        if (needs.hunger < 0.3f && needs.rest < 0.3f) {
+            u_explore *= 2.0f;
         }
 
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
@@ -824,17 +848,20 @@ void Simulation::system_compute_utility() {
         // WORK requires walking to machines, then sustained execution.
         // BUILD doesn't need stickiness (it has build_progress for sustained execution).
         // GATHER doesn't need it (agents gather where they stand).
+        // SOCIALIZE gets light stickiness to prevent chase-cancel loops.
         if (action.current == ActionType::WORK) {
             if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
                 action.sticky_action = action.current;
-                // Estimate distance to target machine for commitment duration.
-                // Walk time + 15 ticks of actual work.
-                // If no target yet, default to 30.
                 int dist = 30;
                 if (action.target_x >= 0 && action.target_y >= 0) {
                     dist = std::abs(pos.x - action.target_x) + std::abs(pos.y - action.target_y);
                 }
                 action.sticky_ticks = dist + 15;
+            }
+        } else if (action.current == ActionType::SOCIALIZE) {
+            if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
+                action.sticky_action = action.current;
+                action.sticky_ticks = 10;  // persist for 10 ticks to close distance
             }
         } else {
             // Clear stickiness when switching away from WORK

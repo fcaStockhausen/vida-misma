@@ -451,10 +451,16 @@ void Simulation::system_update_stress() {
         float effective_resilience = personality.resilience * (1.0f - stress.trauma * config_.trauma_resilience_impact);
         stress_input *= (1.0f - effective_resilience * 0.7f);
 
-        // NO natural decay — stress only reduced by expression (CREATE, EXPLORE, high-trust SOCIALIZE)
-        // (handled in sim_execute.cpp)
+        // Stress decay: proportional to basic need satisfaction.
+        // B: When hunger and rest are low (needs met), stress decays faster.
+        // This rewards balanced lifestyles — agents who eat and rest recover from stress.
+        // When basic needs are unmet, decay is minimal (stress persists).
+        float basic_satisfaction = (1.0f - needs.hunger) * (1.0f - needs.rest);
+        float decay = config_.stress_decay * (1.0f + basic_satisfaction * 8.0f);
+        // Additional decay when actively socializing/creating (positive outlets)
+        // These are handled in sim_execute.cpp — this is just passive background decay.
         stress.value = std::min(1.0f, stress.value + stress_input);
-        stress.value = std::max(0.0f, stress.value - config_.stress_decay);
+        stress.value = std::max(0.0f, stress.value - decay);
 
         // === TRAUMA ACCUMULATION ===
         // Chronic stress (above 0.5) permanently damages the agent

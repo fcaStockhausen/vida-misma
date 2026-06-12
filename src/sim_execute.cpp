@@ -620,7 +620,7 @@ void Simulation::system_execute_actions() {
                     if (other == e) continue;
                     auto& opos = registry_.get<PositionComponent>(other);
                     int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                    if (d <= 2) {
+                    if (d <= 6) {  // C: radius 6 for socialization — with 36 agents on 60x40, avg distance ~8
                         has_neighbor = true;
                         neighbor = other;
                         neighbor_id = registry_.get<AgentComponent>(other).id;
