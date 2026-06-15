@@ -658,10 +658,14 @@ public:
 
         // 4. Place all unbuilt conveyor frames along the path
         //    Skip tiles that are already Conveyor (unbuilt frames)
+        //    Respect cap: stop placing if we exceed limits
         Grid* self = const_cast<Grid*>(this);
         for (int i = 0; i < (int)path.size(); i++) {
+            // Re-check cap during placement
+            if (total_conv >= 50) break;
             auto [tx, ty] = path[i];
             if (at(tx, ty) == TileType::Conveyor) continue;  // already a frame
+            total_conv++;  // track increment
 
             // Determine direction: toward next tile, or toward goal
             ConveyorDir dir = ConveyorDir::E;

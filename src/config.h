@@ -8,7 +8,7 @@ struct Config {
     int grid_height = 40;
 
     // Simulation
-    int   initial_population = 36;  // C: 24→36 for higher density (1 per 67 tiles vs 100)
+    int   initial_population = 24;
     int   max_population     = 200;
     int   seed               = 0;
     bool  use_wfc            = true;  // wave function collapse map generation
@@ -49,7 +49,7 @@ struct Config {
     // Stress
     float stress_high_need      = 0.008f;
     float stress_decay          = 0.001f;  // Minimal natural decay — mostly needs expression
-    float breakdown_threshold   = 0.92f;
+    float breakdown_threshold   = 0.95f;
 
     // Stress trauma system
     float trauma_accumulation_rate = 0.001f;  // per tick while stress > 0.5

@@ -24,7 +24,7 @@ width = 60
 height = 40
 
 [simulation]
-initial_population = 36
+initial_population = 24
 max_population = 200
 seed = 0
 use_wfc = true

@@ -192,7 +192,7 @@ public:
         entt::registry& registry,
         int dead_agent_id,
         const std::vector<entt::entity>& alive,
-        float base_grief = 0.15f,
+        float base_grief = 0.05f,
         float fam_threshold = 0.1f)
     {
         for (auto e : alive) {

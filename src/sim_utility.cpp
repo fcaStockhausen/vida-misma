@@ -314,7 +314,7 @@ void Simulation::system_compute_utility() {
         bool unbuilt_conveyor  = grid_.find_nearest_conveyor_to_build(pos.x, pos.y).first >= 0;
 
         // Factory health crisis amplifies BUILD urgency: infrastructure = survival.
-        float build_urgency = 1.0f + (1.0f - factory_health_) * 4.0f; // 1x at full, 5x at zero
+        float build_urgency = 1.0f + (1.0f - factory_health_) * 2.0f; // 1x at full, 3x at zero (was 5x)
 
         // Material availability boost: having material should STRONGLY push toward BUILD
         float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
@@ -537,13 +537,11 @@ void Simulation::system_compute_utility() {
 
             // WORK pull: scales with built_ratio (more built = more to operate)
             float work_pull = effective_compliance * built_ratio * 2.0f;
-            // A: Maslow dampener — when higher needs are starving, WORK loses appeal.
-            // Gradual reduction so agents occasionally socialize/create instead of grinding.
-            // Only dampens when factory is functional (built_ratio > 0.3).
+            // A: Maslow dampener — mild WORK reduction when higher needs are critical
+            // AND agent is well-fed/rested. Max 20% reduction.
             float higher_need_deficit = needs.social + needs.expression + needs.purpose;
-            if (higher_need_deficit > 1.5f && built_ratio > 0.3f) {
-                float dampen = 1.0f - (higher_need_deficit - 1.5f) * 0.25f;
-                work_pull *= std::max(0.3f, dampen);
+            if (higher_need_deficit > 2.4f && needs.hunger < 0.4f && needs.rest < 0.4f) {
+                work_pull *= 0.8f;
             }
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
@@ -783,6 +781,17 @@ void Simulation::system_compute_utility() {
         u_socialize  *= bonabeau(u_socialize,  th_socialize);
         u_create     *= bonabeau(u_create,     th_create);
         u_explore    *= bonabeau(u_explore,    th_explore);
+
+        // HARD SURVIVAL OVERRIDE: when critical, zero out non-survival actions.
+        // This prevents agents from building themselves to death.
+        if (needs.hunger > 0.85f) {
+            u_build = 0.0f; u_work = 0.0f; u_socialize = 0.0f;
+            u_create = 0.0f; u_explore = 0.0f; u_maintain = 0.0f;
+            u_dismantle = 0.0f; u_sabotage = 0.0f; u_get_food = 0.0f;
+        }
+        if (needs.rest > 0.9f) {
+            u_build *= 0.1f; u_work *= 0.1f; u_gather *= 0.1f;
+        }
 
         // Pick best action
         // === BOLTZMANN ACTION SELECTION ===

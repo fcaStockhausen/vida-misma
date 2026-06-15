@@ -428,12 +428,15 @@ void Simulation::system_update_stress() {
         }
 
         // === STRESS INPUT ===
+        // Only survival needs (hunger, rest) cause significant stress.
+        // Upper needs (social, expression, purpose) cause mild stress —
+        // they affect mood and behavior but should NOT kill the agent.
         float stress_input = 0.0f;
         if (needs.hunger > 0.7f)     stress_input += config_.stress_high_need * (needs.hunger - 0.7f);
         if (needs.rest > 0.7f)       stress_input += config_.stress_high_need * (needs.rest - 0.7f);
-        if (needs.social > 0.7f)     stress_input += config_.stress_high_need * (needs.social - 0.7f) * 0.5f;
-        if (needs.expression > 0.7f) stress_input += config_.stress_high_need * (needs.expression - 0.7f) * personality.artistry;
-        if (needs.purpose > 0.7f)    stress_input += config_.stress_high_need * (needs.purpose - 0.7f) * 0.5f;
+        if (needs.social > 0.85f)    stress_input += config_.stress_high_need * (needs.social - 0.85f) * 0.15f;
+        if (needs.expression > 0.85f) stress_input += config_.stress_high_need * (needs.expression - 0.85f) * personality.artistry * 0.15f;
+        if (needs.purpose > 0.85f)   stress_input += config_.stress_high_need * (needs.purpose - 0.85f) * 0.15f;
 
         // B4: Meaning crisis — being productive but unfulfilled is tragic
         if (needs.meaning > 0.7f && personality.compliance > 0.7f) {
@@ -550,10 +553,10 @@ void Simulation::system_check_deaths() {
 
         // Breakdown: stress kills, but not instantly.
         // BROKEN agents survive longer — they have time to sabotage or redeem.
-        // Normal agents at breakdown threshold die quickly.
+        // Normal agents at breakdown threshold die slowly.
         if (stress.value >= config_.breakdown_threshold) {
-            float death_chance = 0.02f; // 2% per tick
-            if (stress.state == StressState::BROKEN) death_chance = 0.005f; // BROKEN agents linger
+            float death_chance = 0.005f; // 0.5% per tick (was 2% — too lethal)
+            if (stress.state == StressState::BROKEN) death_chance = 0.003f; // BROKEN agents linger
             if (stress.state == StressState::REDEEMED) death_chance = 0.0f;  // Redeemed are immune
             std::uniform_real_distribution<float> roll(0.0f, 1.0f);
             if (roll(rng_) < death_chance) {
@@ -565,17 +568,11 @@ void Simulation::system_check_deaths() {
         }
 
         // Factory collapse: when factory_health == 0, the crumbling factory
-        // kills agents progressively. Lower resilience = faster death.
-        // This creates a ticking clock: fix the factory or everyone dies.
+        // increases stress on all agents but does NOT kill them directly.
+        // The factory is the environment, not the executioner.
+        // Agents die from hunger, stress breakdown, or exhaustion — not the building.
         if (factory_health_ <= 0.0f) {
-            float collapse_prob = 0.01f * (1.0f - personality.resilience * 0.8f);
-            std::uniform_real_distribution<float> roll(0.0f, 1.0f);
-            if (roll(rng_) < collapse_prob) {
-                agent.alive = false;
-                agent.cause_of_death = "collapse";
-                emit_log(agent.id, "DIED in factory collapse");
-                newly_dead.push_back(agent.id);
-            }
+            stress.value = std::min(1.0f, stress.value + 0.002f);  // environmental dread
         }
     }
 
