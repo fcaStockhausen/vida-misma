@@ -276,27 +276,15 @@ void Simulation::system_ship_out_food() {
         }
     }
 
-    // Phase 2: fallback — drain from ANY Storage with output.
-    // Less efficient (implies off-screen transport) but keeps quota filled
-    // while conveyor infrastructure is being built up.
-    if (to_ship > 0.001f) {
-        auto all_storage = grid_.find_all(TileType::Storage);
-        for (auto [sx, sy] : all_storage) {
-            if (to_ship <= 0.001f) break;
-            auto& d = grid_.data_at(sx, sy);
-            float take = std::min(to_ship, d.stored_output);
-            if (take > 0.0f) {
-                d.stored_output -= take;
-                to_ship -= take;
-            }
-        }
-    }
+    // Phase 2 (REMOVED): previously drained from ANY Storage on the map.
+    // This was magical transport — output teleported from distant Storage to Exit
+    // without conveyors or hauling. Now the ONLY paths to Exit are:
+    //   1. Conveyor chains physically carrying output from Machine → Exit-adjacent Storage
+    //   2. Agents hauling output to Exit-adjacent Storage
+    // Phase 1 (Exit-adjacent Storage) is the sole drain point.
 
     // Phase 3 (REMOVED): previously drained stored_output directly from machines.
-    // This bypassed the conveyor/storage logistics entirely, making conveyors
-    // decorative. Output must reach Storage/Exit via physical transport.
-    // Machines that can't deposit to Storage accumulate output indefinitely —
-    // this is intentional pressure to build conveyors and storage near machines.
+    // Same problem — bypassed conveyor/storage logistics entirely.
 
     float shipped = quota - to_ship;
     total_food_shipped_ += shipped;
