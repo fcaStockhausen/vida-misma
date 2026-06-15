@@ -24,6 +24,10 @@ struct Config {
     float eat_satisfaction      = 1.0f;    // one portion fully resets hunger
     float eat_raw_efficiency    = 0.6f;    // raw_food gives 60% of eat_satisfaction
     float eat_food_per_tick     = 1.0f;    // one portion consumed per eat action
+    float raw_food_disease_chance = 0.08f; // 8% chance per raw meal
+    float disease_severity      = 0.15f;   // disease increase per contraction
+    float disease_recovery      = 0.002f;  // disease decay per tick (immune system)
+    float disease_hunger_mult   = 2.0f;    // hunger decay multiplier at disease=1.0
     float portion_size          = 1.0f;    // one "vianda" = this much food units
     float rest_recovery         = 0.015f;
     float social_satisfaction   = 0.05f;  // was 0.012 — higher to compensate social_decay=0.003

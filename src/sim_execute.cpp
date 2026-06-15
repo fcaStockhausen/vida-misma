@@ -38,13 +38,19 @@ void Simulation::system_execute_actions() {
             case ActionType::GATHER: {
                 auto& td = grid_.data_at(pos.x, pos.y);
                 float available = td.resource_amount;
+                // Skills: domestic level speeds up gathering
+                auto& skills = registry_.get<SkillsComponent>(e);
+                float gather_mult = SkillsComponent::level_bonus(
+                    SkillsComponent::xp_to_level(skills.xp_domestic));
                 if (available > 0.01f) {
-                    float amount = std::min(config_.gather_rate, available);
+                    float amount = std::min(config_.gather_rate * gather_mult, available);
                     if (here == TileType::FoodSource) {
                         if (inv.can_carry(amount)) {
                             inv.raw_food += amount;
                             td.resource_amount -= amount;
                             total_raw_gathered_ += amount;
+                            skills.xp_domestic += 1.0f;
+                            skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
                             emit_log(agent.id, "gathered " + ff2(amount) + " raw food at (" +
                                      std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                         }
@@ -53,6 +59,8 @@ void Simulation::system_execute_actions() {
                             inv.raw_material += amount;
                             td.resource_amount -= amount;
                             total_raw_gathered_ += amount;
+                            skills.xp_domestic += 1.0f;
+                            skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
                             emit_log(agent.id, "salvaged " + ff2(amount) + " scrap at (" +
                                      std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                         }
@@ -378,6 +386,16 @@ void Simulation::system_execute_actions() {
                     float collab = social_.collaboration_bonus(
                         agent.id, registry_, alive_list, e);
 
+                    // Skills: factory_work level gives production bonus
+                    auto& skills = registry_.get<SkillsComponent>(e);
+                    float work_mult = SkillsComponent::level_bonus(
+                        SkillsComponent::xp_to_level(skills.xp_factory));
+                    collab *= work_mult;
+
+                    // XP gain: every WORK tick adds factory XP
+                    skills.xp_factory += 1.0f;
+                    skills.factory_work = SkillsComponent::xp_to_level(skills.xp_factory);
+
                     float deposited = 0.0f;
                     std::string log_detail;
 
@@ -594,6 +612,8 @@ void Simulation::system_execute_actions() {
                     inv.food -= config_.eat_food_per_tick;
                     satisfaction_mul = 1.0f;
                     ate = true;
+                    // Processed food helps fight disease (better nutrition)
+                    needs.disease = std::max(0.0f, needs.disease - config_.disease_recovery * 5.0f);
                 } else if (inv.food > 0.01f) {
                     // Partial portion: eat what's available, proportional satisfaction
                     satisfaction_mul = inv.food / config_.eat_food_per_tick;
@@ -601,9 +621,17 @@ void Simulation::system_execute_actions() {
                     ate = true;
                 } else if (inv.raw_food >= config_.eat_food_per_tick) {
                     // Eat raw food from inventory (reduced efficiency, disease risk)
+                    // P(disease) per raw meal. Processed food from machines is disease-free.
                     inv.raw_food -= config_.eat_food_per_tick;
                     satisfaction_mul = config_.eat_raw_efficiency;
                     ate = true;
+                    // Disease mechanic: raw food has per-unit disease probability
+                    // P(disease) = 1 - (1 - p_d)^q, simplified for single-tick consumption
+                    std::uniform_real_distribution<float> roll(0.0f, 1.0f);
+                    if (roll(rng_) < config_.raw_food_disease_chance) {
+                        needs.disease = std::min(1.0f, needs.disease + config_.disease_severity);
+                        emit_log(agent.id, "got SICK from raw food (disease=" + ff2(needs.disease) + ")");
+                    }
                 } else {
                     float taken_mul = take_from_adjacent_storage(pos.x, pos.y);
                     if (taken_mul > 0.0f) {

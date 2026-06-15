@@ -233,6 +233,7 @@ void Simulation::spawn_initial_agents() {
         InventoryComponent inv;
         inv.food = config_.initial_food_per_agent;  // bootstrap until the factory runs
         registry_.emplace<InventoryComponent>(entity, inv);
+        registry_.emplace<SkillsComponent>(entity);
 
         chronicle_.log(tick_, EventType::SPAWNED, i,
             std::string("born as ") + archetype_name(at),
@@ -291,20 +292,11 @@ void Simulation::system_ship_out_food() {
         }
     }
 
-    // Phase 3: fallback — drain from OutputMachines with stored_output.
-    // Output accumulates in the machine when no Storage/conveyor is nearby.
-    if (to_ship > 0.001f) {
-        auto all_machines = grid_.find_all(TileType::Machine);
-        for (auto [mx, my] : all_machines) {
-            if (to_ship <= 0.001f) break;
-            auto& d = grid_.data_at(mx, my);
-            if (d.stored_output > 0.0f) {
-                float take = std::min(to_ship, d.stored_output);
-                d.stored_output -= take;
-                to_ship -= take;
-            }
-        }
-    }
+    // Phase 3 (REMOVED): previously drained stored_output directly from machines.
+    // This bypassed the conveyor/storage logistics entirely, making conveyors
+    // decorative. Output must reach Storage/Exit via physical transport.
+    // Machines that can't deposit to Storage accumulate output indefinitely —
+    // this is intentional pressure to build conveyors and storage near machines.
 
     float shipped = quota - to_ship;
     total_food_shipped_ += shipped;
@@ -406,13 +398,17 @@ void Simulation::system_decay_needs() {
         auto& needs = registry_.get<NeedsComponent>(e);
         if (!registry_.get<AgentComponent>(e).alive) continue;
 
-        needs.hunger     = std::min(1.0f, needs.hunger    + config_.hunger_decay);
+        // Disease amplifies hunger decay — sick agents get hungry faster
+        float hunger_decay = config_.hunger_decay * (1.0f + needs.disease * (config_.disease_hunger_mult - 1.0f));
+        needs.hunger     = std::min(1.0f, needs.hunger    + hunger_decay);
         needs.rest       = std::min(1.0f, needs.rest      + config_.rest_decay);
         needs.social     = std::min(1.0f, needs.social    + config_.social_decay);
         needs.expression = std::min(1.0f, needs.expression + config_.expression_decay);
         needs.purpose    = std::min(1.0f, needs.purpose   + config_.purpose_decay);
         // B4: Meaning decays every tick — factory work doesn't fill it
         needs.meaning    = std::min(1.0f, needs.meaning   + 0.001f);
+        // Disease natural recovery (immune system)
+        needs.disease    = std::max(0.0f, needs.disease   - config_.disease_recovery);
     }
 }
 
@@ -447,6 +443,8 @@ void Simulation::system_update_stress() {
         if (needs.social > 0.85f)    stress_input += config_.stress_high_need * (needs.social - 0.85f) * 0.15f;
         if (needs.expression > 0.85f) stress_input += config_.stress_high_need * (needs.expression - 0.85f) * personality.artistry * 0.15f;
         if (needs.purpose > 0.85f)   stress_input += config_.stress_high_need * (needs.purpose - 0.85f) * 0.15f;
+        // Disease causes stress — being sick in the factory is miserable
+        if (needs.disease > 0.3f)    stress_input += config_.stress_high_need * needs.disease * 0.5f;
 
         // B4: Meaning crisis — being productive but unfulfilled is tragic
         if (needs.meaning > 0.7f && personality.compliance > 0.7f) {

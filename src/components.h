@@ -98,6 +98,7 @@ struct NeedsComponent {
     float purpose    = 0.0f;
     float meaning    = 0.0f;   // [0, 1], 1 = unfulfilled. Factory work doesn't satisfy.
                                // Only CREATE (artifacts), factions, hidden spaces fill this.
+    float disease    = 0.0f;   // [0, 1], 0 = healthy. Raw food risk. Increases hunger decay + stress.
 };
 
 // Cultural artifact: produced by CREATE, boosts nearby agent mood
@@ -294,10 +295,20 @@ struct InventoryComponent {
 };
 
 struct SkillsComponent {
+    // Skill levels [0, 5] — improve with practice
     float factory_work = 0.0f;
     float domestic     = 0.0f;
     float artistic     = 0.0f;
     float social_skill = 0.0f;
+
+    // XP accumulation — level = xp / 10, capped at 5
+    float xp_factory = 0.0f;
+    float xp_domestic = 0.0f;
+    float xp_art     = 0.0f;
+    float xp_social  = 0.0f;
+
+    static float xp_to_level(float xp) { return std::min(5.0f, xp / 10.0f); }
+    static float level_bonus(float level) { return 1.0f + level * 0.15f; }  // +15% per level
 };
 
 // --- Per-tile production data ---
