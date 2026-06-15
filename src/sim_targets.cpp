@@ -112,7 +112,15 @@ void Simulation::system_find_targets() {
                 int conv_bonus = (built_m >= 4) ? -12 : -6;  // conveyors important when infra is up
                 int stor_bonus = -5;
                 int fs_bonus = -8;  // FoodMachine on FoodSource
-                int sp_bonus = -8;  // OutputMachine on ScrapPile
+                int sp_bonus = -8;  // MaterialsMachine on ScrapPile (tier 1)
+
+                // When carrying construction_material, prioritize OutputMachine construction sites
+                // (Floor tiles near existing infrastructure)
+                int output_build_bonus = 0;
+                if (inv.construction_material > 0.05f) {
+                    int n_out = count_built_machines(MachineType::Output);
+                    if (n_out < 3) output_build_bonus = -15;  // urgently need Output capacity
+                }
 
                 // Ensure food production before output: FoodMachine must come first
                 if (built_food_m == 0) {
@@ -190,30 +198,42 @@ void Simulation::system_find_targets() {
             }
 
             case ActionType::WORK: {
-                // Prefer machines matching what the agent has in inventory
+                // Production chain routing:
                 // Agent with raw_food → FoodMachine
-                // Agent with raw_material → MaterialsMachine
-                // Otherwise use production chain priority
+                // Agent with raw_material → MaterialsMachine (tier 1: raw → construction_material)
+                // Agent with construction_material → OutputMachine (tier 2: construction_material → output)
+                // Otherwise use production chain priority based on factory needs
                 bool prefer_food = false;
                 bool prefer_output = false;
                 bool prefer_materials = false;
 
                 if (inv.raw_food > 0.1f) {
                     prefer_food = true;  // carry raw_food → work FoodMachine
+                } else if (inv.construction_material > 0.1f) {
+                    prefer_output = true; // carry construction_material → work OutputMachine
                 } else if (inv.raw_material > 0.1f) {
-                    prefer_output = true; // carry raw_material → work OutputMachine (auto-sustaining)
+                    prefer_materials = true; // carry raw_material → work MaterialsMachine
                 } else {
-                    // No inputs in inventory — balance food and output
+                    // No inputs in inventory — balance food, materials, and output
                     float food_avail = total_storage_food();
                     if (food_avail < 10.0f) {
                         prefer_food = true;   // food emergency: keep everyone fed
-                    } else if (food_avail < 20.0f) {
-                        // Mix: some agents do food, some do output
-                        // Use agent id to stagger (50/50 split)
-                        prefer_food = (agent.id % 2 == 0);
-                        prefer_output = !prefer_food;
                     } else {
-                        prefer_output = true;  // food secure: focus on output for quota
+                        // Check if construction_material is available for Output machines
+                        // If yes, prioritize Output. If not, prioritize Materials.
+                        int n_out = count_built_machines(MachineType::Output);
+                        int n_mat = count_built_machines(MachineType::Materials);
+                        if (n_out > 0 && n_mat > 0) {
+                            // Both exist — balance: 40% food, 30% materials, 30% output
+                            int roll = agent.id % 10;
+                            if (roll < 4) prefer_food = true;
+                            else if (roll < 7) prefer_materials = true;
+                            else prefer_output = true;
+                        } else if (n_mat == 0) {
+                            prefer_materials = true; // need Materials first
+                        } else {
+                            prefer_output = true; // have Materials, focus on Output
+                        }
                     }
                 }
                 auto target = grid_.find_nearest_built_machine(

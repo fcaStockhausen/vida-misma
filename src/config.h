@@ -35,9 +35,9 @@ struct Config {
     float gather_rate       = 0.08f;   // resources gathered per tick
     float build_rate        = 0.12f;   // build progress per tick
     float machine_output    = 0.04f;   // food produced per work tick (raw_food → food)
-    float machine_mat_output = 0.025f; // construction material produced per work tick
-    float machine_out_output = 0.02f;  // output product produced per work tick
-    float machine_input     = 0.015f;  // raw input consumed per work tick
+    float machine_mat_output = 0.08f; // construction material produced per work tick
+    float machine_out_output = 0.06f;  // output product produced per work tick
+    float machine_input     = 0.04f;  // raw input consumed per work tick
 
     // Urgency
     float urgency_alpha = 2.0f;

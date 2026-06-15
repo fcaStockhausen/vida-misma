@@ -52,9 +52,9 @@ work_purpose_gain    = 0.004
 gather_rate    = 0.25
 build_rate     = 0.12
 machine_output = 0.40
-machine_mat_output = 0.15
-machine_out_output = 0.05
-machine_input  = 0.05
+machine_mat_output = 0.20
+machine_out_output = 0.15
+machine_input  = 0.10
 
 [urgency]
 alpha = 2.0

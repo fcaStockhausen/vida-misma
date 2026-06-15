@@ -86,6 +86,16 @@ int Simulation::built_machine_count() const {
     return count;
 }
 
+int Simulation::count_built_machines(MachineType type) const {
+    int count = 0;
+    auto machines = grid_.find_all(TileType::Machine);
+    for (auto [x,y] : machines) {
+        const auto& d = grid_.data_at(x, y);
+        if (d.built && d.machine_type == type) count++;
+    }
+    return count;
+}
+
 int Simulation::built_conveyor_count() const {
     int count = 0;
     auto conveyors = grid_.find_all(TileType::Conveyor);

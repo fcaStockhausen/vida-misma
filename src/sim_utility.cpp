@@ -87,10 +87,14 @@ void Simulation::system_compute_utility() {
         // Critical needs (EAT when starving) CAN override stickiness.
         // ================================================================
         if (action.sticky_ticks > 0 && action.current == action.sticky_action) {
-            // Only critical survival needs can break commitment:
+            // Only critical needs can break commitment:
             // hunger > 0.8 is "starving" — override anything
             bool survival_override = (needs.hunger > 0.8f && action.sticky_action != ActionType::EAT);
-            if (!survival_override) {
+            // Chain routing: if carrying construction_material, break WORK stickiness
+            // to deliver it to an OutputMachine (tier 2 of production chain).
+            bool chain_delivery = (action.sticky_action == ActionType::WORK &&
+                                   inv.construction_material > 0.1f);
+            if (!survival_override && !chain_delivery) {
                 action.sticky_ticks--;
                 // Store last utilities for debugging but keep current action
                 action.last_utility_gather = 0.0f;
@@ -476,18 +480,19 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_food);
         }
 
-        // OutputMachine on ScrapPile: build an OutputMachine on top of a ScrapPile.
-        // High priority — self-sustaining output production (scrap → output + scrap byproduct).
+        // OutputMachine on Floor: build when agent has construction_material.
+        // This is tier 2 — converts construction_material → output (quota).
+        // High priority when quota is failing or no Output machines exist.
         {
             float u_build_output = 0.0f;
-            auto sp = grid_.find_nearest_free_scrappile(pos.x, pos.y);
-            if (sp.first >= 0 && inv.raw_material > 0.05f) {
-                float out_mat = std::min(1.0f, inv.raw_material / 2.0f);
-                // Urgency scales with purpose (factory wants output)
+            int n_out = count_built_machines(MachineType::Output);
+            if (inv.construction_material > 0.05f && n_out < 3) {
+                float out_mat = std::min(1.0f, inv.construction_material / 1.0f);
                 float out_base = effective_compliance * out_mat * build_infra_gap * 2.5f;
                 float out_sup  = effective_compliance * u_purpose * 1.2f;
-                // Extra urgency when quota is failing: output pipeline is critical
-                if (last_quota_fill_ < 0.5f) {
+                // Extra urgency when quota is failing or no Output machines
+                if (n_out == 0) out_base += 5.0f;  // critical: no output capacity
+                else if (last_quota_fill_ < 0.5f) {
                     out_base += (1.0f - last_quota_fill_) * 5.0f;
                 }
                 u_build_output = out_base + out_sup;
