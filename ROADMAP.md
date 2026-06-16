@@ -153,10 +153,13 @@ doc/
 - [ ] Machine break threshold interactions with health need tuning
 - [ ] Conveyors break too quickly (condition decays fast, no maintain culture)
 
-### Pathfinding
-- [ ] A* exists in `pathfinding.h` but is NOT used by the movement system
-- [ ] Agents currently use random_walk + target-seeking (greedy, gets stuck)
-- [ ] Integration needed: `sim_movement.cpp` should call A* for route planning
+### ~~Pathfinding~~ ✓ (Phase 3)
+A* pathfinding is fully integrated:
+- [x] `sim_movement.cpp` calls `cached_next_step()` → `astar_find_path()` for route planning
+- [x] Per-agent `PathCache` avoids recomputation — invalidates on target change or every 20 ticks
+- [x] 4-directional A* with Manhattan heuristic, max 2400 node expansions
+- [x] All non-Wall tiles are walkable (machines, conveyors, storage included)
+- [x] Divergence recovery: if agent leaves cached path, reconnects or recomputes
 
 ---
 
@@ -178,15 +181,9 @@ Estimated: ~500-800 LOC new, modifications to `simulation.cpp` tick loop
 Implemented via bounded confidence (Hegselmann-Krause) + DeGroot weighting.
 See Completed Features → Opinion Dynamics.
 
-### Priority 3: Pathfinding Integration (Phase 3 of original roadmap)
-The A* code exists. It needs to be wired into the movement system:
-
-- [ ] `sim_targets.cpp` computes target -> feeds to pathfinding
-- [ ] `sim_movement.cpp` follows A* path instead of greedy walk
-- [ ] Path cache with invalidation on grid changes (conveyor build/dismantle)
-- [ ] Tile cost variation (agents avoid recently-dismantled areas?)
-
-Estimated: ~200-300 LOC modifications to `sim_movement.cpp` + `sim_targets.cpp`
+### Priority 3: ~~Pathfinding Integration~~ ✓ (Phase 3)
+A* with per-agent path caching is fully wired into `sim_movement.cpp`.
+See Completed Features → Pathfinding.
 
 ### Priority 4: Generational Turnover
 Currently agents die but no new agents are born:
