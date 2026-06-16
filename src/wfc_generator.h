@@ -501,7 +501,7 @@ private:
 
             set_placement(P, x, y,
                 {x, y, TileType::ScrapPile, MachineType::Output,
-                 10.0f, 10.0f, 0.08f, 0.0f, false, 0.0f, false, ConveyorDir::E});
+                 10.0f, 10.0f, 0.15f, 0.0f, false, 0.0f, false, ConveyorDir::E});
             placed++;
         }
     }

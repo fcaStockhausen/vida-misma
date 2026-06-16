@@ -524,7 +524,10 @@ void Simulation::system_compute_utility() {
             //      This prevents the "empty inventory = WORK=0 forever" death spiral.
             float raw_total = inv.raw_food + inv.raw_material + inv.construction_material;
             float input_readiness = 0.0f;
-            if (inv.construction_material > 0.05f) {
+            if (inv.output > 0.05f) {
+                // Hauling output: high urgency to reach Exit-adjacent Storage
+                input_readiness = 5.0f + inv.output * 5.0f;
+            } else if (inv.construction_material > 0.05f) {
                 // Refined product from MaterialsMachine: even small amounts are valuable
                 input_readiness = 1.0f + inv.construction_material * 5.0f;
             } else if (raw_total > 0.5f) {
@@ -535,9 +538,13 @@ void Simulation::system_compute_utility() {
                 // BASE READINESS: agent doesn't need inputs in inventory.
                 // Machines pull from adjacent storage. This is the RimWorld/ONI pattern:
                 // colonists walk to workstations that have ingredients stocked nearby.
-                // Low base (0.3) so agents WITH inputs still prioritize, but
-                // empty-handed agents still consider WORK as an option.
+                // Higher base when Output machines exist and quota is failing —
+                // the factory needs workers even if they arrive empty-handed.
                 input_readiness = 0.3f;
+                int n_out = count_built_machines(MachineType::Output);
+                if (n_out > 0 && last_quota_fill_ < 0.5f) {
+                    input_readiness = 0.6f;  // quota failing: go work even without inputs
+                }
             }
 
             // WORK pull: scales with built_ratio (more built = more to operate)

@@ -199,41 +199,63 @@ void Simulation::system_find_targets() {
 
             case ActionType::WORK: {
                 // Production chain routing:
+                // Agent with output → Exit-adjacent Storage (haul for quota)
                 // Agent with raw_food → FoodMachine
-                // Agent with raw_material → MaterialsMachine (tier 1: raw → construction_material)
-                // Agent with construction_material → OutputMachine (tier 2: construction_material → output)
-                // Otherwise use production chain priority based on factory needs
+                // Agent with construction_material → OutputMachine (tier 2)
+                // Agent with raw_material → MaterialsMachine (tier 1)
                 bool prefer_food = false;
                 bool prefer_output = false;
                 bool prefer_materials = false;
 
+                if (inv.output > 0.1f) {
+                    // Hauling output: go to nearest Exit-adjacent Storage to deposit.
+                    auto exits = grid_.find_all(TileType::Exit);
+                    int best_dist = 999999;
+                    for (auto& [ex, ey] : exits) {
+                        for (int rdy = -3; rdy <= 3; rdy++)
+                            for (int rdx = -3; rdx <= 3; rdx++) {
+                                int rsx = ex + rdx, rsy = ey + rdy;
+                                if (rsx < 0 || rsx >= grid_.width() || rsy < 0 || rsy >= grid_.height()) continue;
+                                if (grid_.at(rsx, rsy) != TileType::Storage) continue;
+                                int rdist = std::abs(rsx - pos.x) + std::abs(rsy - pos.y);
+                                if (rdist < best_dist) { best_dist = rdist; tx = rsx; ty = rsy; }
+                            }
+                    }
+                    break;  // skip machine-finding — target is Exit-adjacent Storage
+                }
+
                 if (inv.raw_food > 0.1f) {
-                    prefer_food = true;  // carry raw_food → work FoodMachine
+                    prefer_food = true;
                 } else if (inv.construction_material > 0.1f) {
-                    prefer_output = true; // carry construction_material → work OutputMachine
+                    prefer_output = true;
                 } else if (inv.raw_material > 0.1f) {
-                    prefer_materials = true; // carry raw_material → work MaterialsMachine
+                    prefer_materials = true;
                 } else {
-                    // No inputs in inventory — balance food, materials, and output
+                    // Empty-handed: check factory needs
                     float food_avail = total_storage_food();
+                    int n_out = count_built_machines(MachineType::Output);
+                    int n_mat = count_built_machines(MachineType::Materials);
+
                     if (food_avail < 10.0f) {
-                        prefer_food = true;   // food emergency: keep everyone fed
-                    } else {
-                        // Check if construction_material is available for Output machines
-                        // If yes, prioritize Output. If not, prioritize Materials.
-                        int n_out = count_built_machines(MachineType::Output);
-                        int n_mat = count_built_machines(MachineType::Materials);
-                        if (n_out > 0 && n_mat > 0) {
-                            // Both exist — balance: 40% food, 30% materials, 30% output
-                            int roll = agent.id % 10;
-                            if (roll < 4) prefer_food = true;
+                        prefer_food = true;
+                    } else if (n_out > 0) {
+                        // Output machines exist. Route based on construction_material supply:
+                        // when scarce, prioritize Materials; when abundant, prioritize Output.
+                        float cm_avail = total_storage_constr_mat();
+                        int roll = agent.id % 10;
+                        if (cm_avail > 0.5f) {
+                            if (roll < 4) prefer_output = true;
                             else if (roll < 7) prefer_materials = true;
-                            else prefer_output = true;
-                        } else if (n_mat == 0) {
-                            prefer_materials = true; // need Materials first
+                            else prefer_food = true;
                         } else {
-                            prefer_output = true; // have Materials, focus on Output
+                            if (roll < 6) prefer_materials = true;
+                            else if (roll < 9) prefer_output = true;
+                            else prefer_food = true;
                         }
+                    } else if (n_mat == 0) {
+                        prefer_materials = true;
+                    } else {
+                        prefer_materials = true;
                     }
                 }
                 auto target = grid_.find_nearest_built_machine(

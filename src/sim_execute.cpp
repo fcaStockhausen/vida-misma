@@ -21,6 +21,30 @@ void Simulation::system_execute_actions() {
         auto& stress = registry_.get<StressComponent>(e);
         auto& personality = registry_.get<PersonalityComponent>(e);
 
+        // Passive output deposit: if carrying output and near Exit-adjacent Storage, drop it off.
+        // This is the agent hauling mechanism — agents carry output from OutputMachine to Exit.
+        if (inv.output > 0.01f) {
+            auto exits = grid_.find_all(TileType::Exit);
+            for (int pdy = -3; pdy <= 3 && inv.output > 0.01f; pdy++)
+                for (int pdx = -3; pdx <= 3 && inv.output > 0.01f; pdx++) {
+                    int psx = pos.x + pdx, psy = pos.y + pdy;
+                    if (psx < 0 || psx >= grid_.width() || psy < 0 || psy >= grid_.height()) continue;
+                    if (grid_.at(psx, psy) != TileType::Storage) continue;
+                    bool near_exit = false;
+                    for (auto& [ex, ey] : exits)
+                        if (std::abs(psx - ex) + std::abs(psy - ey) <= 3) { near_exit = true; break; }
+                    if (!near_exit) continue;
+                    auto& sd = grid_.data_at(psx, psy);
+                    float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food
+                               - sd.stored_raw_material - sd.stored_output - sd.stored_construction_material;
+                    float dep = std::min(inv.output, room);
+                    if (dep > 0.0f) {
+                        sd.stored_output += dep;
+                        inv.output -= dep;
+                    }
+                }
+        }
+
         // Only execute if at target (or action doesn't need movement)
         if (!action.at_target) continue;
 
@@ -460,10 +484,10 @@ void Simulation::system_execute_actions() {
                             float raw_needed = config_.machine_input;
                             float total_consumed = 0.0f;
 
-                            // Source 1: auto-gather from own ScrapPile
-                            if (td.built_on_resource && td.resource_amount > 0.01f) {
-                                float from_self = std::min(raw_needed, td.resource_amount);
-                                td.resource_amount -= from_self;
+                            // Source 1: machine's own auto-gathered raw_material (from ScrapPile underneath)
+                            if (td.built_on_resource && td.stored_raw_material > 0.01f) {
+                                float from_self = std::min(raw_needed, td.stored_raw_material);
+                                td.stored_raw_material -= from_self;
                                 total_consumed += from_self;
                             }
 
@@ -489,11 +513,26 @@ void Simulation::system_execute_actions() {
                             }
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
-                            // All construction_material goes to agent inventory.
-                            // The agent is the hauler — carries it to OutputMachine.
-                            // This is the "preference-dominant routing" pattern from RimWorld:
-                            // agent carrying material walks to the machine that needs it.
-                            inv.construction_material += mat_produced;
+                            // Split output: 60% to Storage (OutputMachine pulls from here),
+                            // 40% to agent inventory (agent can build new machines or carry to Output).
+                            // This ensures construction_material reaches Storage even when the
+                            // agent doesn't go to OutputMachine next.
+                            float keep_ratio = 0.4f;
+                            float to_inventory = mat_produced * keep_ratio;
+                            float to_store = mat_produced - to_inventory;
+                            inv.construction_material += to_inventory;
+                            float mat_dep = deposit_to_adjacent_storage(pos.x, pos.y,
+                                ResourceType::CONSTRUCTION_MATERIAL, to_store);
+                            float mat_left = to_store - mat_dep;
+                            if (mat_left > 0.01f) {
+                                mat_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                                    ResourceType::CONSTRUCTION_MATERIAL, mat_left);
+                                mat_left = to_store - mat_dep;
+                            }
+                            // Overflow to inventory
+                            if (mat_left > 0.01f) {
+                                inv.construction_material += mat_left;
+                            }
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
                             float scrap = config_.machine_mat_output * 0.3f * efficiency * collab;
@@ -558,11 +597,22 @@ void Simulation::system_execute_actions() {
 
                             if (total_consumed > 0.001f) {
                                 float output_produced = total_consumed * 2.0f * health_eff;
-                                float out_dep = deposit_to_adjacent_storage(pos.x, pos.y,
+                                // Priority 1: conveyor (for machines with Exit-connected chains)
+                                float out_dep = deposit_to_adjacent_conveyor(pos.x, pos.y,
                                     ResourceType::OUTPUT, output_produced);
                                 float out_left = output_produced - out_dep;
+                                // Priority 2: agent inventory (hauling to Exit-adjacent Storage)
                                 if (out_left > 0.01f) {
-                                    out_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
+                                    float carry = std::min(out_left, InventoryComponent::CAPACITY - inv.total());
+                                    if (carry > 0.01f) {
+                                        inv.output += carry;
+                                        out_dep += carry;
+                                        out_left -= carry;
+                                    }
+                                }
+                                // Priority 3: adjacent Storage (fallback)
+                                if (out_left > 0.01f) {
+                                    out_dep += deposit_to_adjacent_storage(pos.x, pos.y,
                                         ResourceType::OUTPUT, out_left);
                                     out_left = output_produced - out_dep;
                                 }

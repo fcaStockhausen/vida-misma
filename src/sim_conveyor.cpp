@@ -51,23 +51,54 @@ void Simulation::system_conveyor_transport() {
         float amount = std::min(d.conveyor_contents, throughput);
 
         if (target == TileType::Storage) {
-            // Deposit into Storage, respecting capacity and content type
+            // Deposit into Storage ONLY if this Storage is near an Exit.
+            // Output must reach Exit-adjacent Storage to count for quota.
+            // Depositing in intermediate Storage traps the output.
             auto& sd = grid_.data_at(tx, ty);
-            float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
-                       - sd.stored_output - sd.stored_construction_material;
-            float deposit = std::min(amount, room);
-            if (deposit > 0.0f) {
-                if (d.conveyor_contents_type == ResourceType::FOOD)
-                    sd.stored_food += deposit;
-                else if (d.conveyor_contents_type == ResourceType::RAW_MATERIAL)
-                    sd.stored_raw_material += deposit;
-                else if (d.conveyor_contents_type == ResourceType::OUTPUT)
-                    sd.stored_output += deposit;
-                else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL)
-                    sd.stored_construction_material += deposit;
-                else
-                    sd.stored_raw_food += deposit;
-                d.conveyor_contents -= deposit;
+            bool near_exit = false;
+            for (auto& [ex, ey] : exits) {
+                if (std::abs(tx - ex) + std::abs(ty - ey) <= 3) {
+                    near_exit = true;
+                    break;
+                }
+            }
+            if (!near_exit) {
+                // Not near Exit — only accept non-output resources (food, materials)
+                if (d.conveyor_contents_type != ResourceType::OUTPUT) {
+                    float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
+                               - sd.stored_output - sd.stored_construction_material;
+                    float deposit = std::min(amount, room);
+                    if (deposit > 0.0f) {
+                        if (d.conveyor_contents_type == ResourceType::FOOD)
+                            sd.stored_food += deposit;
+                        else if (d.conveyor_contents_type == ResourceType::RAW_MATERIAL)
+                            sd.stored_raw_material += deposit;
+                        else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL)
+                            sd.stored_construction_material += deposit;
+                        else
+                            sd.stored_raw_food += deposit;
+                        d.conveyor_contents -= deposit;
+                    }
+                }
+                // Output on belt continues past non-Exit Storage
+            } else {
+                // Near Exit — accept all resources including output
+                float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food - sd.stored_raw_material
+                           - sd.stored_output - sd.stored_construction_material;
+                float deposit = std::min(amount, room);
+                if (deposit > 0.0f) {
+                    if (d.conveyor_contents_type == ResourceType::FOOD)
+                        sd.stored_food += deposit;
+                    else if (d.conveyor_contents_type == ResourceType::RAW_MATERIAL)
+                        sd.stored_raw_material += deposit;
+                    else if (d.conveyor_contents_type == ResourceType::OUTPUT)
+                        sd.stored_output += deposit;
+                    else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL)
+                        sd.stored_construction_material += deposit;
+                    else
+                        sd.stored_raw_food += deposit;
+                    d.conveyor_contents -= deposit;
+                }
             }
         } else if (target == TileType::Exit) {
             // Conveyor dumps into Exit — deposit into adjacent Storage instead

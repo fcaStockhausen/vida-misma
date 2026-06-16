@@ -539,6 +539,49 @@ public:
         return cost;
     }
 
+    // Trace from a machine's adjacent built conveyors, following belt flow direction.
+    // Returns true if the conveyor chain reaches an Exit or Exit-adjacent (r<=3) Storage.
+    // This determines whether an Output machine is genuinely "served" by logistics.
+    bool machine_connected_to_exit(int mach_x, int mach_y) const {
+        auto exits = find_all(TileType::Exit);
+        if (exits.empty()) return false;
+
+        auto is_exit_target = [&](int x, int y) -> bool {
+            if (x < 0 || x >= width_ || y < 0 || y >= height_) return false;
+            TileType t = at(x, y);
+            if (t == TileType::Exit) return true;
+            if (t == TileType::Storage && data_at(x, y).built) {
+                for (auto& [ex, ey] : exits)
+                    if (std::abs(x - ex) + std::abs(y - ey) <= 3) return true;
+            }
+            return false;
+        };
+
+        constexpr int ddx[] = {1, -1, 0, 0};
+        constexpr int ddy[] = {0, 0, 1, -1};
+        std::vector<std::vector<bool>> visited(height_, std::vector<bool>(width_, false));
+        std::queue<std::pair<int,int>> q;
+        for (int i = 0; i < 4; i++) {
+            int nx = mach_x + ddx[i], ny = mach_y + ddy[i];
+            if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+            if (at(nx, ny) == TileType::Conveyor && data_at(nx, ny).built) {
+                visited[ny][nx] = true;
+                q.push({nx, ny});
+            }
+        }
+        while (!q.empty()) {
+            auto [cx, cy] = q.front(); q.pop();
+            auto [tx, ty] = conveyor_target(cx, cy);
+            if (is_exit_target(tx, ty)) return true;
+            if (tx >= 0 && tx < width_ && ty >= 0 && ty < height_ &&
+                at(tx, ty) == TileType::Conveyor && data_at(tx, ty).built && !visited[ty][tx]) {
+                visited[ty][tx] = true;
+                q.push({tx, ty});
+            }
+        }
+        return false;
+    }
+
     // Find a Floor tile adjacent to agent where a new conveyor should be placed.
     // Strategy: extend a chain from the nearest built machine (that has no adjacent
     // built conveyor flowing away) toward the nearest Storage or Exit.
@@ -555,33 +598,57 @@ public:
                 total_conv++;
                 if (!data_at(x, y).built) unbuilt_conv++;
             }
-        if (unbuilt_conv >= 20 || total_conv >= 50) return {-1, -1, ConveyorDir::E};
+        if (unbuilt_conv >= 30 || total_conv >= 100) return {-1, -1, ConveyorDir::E};
 
-        // 1. Find a built machine lacking an adjacent built conveyor.
+        auto exits = find_all(TileType::Exit);
+
+        // 1. Find a built machine lacking a useful adjacent conveyor.
+        //    Priority: Output > Materials > Food (output quota is the critical path).
+        //    Output machines are only "served" if their conveyor chain reaches the Exit.
         int mach_x = -1, mach_y = -1, mach_dist = 999999;
+        int best_priority = -1;  // 2=Output, 1=Materials, 0=Food
         for (int y = 1; y < height_ - 1; y++)
             for (int x = 1; x < width_ - 1; x++) {
                 if (at(x, y) != TileType::Machine) continue;
                 const auto& d = data_at(x, y);
                 if (!d.built) continue;
-                bool has_output_conveyor = false;
-                for (int dy2 = -1; dy2 <= 1 && !has_output_conveyor; dy2++)
-                    for (int dx2 = -1; dx2 <= 1 && !has_output_conveyor; dx2++) {
-                        if (dx2 == 0 && dy2 == 0) continue;
-                        int nx = x + dx2, ny = y + dy2;
-                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
-                        if (at(nx, ny) == TileType::Conveyor && data_at(nx, ny).built) {
-                            has_output_conveyor = true;
+                bool served;
+                if (d.machine_type == MachineType::Output) {
+                    served = machine_connected_to_exit(x, y);
+                } else {
+                    served = false;
+                    for (int dy2 = -1; dy2 <= 1 && !served; dy2++)
+                        for (int dx2 = -1; dx2 <= 1 && !served; dx2++) {
+                            if (dx2 == 0 && dy2 == 0) continue;
+                            int nx = x + dx2, ny = y + dy2;
+                            if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                            if (at(nx, ny) == TileType::Conveyor && data_at(nx, ny).built)
+                                served = true;
                         }
-                    }
-                if (has_output_conveyor) continue;
+                }
+                if (served) continue;
+                // Reserve conveyor budget for Output chains (the quota-critical path).
+                // Food/Materials deposit directly to adjacent Storage — conveyors are bonus.
+                if (d.machine_type != MachineType::Output && total_conv >= 20) continue;
+                int priority = (d.machine_type == MachineType::Output) ? 2 :
+                               (d.machine_type == MachineType::Materials) ? 1 : 0;
                 int dist = std::abs(x - agent_x) + std::abs(y - agent_y);
-                if (dist < mach_dist) { mach_dist = dist; mach_x = x; mach_y = y; }
+                // Higher priority machine wins regardless of distance.
+                // Same priority: closer wins.
+                if (priority > best_priority || (priority == best_priority && dist < mach_dist)) {
+                    mach_dist = dist; mach_x = x; mach_y = y;
+                    best_priority = priority;
+                }
             }
 
         if (mach_x < 0) return {-1, -1, ConveyorDir::E};
 
-        // 2. BFS from machine toward nearest Storage or Exit.
+        bool is_output = (data_at(mach_x, mach_y).machine_type == MachineType::Output);
+
+
+        // 2. BFS from machine toward goal.
+        //    Output machines: goal = Exit or Exit-adjacent (r<=3) Storage ONLY.
+        //    Food/Materials:  goal = any Storage or Exit.
         //    Walkable tiles for BFS: Floor and existing unbuilt Conveyor frames.
         struct Node { int x, y, from_x, from_y; };
         std::queue<Node> q;
@@ -589,37 +656,65 @@ public:
         std::vector<std::vector<std::pair<int,int>>> parent(height_,
             std::vector<std::pair<int,int>>(width_, {-1, -1}));
 
-        // Seed BFS from tiles adjacent to the machine
+        // Seed BFS from walkable tiles within radius 3 of the machine.
+        // Radius 3 matches deposit_to_adjacent_conveyor's search radius, so even
+        // boxed-in machines (surrounded by Storage/Machines) can start a chain.
         constexpr int ddx[] = {1, -1, 0, 0};
         constexpr int ddy[] = {0, 0, 1, -1};
-        for (int i = 0; i < 4; i++) {
-            int nx = mach_x + ddx[i], ny = mach_y + ddy[i];
-            if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
-            TileType tt = at(nx, ny);
-            if (tt == TileType::Storage || tt == TileType::Exit) {
-                // Already adjacent to target — no conveyor needed
-                return {-1, -1, ConveyorDir::E};
-            }
-            if (tt == TileType::Floor || (tt == TileType::Conveyor && !data_at(nx, ny).built)) {
-                if (!visited[ny][nx]) {
-                    visited[ny][nx] = true;
-                    parent[ny][nx] = {mach_x, mach_y};
-                    q.push({nx, ny, mach_x, mach_y});
+        for (int dy = -3; dy <= 3; dy++)
+            for (int dx = -3; dx <= 3; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = mach_x + dx, ny = mach_y + dy;
+                if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                TileType tt = at(nx, ny);
+                if (tt == TileType::Exit) {
+                    return {-1, -1, ConveyorDir::E};  // accessible Exit — no conveyor needed
+                }
+                if (tt == TileType::Storage && data_at(nx, ny).built) {
+                    if (!is_output)
+                        return {-1, -1, ConveyorDir::E};  // Food/Mat: nearby storage suffices
+                    // Output: only skip if this Storage is Exit-adjacent
+                    bool near_exit = false;
+                    for (auto& [ex, ey] : exits)
+                        if (std::abs(nx - ex) + std::abs(ny - ey) <= 3) { near_exit = true; break; }
+                    if (near_exit) return {-1, -1, ConveyorDir::E};
+                    continue;  // intermediate Storage — not a seed tile
+                }
+                if (tt == TileType::Floor ||
+                    (tt == TileType::Conveyor && !data_at(nx, ny).built) ||
+                    (is_output && tt == TileType::Conveyor && data_at(nx, ny).built)) {
+                    if (!visited[ny][nx]) {
+                        visited[ny][nx] = true;
+                        parent[ny][nx] = {mach_x, mach_y};
+                        q.push({nx, ny, mach_x, mach_y});
+                    }
                 }
             }
-        }
 
         int goal_x = -1, goal_y = -1;
         while (!q.empty()) {
             auto [cx, cy, fx, fy] = q.front(); q.pop();
-            // Check if we reached a tile adjacent to Storage/Exit
+            // Check if we reached a tile adjacent to a valid goal.
+            // Output: only Exit-adjacent (r<=3) Storage or Exit.
+            // Others: any built Storage or Exit.
             for (int i = 0; i < 4; i++) {
                 int nx = cx + ddx[i], ny = cy + ddy[i];
                 if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
                 TileType tt = at(nx, ny);
-                if ((tt == TileType::Storage && data_at(nx, ny).built) || tt == TileType::Exit) {
+                if (tt == TileType::Exit) {
                     goal_x = cx; goal_y = cy;
                     goto bfs_done;
+                }
+                if (tt == TileType::Storage && data_at(nx, ny).built) {
+                    if (!is_output) {
+                        goal_x = cx; goal_y = cy;
+                        goto bfs_done;
+                    }
+                    for (auto& [ex, ey] : exits)
+                        if (std::abs(nx - ex) + std::abs(ny - ey) <= 3) {
+                            goal_x = cx; goal_y = cy;
+                            goto bfs_done;
+                        }
                 }
             }
             for (int i = 0; i < 4; i++) {
@@ -627,7 +722,9 @@ public:
                 if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
                 if (visited[ny][nx]) continue;
                 TileType tt = at(nx, ny);
-                if (tt == TileType::Floor || (tt == TileType::Conveyor && !data_at(nx, ny).built)) {
+                if (tt == TileType::Floor ||
+                    (tt == TileType::Conveyor && !data_at(nx, ny).built) ||
+                    (is_output && tt == TileType::Conveyor && data_at(nx, ny).built)) {
                     visited[ny][nx] = true;
                     parent[ny][nx] = {cx, cy};
                     q.push({nx, ny, cx, cy});
@@ -662,7 +759,7 @@ public:
         Grid* self = const_cast<Grid*>(this);
         for (int i = 0; i < (int)path.size(); i++) {
             // Re-check cap during placement
-            if (total_conv >= 50) break;
+            if (total_conv >= 100) break;
             auto [tx, ty] = path[i];
             if (at(tx, ty) == TileType::Conveyor) continue;  // already a frame
             total_conv++;  // track increment
@@ -770,6 +867,7 @@ public:
                 d.machine_type   = p.machine_type;
             }
             if (p.type == TileType::Storage) {
+                d.built              = true;   // pre-placed infrastructure
                 d.storage_capacity = p.storage_capacity > 0.0f ? p.storage_capacity : 20.0f;
                 d.stored_food         = 0.0f;
                 d.stored_raw_food     = 0.0f;

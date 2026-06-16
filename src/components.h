@@ -288,9 +288,10 @@ struct InventoryComponent {
     float raw_material = 0.0f;
     float food         = 0.0f;
     float construction_material = 0.0f;  // for building OutputMachine and conveyors
+    float output       = 0.0f;           // hauled output product — carried to Exit-adjacent Storage
     static constexpr float CAPACITY = 10.0f;
 
-    float total() const { return raw_food + raw_material + food + construction_material; }
+    float total() const { return raw_food + raw_material + food + construction_material + output; }
     bool can_carry(float amount) const { return total() + amount <= CAPACITY; }
 };
 
