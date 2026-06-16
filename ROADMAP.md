@@ -1,20 +1,61 @@
 # La Vida Misma — Project Roadmap
 
-Community simulation engine in C++20 using ECS (EnTT) with FTXUI terminal interface.
-Grid-based factory simulation where autonomous agents build, produce, socialize, and die.
+A factory simulation where agents inhabit a factory they did not build, do not
+control, and do not understand. The factory demands output. The agents want to
+live. Every mechanic exists to sharpen that tension.
 
 ---
 
 ## Current State
 
-**7,230 LOC** across 22 source files. Compiles clean (Clang, C++20, CMake).
-Three targets: `vida_misma` (FTXUI TUI), `vida_batch` (headless), `vida_gui` (SDL2 2.5D isometric).
+**~9,600 LOC** across 24 source files. Compiles clean (Clang, C++20, CMake).
+Three targets: `vida_batch` (headless benchmark), `vida_gui` (SDL2 2.5D isometric), `vida_gui` (SDL2).
 
-Latest batch results (3000 ticks, 7 seeds, 24 agents):
-- Average survivors: 2.1 (up from 1.3)
-- Average food produced: 333 (up from 264)
-- 4/7 seeds produce survivors with stable factory health
-- 0 factory collapse deaths in 5/7 seeds
+### 3-Tier Production Chain
+
+```
+ScrapPile ──GATHER──► raw_material
+    │
+    ▼
+MaterialsMachine: raw_material → construction_material
+    │                   │
+    │                   ├──► agent inventory (build conveyors, machines)
+    │                   └──► adjacent Storage
+    │                                      │
+    ▼                                      ▼
+OutputMachine: construction_material → output
+    │                                       │
+    ├──► conveyor chain ──────────────────► │
+    ├──► agent hauling (output inventory) ─►│
+    └──► adjacent Storage (fallback)        │
+                                            ▼
+                              Exit-adjacent Storage
+                                            │
+                                            ▼
+                              system_ship_out_food (quota drain)
+```
+
+Two transport paths for output: conveyor chains and agent hauling.
+Both deposit into Exit-adjacent Storage (radius 3), the only quota drain point.
+
+### Latest Batch Results (1000 ticks, 24 agents, 10 seeds)
+
+| Seed | Survivors | Conveyors | Last Quota | Avg Quota | Notes |
+|------|-----------|-----------|------------|-----------|-------|
+| 999  | 23        | 69        | 100%       | 75%       | Best performer |
+| 7    | 22        | 91        | 0%         | 33%       | Good output, dies late |
+| 555  | 24        | 37        | 0%         | 33%       | Low conveyor investment |
+| 123  | 24        | 100       | 0%         | 10%       | Over-invests in conveyors |
+| 42   | 24        | 74        | 0%         | 4%        | Food-surplus, output-starved |
+| 31337| 24        | 66        | 0%         | 3%        | Survival-stable, no output |
+| 7777 | 24        | 88        | 0%         | 2%        | |
+| 1    | 24        | 82        | 0%         | 1%        | |
+| 100  | 24        | 61        | 0%         | 1%        | |
+| 2024 | 22        | 36        | 0%         | 1%        | |
+
+**Key finding**: Most seeds keep all 24 agents alive (survival solved) but only
+30-40% of seeds produce meaningful quota. The bottleneck is logistics throughput,
+not agent survival.
 
 ---
 
@@ -22,34 +63,33 @@ Latest batch results (3000 ticks, 7 seeds, 24 agents):
 
 ```
 src/
-  components.h          280   ECS components, enums, archetype tables, opinion component
-  config.h               88   Config struct + TOML loader
-  config.cpp            112   TOML parsing implementation
-  grid.h                626   60x40 grid, tile types, machine clusters, WFC generator
-  wfc_generator.h       400   Wave Function Collapse procedural map layout
-  pathfinding.h         110   A* implementation (exists, not integrated)
-  social.h              400   SocialFabric: trust, familiarity, contagion, influence, mood, grief, opinions
-  simulation.h          145   Simulation orchestrator
-  simulation.cpp        500   Tick loop, systems, death, quota, factory health, factions
-  sim_utility.cpp       398   Utility AI: 11 actions, social learning, infra_gap drive
-  sim_execute.cpp       700   Action execution: BUILD, WORK, GATHER, EAT, SHARE, DISMANTLE...
-  sim_targets.cpp       180   Target finding: nearest unbuilt machine, scrap, storage, etc.
-  sim_movement.cpp       72   Movement toward targets with noise
-  sim_conveyor.cpp       76   Conveyor belt transport chain
-  batch_main.cpp        214   Headless runner with multi-seed, timeline report
-  main.cpp               20   Entry point (TUI)
-  renderer.h            346   FTXUI grid renderer (legacy)
-  tui.h                 560   FTXUI interactive interface
-  renderer.cpp            1   (empty)
-  graphical_view.h       100   SDL2 isometric renderer declaration
-  graphical_view.cpp     900   SDL2 2.5D isometric renderer with bitmap font
-  main_gui.cpp            36   GUI entry point
-config/
+  components.h          360   ECS components, enums, archetype tables, InventoryComponent
+  config.h              108   Config struct + TOML loader
+  config.cpp            115   TOML parsing implementation
+  grid.h                894   60x40 grid, tile types, conveyor BFS, machine_connected_to_exit
+  wfc_generator.h       508   Wave Function Collapse procedural map layout
+  path_cache.h           14   Per-agent A* path cache struct
+  pathfinding.h         166   A* + cached_next_step (fully integrated)
+  social.h              397   SocialFabric: trust, familiarity, contagion, influence, mood
+  simulation.h          226   Simulation orchestrator
+  simulation.cpp        986   Tick loop, systems, death, quota, factory health, auto-gather
+  sim_utility.cpp       905   Utility AI: 11 actions, production chain routing
+  sim_execute.cpp      1338   Action execution: BUILD, WORK, GATHER, EAT, hauling deposit
+  sim_targets.cpp       427   Target finding: nearest machine, output hauler routing
+  sim_movement.cpp       68   Cached A* pathfinding movement
+  sim_conveyor.cpp      147   Conveyor belt transport, Exit-only output deposit
+  chronicle.h           639   Narrative event system
+  batch_main.cpp        495   Headless runner: run, story, analysis, map, jsonl
+  font_cache.cpp        178   SDL2 bitmap font cache
+  sprite_atlas.h        528   Sprite atlas for isometric renderer
+  graphical_view.h      145   SDL2 isometric renderer declaration
+  graphical_view.cpp    899   SDL2 2.5D isometric renderer
+  main_gui.cpp           36   GUI entry point
+  config/
   default.toml               All tunable parameters
 doc/
   bases_matematicas/         Academic document (Pandoc, 20 sections)
   design_spec.md             Design specification
-  adversarial_utility_agents.md  Research notes on adversarial agent patterns
 ```
 
 ---
@@ -58,7 +98,7 @@ doc/
 
 ### Core Simulation
 - [x] ECS architecture via EnTT (header-only)
-- [x] 60x40 grid with predefined factory layout
+- [x] 60x40 grid with WFC procedural layout
 - [x] Tick-based simulation loop
 - [x] Config-driven parameters via TOML (no recompile to tune)
 - [x] Seeded RNG for reproducible batch runs
@@ -66,6 +106,9 @@ doc/
 ### Agent Systems
 - [x] Utility AI with 11 action types (GATHER, BUILD, WORK, EAT, REST, SOCIALIZE, CREATE, EXPLORE, GET_FOOD, MAINTAIN, DISMANTLE)
 - [x] Need decay: hunger, rest, social, expression, purpose
+- [x] Skill system: factory_work, domestic, artistic, social_skill with XP and level bonuses
+- [x] Disease system: immune response, hunger multiplier, recovery rate
+
 ### Stress & Trauma
 - [x] Stress accumulation with personality modulation
 - [x] 5 stress states: NORMAL → DISSOCIATED → EUPHORIC → BROKEN → REDEEMED
@@ -79,18 +122,26 @@ doc/
 - [x] Cultural artifacts: CREATE spawns mood-boosting objects at location
 - [x] Hidden spaces: factory seals overused rest areas
 - [x] 6 personality archetypes: Foreman, Networker, Artisan, Survivor, Explorer, Steady Worker
-- [x] Per-archetype base traits with per-agent jitter
-- [x] Balanced distribution across 24 agents
-- [x] Archetype name displayed in batch output
 
-### Production Chain
+### Production Chain (3-tier)
 - [x] GATHER raw_material from ScrapPiles
 - [x] BUILD machines (3 subtypes: Food, Materials, Output), conveyors, eating zones
-- [x] WORK machines: FoodMachine produces food, MaterialsMachine produces construction_material, OutputMachine consumes construction_material to restore factory health
-- [x] Conveyor belt transport system (directional, condition decay)
-- [x] External quota system: food shipped via Exit tiles
-- [x] Factory health: decays when quota missed, triggers machine breaks, triggers collapse deaths
-- [x] 2 Food machines pre-built as bootstrap
+- [x] MaterialsMachine: raw_material → construction_material (consumes auto-gathered stockpile)
+- [x] OutputMachine: construction_material → output product
+- [x] Agent hauling: output in InventoryComponent → routed to Exit-adjacent Storage → passive deposit
+- [x] Conveyor belt transport system (directional, condition decay, Output-only deposit near Exit)
+- [x] External quota system: output shipped via Exit tiles (radius 3 drain)
+- [x] Factory health: decays when quota missed, surplus bonus on over-delivery
+- [x] `machine_connected_to_exit()`: traces conveyor flow to verify Output machines are served
+- [x] Dynamic routing: prioritizes Materials when construction_material scarce, Output when abundant
+- [x] Conveyor budget reserved for Output chains (Food/Materials deposit directly to Storage)
+
+### Pathfinding
+- [x] A* with Manhattan heuristic, max 2400 node expansions (`pathfinding.h`)
+- [x] Per-agent `PathCache` — invalidates on target change or every 20 ticks
+- [x] `sim_movement.cpp` calls `cached_next_step()` → `astar_find_path()` for all movement
+- [x] All non-Wall tiles walkable (machines, conveyors, storage included)
+- [x] Divergence recovery: reconnects to cached path or recomputes from current position
 
 ### Social Fabric
 - [x] Relationship graph: familiarity [0,1], trust [-1,1] per agent pair
@@ -103,89 +154,75 @@ doc/
 - [x] Mood: function of needs and stress, decays toward equilibrium
 - [x] Grief cascade: agent death causes stress in familiar agents
 - [x] Relationship decay over time (familiarity fades, trust drifts to neutral)
-- [x] Negative interactions: witnesses report transgressions, trust drops
 
-### Opinion Dynamics (doc §8.5 — Hegselmann-Krause bounded confidence + DeGroot)
-- [x] Each agent holds 4D opinion vector: work_ethic, risk_tolerance, tradition, solidarity
-- [x] Archetype-based priors with per-agent jitter (e.g., Foreman → high work_ethic, Artisan → low tradition)
-- [x] SOCIALIZE exchanges opinions via bounded confidence (ε=0.3): agents only shift toward neighbors within ε
-- [x] DeGroot-weighted averaging: influence ratio determines persuasion strength
-- [x] Trust-modulated learning rate: trusted contacts shift opinions faster
-- [x] Agents with similar opinions + mutual trust cluster into factions (BFS, dual criteria)
-- [x] Faction trust modulation: same faction = trust boost, different faction = friction
-- [x] Leader opinion pull: high-influence agents gently shift faction consensus toward their views
-- [x] Opinions displayed in TUI agent panel and GUI side panel
+### Opinion Dynamics (doc §8.5 — Hegselmann-Krause + DeGroot)
+- [x] 4D opinion vector: work_ethic, risk_tolerance, tradition, solidarity
+- [x] Bounded confidence exchange (ε=0.3) during SOCIALIZE
+- [x] DeGroot-weighted averaging with trust-modulated learning rate
+- [x] Faction formation: similar opinions + mutual trust → BFS clustering
+- [x] Faction trust modulation: same faction boost, different faction friction
+- [x] Leader opinion pull: high-influence agents shift faction consensus
 
 ### Adaptive Infrastructure
 - [x] DISMANTLE action: tear down dead-end or blocking conveyors for raw_material refund
 - [x] Social penalty for dismantlers who don't rebuild
-- [x] Conveyor rebuild cycle: dismantle -> gather -> rebuild elsewhere
+- [x] Conveyor rebuild cycle: dismantle → gather → rebuild elsewhere
 
 ### Interface
-- [x] FTXUI interactive TUI with grid view, agent details, log
-- [x] Batch runner with timeline report (actions, production, deaths)
+- [x] Headless batch runner with timeline report (run, story, agent, analysis, map, jsonl)
 - [x] Multi-seed support for consistency testing
 - [x] SDL2 2.5D isometric GUI with WASD camera, zoom, chord keyboard system
-- [x] 5×7 bitmap pixel font (no SDL2_ttf dependency)
 - [x] Side panel with needs, personality, opinions, stress, inventory, utility
-- [x] Header bar with sim stats, help overlay with controls + legend
 
 ### Procedural Generation
-- [x] WFC (Wave Function Collapse) map layout replaces hardcoded factory
+- [x] WFC (Wave Function Collapse) map layout
 - [x] 3-type structural WFC (Wall/Floor/OpenSpace) with weighted priors
 - [x] Layered generation: structural → functional stamping → bootstrap
 - [x] Seed-reproducible, configurable via `use_wfc` in TOML
-- [x] `generate_default()` preserved as fallback
 
 ### Documentation
 - [x] 20-section academic document (Pandoc + XeLaTeX, builds to PDF/HTML)
-- [x] Part I: Mathematical Foundations (sections 01-10)
-- [x] Part II: Design Specification (sections 11-20)
 - [x] 25+ verified academic references
 
 ---
 
 ## In Progress / Needs Work
 
-### Balance Tuning
-- [ ] Agents die too much by starvation ("productivity trap"): build/gather instead of eating
-- [ ] Factory health decay may be too aggressive for certain seeds
-- [ ] Machine break threshold interactions with health need tuning
-- [ ] Conveyors break too quickly (condition decays fast, no maintain culture)
-
-### ~~Pathfinding~~ ✓ (Phase 3)
-A* pathfinding is fully integrated:
-- [x] `sim_movement.cpp` calls `cached_next_step()` → `astar_find_path()` for route planning
-- [x] Per-agent `PathCache` avoids recomputation — invalidates on target change or every 20 ticks
-- [x] 4-directional A* with Manhattan heuristic, max 2400 node expansions
-- [x] All non-Wall tiles are walkable (machines, conveyors, storage included)
-- [x] Divergence recovery: if agent leaves cached path, reconnects or recomputes
+### Balance Tuning (primary bottleneck)
+- [ ] **Logistics throughput**: most seeds produce output but can't deliver it fast enough — agent hauling round-trips take ~60 ticks, conveyor chains often incomplete
+- [ ] **Productivity trap**: agents over-commit to factory work, starve (main death cause)
+- [ ] **Seed variance**: best seed hits 75% avg quota, worst hits 1% — layout-dependent (food/machine placement)
+- [ ] **Conveyor over-investment**: some seeds build 100 conveyors but 0 output (budget consumed by Food/Materials chains before Output machines exist)
+- [ ] Conveyor condition decay may need tuning (no maintain culture emerges)
 
 ---
 
 ## Planned Features (by priority)
 
-### Priority 1: Storyteller / Director (Phase 7 of original roadmap)
+### Priority 1: Storyteller / Director
 The simulation needs a meta-agent that modulates external pressure.
-Currently factory health decays at a fixed rate. A Director would:
+Currently quota grows at a fixed rate. A Director would:
 
-- [ ] Track colony "wealth" (total machines built, food stored, agent count)
-- [ ] Scale quota pressure based on colony capacity
+- [ ] Track colony capacity (machines built, food stored, agent count, logistics state)
+- [ ] Scale quota pressure based on colony capacity — ease off when struggling, push when stable
 - [ ] Introduce events: resource booms, scrap depletion, machine breakdowns, migrant arrivals
 - [ ] Create narrative rhythm: calm periods followed by pressure spikes
 - [ ] Reference: RimWorld's Storyteller system (Phoebe / Cassandra / Randy)
 
-Estimated: ~500-800 LOC new, modifications to `simulation.cpp` tick loop
+Estimated: ~500-800 LOC, modifications to `simulation.cpp` tick loop
 
-### Priority 2: ~~Opinion Dynamics~~ ✓ (Phase 7)
-Implemented via bounded confidence (Hegselmann-Krause) + DeGroot weighting.
-See Completed Features → Opinion Dynamics.
+### Priority 2: Balance Pass — Logistics & Throughput
+The core simulation is functional but logistics throughput caps quota at ~33% avg.
 
-### Priority 3: ~~Pathfinding Integration~~ ✓ (Phase 3)
-A* with per-agent path caching is fully wired into `sim_movement.cpp`.
-See Completed Features → Pathfinding.
+- [ ] Tune agent hauling: multiple output carriers per OutputMachine, inventory capacity for output
+- [ ] Conveyor chain reliability: ensure flow directions form complete Machine→Exit paths
+- [ ] Dynamic conveyor dismantling: tear down Food/Materials chains once Output chains are built
+- [ ] Reduce seed variance: minimum Output machine placement guarantee near Exit
+- [ ] Address productivity trap: stronger EAT urgency threshold tuning
 
-### Priority 4: Generational Turnover
+Estimated: ~200-400 LOC across `sim_execute.cpp`, `sim_targets.cpp`, `sim_utility.cpp`
+
+### Priority 3: Generational Turnover
 Currently agents die but no new agents are born:
 
 - [ ] Agent reproduction: 2 agents with high trust + low stress + sufficient food produce offspring
@@ -194,28 +231,23 @@ Currently agents die but no new agents are born:
 - [ ] Population cap to prevent explosion
 - [ ] Death of elders triggers grief but also frees resources
 
-Estimated: ~600-800 LOC new in `simulation.cpp`
+Estimated: ~600-800 LOC in `simulation.cpp`
 
-### Priority 5: Skill System (Phase 5 extension)
-Agents get better at tasks through practice:
+### Priority 4: Disease & Health Model Extension
+Basic disease exists but could be deeper:
 
-- [ ] SkillComponent: gather_skill, build_skill, work_skill, social_skill
-- [ ] XP gain per action completion (tick-based)
-- [ ] Skill level affects: gather rate, build rate, work output, collaboration bonus
-- [ ] Skills decay slowly without practice (use it or lose it)
-- [ ] Specialists emerge naturally from archetype + practice
+- [ ] Contagion via proximity (social graph already tracks relationships)
+- [ ] Workplace injuries (factory hazards based on machine type)
+- [ ] Epidemic events (Director-triggered)
+- [ ] Immune system individuality (per-agent resistance traits)
 
-Estimated: ~400-500 LOC new in `components.h` + `sim_execute.cpp`
-
-### Priority 6: ~~WFC Procedural Map~~ ✓
-Implemented. See Completed Features → Procedural Generation.
+Estimated: ~400-500 LOC in `simulation.cpp` + `components.h`
 
 ---
 
 ## Not Planned (deliberately excluded)
 
-- **3D / fluid dynamics / heat simulation** — the 2D grid is sufficient for community simulation
-- **Graphics / rendering** — terminal output is the product
+- **3D / fluid dynamics / heat simulation** — the 2D grid is sufficient
 - **Networking / multiplayer** — single-threaded local simulation
 - **Save/load** — can be added later as serialization over ECS state
 - **Machine learning for agent behavior** — hand-crafted utility functions are sufficient
@@ -224,9 +256,9 @@ Implemented. See Completed Features → Procedural Generation.
 
 ## Key Design Principles
 
-1. **Conveyors are NOT walkable when built** — agents interact from adjacent tiles
-2. **Maximum ONE EatingZone** — centralized food distribution
-3. **Machines produce dual output** — Food machines produce food, Materials machines produce construction material
+1. **Conveyors ARE walkable** — agents walk over conveyor belts (factory is already hostile enough)
+2. **Two output transport paths** — conveyor chains (infrastructure) + agent hauling (labor), both deposit to Exit-adjacent Storage
+3. **Quota drains only from Exit-adjacent Storage** (radius 3) — no magical teleportation, output must be physically delivered
 4. **Deaths are turnover, not failure** — the simulation tracks causes but doesn't punish death
 5. **Config-driven tuning** — all parameters in `config/default.toml`, no recompile needed
 6. **Archetypes with jitter** — structured diversity, not uniform random
@@ -234,19 +266,24 @@ Implemented. See Completed Features → Procedural Generation.
 
 ---
 
-## Batch Test Baseline (as of latest session)
+## Batch Test Baseline (1000 ticks, 24 agents, 10 seeds)
 
-Seed sweep (3000 ticks, 24 agents, 7 seeds):
+Best-to-worst by avg quota fill:
 
-| Seed | Survivors | Factory HP | Machines | Food Prod | Deaths (hunger/fatigue/collapse) |
-|------|-----------|------------|----------|-----------|----------------------------------|
-| 1    | 2         | 0.79       | 11/16    | 340       | 18/4/0                           |
-| 3    | 0         | 0.00       | 7/16     | 272       | 16/3/2+3stress                   |
-| 5    | 4         | 0.63       | 10/16    | 355       | 17/3/0                           |
-| 7    | 0         | 0.00       | 14/16    | 285       | 21/1/2                           |
-| 10   | 5         | 0.72       | 10/16    | 375       | 15/4/0                           |
-| 20   | 2         | 0.23       | 13/16    | 353       | 19/2/1stress                     |
-| 42   | 2         | 0.58       | 12/16    | 349       | 15/6/0                           |
-| **Avg** | **2.1** | -          | **11.0** | **333**   | -                                |
+| Seed | Alive | Conveyors | Last Quota | Avg Quota |
+|------|-------|-----------|------------|-----------|
+| 999  | 23    | 69        | 100%       | 75%       |
+| 7    | 22    | 91        | 0%         | 33%       |
+| 555  | 24    | 37        | 0%         | 33%       |
+| 123  | 24    | 100       | 0%         | 10%       |
+| 42   | 24    | 74        | 0%         | 4%        |
+| 31337| 24    | 66        | 0%         | 3%        |
+| 7777 | 24    | 88        | 0%         | 2%        |
+| 1    | 24    | 82        | 0%         | 1%        |
+| 100  | 24    | 61        | 0%         | 1%        |
+| 2024 | 22    | 36        | 0%         | 1%        |
 
-Main bottleneck: starvation deaths (agents over-commit to build/gather, don't eat enough).
+**Main bottleneck**: logistics throughput. Most seeds keep all agents alive but
+only deliver meaningful quota in ~30% of seeds. Agent hauling works but is
+round-trip-limited (~60 ticks per delivery). Conveyor chains are incomplete
+on many seeds due to budget allocation and boxed-in machine placement.
