@@ -816,6 +816,8 @@ void Simulation::system_execute_actions() {
                         registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id) {
                         needs.meaning = std::max(0.0f, needs.meaning - 0.02f);
                     }
+                    // Social contact satisfies purpose — belonging is meaning.
+                    needs.purpose = std::max(0.0f, needs.purpose - 0.003f);
                     // Opinion exchange: bounded confidence (Hegselmann-Krause, doc §8.5)
                     {
                         auto& my_op = registry_.get<OpinionComponent>(e);
@@ -859,8 +861,9 @@ void Simulation::system_execute_actions() {
                     artifacts_created_++;
                     artifacts_active_++;
                 }
-                // B4: CREATE satisfies meaning
+                // B4: CREATE satisfies meaning and purpose — art is self-actualization.
                 needs.meaning = std::max(0.0f, needs.meaning - 0.03f);
+                needs.purpose = std::max(0.0f, needs.purpose - 0.006f);
                 // S5: CREATE reduces stress — the only real cure
                 stress.value = std::max(0.0f, stress.value - 0.008f);
                 break;

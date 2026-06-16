@@ -307,6 +307,15 @@ void Simulation::system_compute_utility() {
                       * mood_factor * gather_urgency;
         }
 
+        // Focus dampener for GATHER — same as WORK.
+        // Only when food supply is healthy.
+        {
+            float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
+            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                && food_supply_ratio > 0.8f)
+                u_gather *= 0.3f;
+        }
+
         // ================================================================
         // BUILD: infrastructure completion drive.
         // Scales with infra_gap (phase transition). Per-type priority
@@ -501,6 +510,15 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_output);
         }
 
+        // Focus dampener for BUILD — same principle as WORK and GATHER.
+        // Only when food supply is healthy.
+        {
+            float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
+            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                && food_supply_ratio > 0.8f)
+                u_build *= 0.3f;
+        }
+
         // ================================================================
         // WORK: operate built machines to produce food/material/output.
         // Supply-chain-aware pull replaces the old flat duty_drive.
@@ -549,11 +567,21 @@ void Simulation::system_compute_utility() {
 
             // WORK pull: scales with built_ratio (more built = more to operate)
             float work_pull = effective_compliance * built_ratio * 2.0f;
-            // A: Maslow dampener — mild WORK reduction when higher needs are critical
-            // AND agent is well-fed/rested. Max 20% reduction.
-            float higher_need_deficit = needs.social + needs.expression + needs.purpose;
-            if (higher_need_deficit > 2.4f && needs.hunger < 0.4f && needs.rest < 0.4f) {
-                work_pull *= 0.8f;
+
+            // FOCUS SYSTEM (Dwarf Fortress pattern):
+            // Focus = ratio of met higher needs. Low focus = distracted worker.
+            // When social/expression/purpose are unmet, WORK efficiency drops.
+            // DF: unmet needs → -50% work speed. Here: WORK utility scales with focus.
+            float higher_unmet = (needs.social + needs.expression + needs.purpose) / 3.0f;
+            float focus = 1.0f - higher_unmet;  // 1.0 = fully focused, 0.0 = totally distracted
+            work_pull *= (0.3f + 0.7f * focus);  // min 30% at zero focus, 100% at full
+
+            // Strong Maslow gate: when higher needs are CRITICAL and survival is safe,
+            // WORK collapses — the agent needs to go create/socialize.
+            // Only fires when food supply is healthy (not during food crisis).
+            if (higher_unmet > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                && food_supply_ratio > 0.8f) {
+                work_pull *= 0.2f;  // 80% reduction — almost never WORK in this state
             }
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
@@ -610,56 +638,52 @@ void Simulation::system_compute_utility() {
         float u_rest_action = rest_weight * u_rest;  // u_rest already uses survival_urgency
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
+        // THRESHOLD GATE (The Sims pattern): below threshold = near-zero utility.
+        // Above threshold = strong drive. Creates clean behavioral windows.
         float gregariousness_mult = 1.0f;
         if (stress.state == StressState::DISSOCIATED) gregariousness_mult = 0.7f;
         if (stress.state == StressState::BROKEN) gregariousness_mult = 0.3f;
         float effective_gregariousness = personality.gregariousness * gregariousness_mult
                                        * (1.0f - stress.trauma * config_.trauma_social_impact);
-        float u_socialize = effective_gregariousness * u_social;
-        u_socialize *= (0.5f + 0.5f * nearby_trust);  // high trust = more rewarding
-        u_socialize += soc.influence * 0.1f;           // influential agents socialize more
-        // A: Maslow boost — when basic needs are satisfied, socializing becomes attractive
-        if (needs.hunger < 0.3f && needs.rest < 0.3f) {
-            u_socialize *= 2.5f;
-        } else if (needs.hunger < 0.5f && needs.rest < 0.5f) {
-            u_socialize *= 1.5f;
+        float u_socialize = 0.0f;
+        if (needs.social > 0.25f) {
+            // Gate passed — social drive ramps up sharply
+            float social_gate = (needs.social - 0.25f) / 0.75f;  // 0..1 above threshold
+            u_socialize = effective_gregariousness * u_social * (0.5f + social_gate);
+            u_socialize *= (0.5f + 0.5f * nearby_trust);
+            u_socialize += soc.influence * 0.1f;
+            // Maslow boost doubles when well-fed and rested
+            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_socialize *= 2.5f;
+            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_socialize *= 1.5f;
         }
 
-        // CREATE: only viable if there's an OpenSpace tile to reach
+        // CREATE: THRESHOLD GATE (The Sims pattern)
+        // Below 0.25 expression = near-zero CREATE drive. Above = ramps hard.
+        // This is the “creative impulse” — it doesn’t compete with survival,
+        // but when it fires, it fires strong.
         bool open_space_available = grid_.find_nearest(TileType::OpenSpace,
             pos.x, pos.y).first >= 0;
         float u_create = 0.0f;
-        if (open_space_available) {
-            u_create = personality.artistry * u_expression * 1.5f;  // A: base multiplier
-            // B4: CREATE is more attractive when meaning is unfulfilled
-            if (needs.meaning > 0.4f) {
-                u_create += personality.artistry * needs.meaning * 0.5f;
-            }
-            // S2: DISSOCIATED agents are drawn to CREATE (retreat into art)
-            if (stress.state == StressState::DISSOCIATED) {
-                u_create *= 1.3f;
-            }
-            // A: Maslow boost — creativity flourishes when fed and rested
-            if (needs.hunger < 0.3f && needs.rest < 0.3f) {
-                u_create *= 2.0f;
-            } else if (needs.hunger < 0.5f && needs.rest < 0.5f) {
-                u_create *= 1.3f;
-            }
+        if (open_space_available && needs.expression > 0.25f) {
+            float expr_gate = (needs.expression - 0.25f) / 0.75f;  // 0..1 above threshold
+            u_create = personality.artistry * u_expression * (1.0f + expr_gate);
+            if (needs.meaning > 0.4f)
+                u_create += personality.artistry * needs.meaning * 0.8f;
+            if (stress.state == StressState::DISSOCIATED) u_create *= 1.3f;
+            // Maslow boost
+            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_create *= 2.5f;
+            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_create *= 1.5f;
         }
 
-        // EXPLORE
-        float u_explore = personality.curiosity * u_purpose * 1.0f;  // A: doubled from 0.5
-        // B4: Agents with unfulfilled meaning are drawn to explore
-        if (needs.meaning > 0.4f) {
-            u_explore += personality.curiosity * needs.meaning * 0.5f;
-        }
-        // S2: DISSOCIATED agents seek escape through exploration
-        if (stress.state == StressState::DISSOCIATED) {
-            u_explore *= 1.3f;
-        }
-        // A: Maslow boost — explore when basic needs are met
-        if (needs.hunger < 0.3f && needs.rest < 0.3f) {
-            u_explore *= 2.0f;
+        // EXPLORE: THRESHOLD GATE — curiosity fires above 0.25 purpose
+        float u_explore = 0.0f;
+        if (needs.purpose > 0.25f) {
+            float explore_gate = (needs.purpose - 0.25f) / 0.75f;
+            u_explore = personality.curiosity * u_purpose * (0.5f + explore_gate);
+            if (needs.meaning > 0.4f)
+                u_explore += personality.curiosity * needs.meaning * 0.5f;
+            if (stress.state == StressState::DISSOCIATED) u_explore *= 1.3f;
+            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_explore *= 2.0f;
         }
 
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.

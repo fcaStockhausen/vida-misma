@@ -2,6 +2,11 @@
 #include <string>
 #include <toml++/toml.hpp>
 
+enum class DirectorMode {
+    CALM,     // No external pressure — observe cultural/social emergence
+    NORMAL,   // Standard factory pressure with quota escalation
+};
+
 struct Config {
     // Grid
     int grid_width  = 60;
@@ -94,6 +99,9 @@ struct Config {
     int   restructure_interval     = 800;    // ticks between restructure checks
     float restructure_probability  = 0.2f;   // chance per check
     float noncompliance_stress     = 0.002f; // stress per tick per noncompliance level
+
+    // Director
+    DirectorMode director_mode = DirectorMode::NORMAL;
 
     // Eating zones / social pressure
     float inv_food_cap              = 5.0f;  // 5 "viandas" — enough for ~1000 ticks of survival

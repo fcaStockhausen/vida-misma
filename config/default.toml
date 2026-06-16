@@ -1,5 +1,9 @@
 # La Vida Misma - Simulation Configuration
 #
+# DIRECTOR:
+#   calm   = no external pressure, observe cultural/social emergence
+#   normal = standard factory pressure with quota escalation
+#
 # PRODUCTION CHAIN:
 #   FoodSource tiles → GATHER → raw_food in inventory
 #   ScrapPile tiles  → GATHER → raw_material in inventory
@@ -99,3 +103,9 @@ eat_at_work_health_decay    = 0.002  # factory_health drop per eat-at-work tick
 eat_at_work_stress          = 0.010  # stress added to the transgressor per eat-at-work tick
 witness_radius              = 3      # another agent within Manhattan ≤ N "reports" the transgression
                                      # — without a witness present, no penalty fires.
+
+# Director — the meta-agent that modulates external pressure.
+# calm:   no quota, no deterioration, no restructure — pure observation
+# normal: standard factory pressure with quota escalation
+[director]
+mode = "normal"

@@ -9,9 +9,10 @@
 // Helpers
 // ============================================================
 
-static Config make_config(int argc, char* argv[], int arg_base) {
+static Config make_config(int argc, char* argv[], int arg_base, bool force_calm = false) {
     std::string config_path = "config/default.toml";
     Config cfg = load_config(config_path);
+    if (force_calm) cfg.director_mode = DirectorMode::CALM;
     if (argc > arg_base + 0) cfg.seed = std::atoi(argv[arg_base + 0]);
     return cfg;
 }
@@ -457,6 +458,7 @@ static void usage() {
         "Usage: vida_batch <command> [args]\n"
         "\n"
         "Commands:\n"
+        "  calm    <ticks> [seed]          Calm mode (no factory pressure)\n"
         "  run     <ticks> [seed]          Numeric timeline (default)\n"
         "  story   <ticks> [seed]          First-person narrative for all agents\n"
         "  agent   <id> <ticks> [seed]     Full journal of one agent\n"
@@ -471,6 +473,55 @@ int main(int argc, char* argv[]) {
     if (argc < 2) { usage(); return 1; }
 
     std::string cmd = argv[1];
+    bool force_calm = false;
+    if (cmd == "calm") {
+        force_calm = true;
+        cmd = "run";
+        // Shift argv so cmd_run sees "calm" as argv[1] (it uses make_config with force_calm)
+    }
+    if (force_calm) {
+        // Re-run cmd_run with calm mode
+        Config cfg = make_config(argc, argv, 3, true);
+        int ticks = 1000;
+        if (argc > 2) ticks = std::atoi(argv[2]);
+        if (ticks <= 0) ticks = 1000;
+        Simulation sim(cfg);
+        std::printf("=== La Vida Misma - CALM MODE (no pressure) ===\n");
+        std::printf("Grid: %dx%d  Agents: %d  Ticks: %d  Seed: %d\n",
+            cfg.grid_width, cfg.grid_height, cfg.initial_population, ticks, cfg.seed);
+        int sample_interval = std::max(1, ticks / 20);
+        std::printf("\n%6s %5s %5s %5s %5s %5s %5s %5s %5s\n",
+            "tick", "alive", "GATH", "BUIL", "WORK", "EAT", "REST", "SOC", "CREA");
+        for (int t = 0; t < ticks; t++) {
+            sim.advance();
+            if (sim.alive_count() == 0) {
+                std::printf("  ...everyone died at tick %d\n", t);
+                break;
+            }
+            if (t % sample_interval == 0 || t == ticks - 1) {
+                int act_counts[12] = {};
+                auto view = sim.registry().view<const ActionComponent, const AgentComponent>();
+                for (auto e : view) {
+                    if (!sim.registry().get<AgentComponent>(e).alive) continue;
+                    auto& a = sim.registry().get<ActionComponent>(e);
+                    act_counts[(int)a.current]++;
+                }
+                std::printf("%6d %5d %5d %5d %5d %5d %5d %5d %5d\n",
+                    t, sim.alive_count(),
+                    act_counts[(int)ActionType::GATHER],
+                    act_counts[(int)ActionType::BUILD],
+                    act_counts[(int)ActionType::WORK],
+                    act_counts[(int)ActionType::EAT],
+                    act_counts[(int)ActionType::REST],
+                    act_counts[(int)ActionType::SOCIALIZE],
+                    act_counts[(int)ActionType::CREATE]);
+            }
+        }
+        std::printf("\nDone. alive=%d  artifacts=%d  factions=%d  food=%.1f\n",
+            sim.alive_count(), sim.artifacts_created(), sim.factions_formed(),
+            sim.total_storage_food());
+        return 0;
+    }
     if (cmd == "run")          return cmd_run(argc, argv);
     if (cmd == "story")        return cmd_story(argc, argv);
     if (cmd == "agent")        return cmd_agent(argc, argv);

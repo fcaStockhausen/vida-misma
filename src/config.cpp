@@ -101,6 +101,15 @@ Config load_config(const std::string& path) {
         cfg.initial_food_per_agent  = ex->get_as<double>("initial_food_per_agent")->value_or(cfg.initial_food_per_agent);
     }
 
+    // Director
+    if (auto dir = config["director"].as_table()) {
+        std::string mode_str = dir->get_as<std::string>("mode")->value_or("");
+        if (mode_str == "calm" || mode_str == "CALM")
+            cfg.director_mode = DirectorMode::CALM;
+        else
+            cfg.director_mode = DirectorMode::NORMAL;
+    }
+
     // Eating zones / social pressure
     if (auto ez = config["eating"].as_table()) {
         cfg.inv_food_cap              = ez->get_as<double>("inv_food_cap")->value_or(cfg.inv_food_cap);

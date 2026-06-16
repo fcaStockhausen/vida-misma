@@ -27,22 +27,35 @@ void Simulation::advance() {
     system_regen_resources();
     system_decay_needs();
 
+    bool calm = (config_.director_mode == DirectorMode::CALM);
+
     // A1: Quota escalation — the factory demands more over time.
-    // Capped at 3x initial quota to prevent inevitable collapse —
-    // agents who build enough infrastructure can sustain indefinitely.
-    float quota_cap = config_.quota_per_tick * 3.0f;
-    current_quota_per_tick_ = std::min(quota_cap,
-        current_quota_per_tick_ + config_.quota_growth_rate);
+    // Disabled in CALM mode: no external pressure.
+    if (!calm) {
+        float quota_cap = config_.quota_per_tick * 3.0f;
+        current_quota_per_tick_ = std::min(quota_cap,
+            current_quota_per_tick_ + config_.quota_growth_rate);
+    } else {
+        current_quota_per_tick_ = 0.0f;
+        factory_health_ = 1.0f;  // no decay in calm mode
+    }
 
     system_compute_utility();
     system_find_targets();
     system_move_to_targets();
     system_execute_actions();
-    system_conveyor_transport();   // move resources along conveyor chains
-    system_ship_out_food();        // external pressure: shipping food through Exit tiles
-    system_factory_deterioration();// machine breaks when health is low
-    system_factory_restructure();  // A2: periodic factory reconfiguration
-    system_artifact_effects();     // B1: artifact mood boost + decay
+    system_conveyor_transport();
+    system_ship_out_food();
+
+    // Pressure systems — disabled in CALM mode.
+    // The factory doesn't deteriorate, restructure, or seal spaces.
+    if (!calm) {
+        system_factory_deterioration();
+        system_factory_restructure();
+        system_hidden_space_exposure();
+    }
+
+    system_artifact_effects();
     system_hidden_space_exposure();// B2: factory seals overused hidden spaces
     system_faction_formation();    // B3: trust clusters become factions
     system_update_stress();
