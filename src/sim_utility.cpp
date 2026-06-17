@@ -31,12 +31,28 @@ void Simulation::system_compute_utility() {
             }
         }
 
-    // infra_gap: measures how much infrastructure is still unbuilt.
-    // Includes both Machine frames AND resource tiles that can have machines built on them.
+    // infra_gap: does the colony have ENOUGH infrastructure?
+    // Based on actual NEED (machines per agent ratio), not total possible tiles.
+    // When the colony has enough food/materials/output machines, infra_gap → 0
+    // and agents are free to socialize, create, explore.
+    int alive_n = alive_count();
+    int food_machine_need = std::max(0, (alive_n / 12) - built_food_machines);
+    int built_mat = 0, built_out = 0;
+    for (int gy = 0; gy < grid_.height(); gy++)
+        for (int gx = 0; gx < grid_.width(); gx++)
+            if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built) {
+                if (grid_.data_at(gx, gy).machine_type == MachineType::Materials) built_mat++;
+                else if (grid_.data_at(gx, gy).machine_type == MachineType::Output) built_out++;
+            }
+    int mat_machine_need = std::max(0, (alive_n / 12) - built_mat);
+    int out_machine_need = std::max(0, 2 - built_out);
+    int total_machine_need = food_machine_need + mat_machine_need + out_machine_need;
     int total_infra = total_machines + unbuilt_resources;
     float built_ratio = (total_infra > 0)
         ? (float)built_machines / (float)total_infra : 0.0f;
-    float infra_gap = 1.0f - built_ratio;
+    float infra_gap = (total_machine_need > 0)
+        ? std::min(1.0f, (float)total_machine_need / 4.0f)
+        : 0.0f;  // all needs met = zero infra drive
 
     // Food supply ratio: how much food we have vs how much we need.
     // Includes BOTH storage food AND agent inventory food, since agents
@@ -510,6 +526,11 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_output);
         }
 
+        // HARD GATE: when colony has enough infrastructure, BUILD collapses.
+        // This frees agents to socialize, create, explore.
+        // Only a fraction of agents should build at any given time.
+        u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
+
         // Focus dampener for BUILD — same principle as WORK and GATHER.
         // Only when food supply is healthy.
         {
@@ -638,23 +659,22 @@ void Simulation::system_compute_utility() {
         float u_rest_action = rest_weight * u_rest;  // u_rest already uses survival_urgency
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
-        // THRESHOLD GATE (The Sims pattern): below threshold = near-zero utility.
-        // Above threshold = strong drive. Creates clean behavioral windows.
+        // THRESHOLD GATE — lower threshold so social fires more readily.
         float gregariousness_mult = 1.0f;
         if (stress.state == StressState::DISSOCIATED) gregariousness_mult = 0.7f;
         if (stress.state == StressState::BROKEN) gregariousness_mult = 0.3f;
         float effective_gregariousness = personality.gregariousness * gregariousness_mult
                                        * (1.0f - stress.trauma * config_.trauma_social_impact);
         float u_socialize = 0.0f;
-        if (needs.social > 0.25f) {
+        if (needs.social > 0.15f) {
             // Gate passed — social drive ramps up sharply
-            float social_gate = (needs.social - 0.25f) / 0.75f;  // 0..1 above threshold
-            u_socialize = effective_gregariousness * u_social * (0.5f + social_gate);
+            float social_gate = (needs.social - 0.15f) / 0.85f;  // 0..1 above threshold
+            u_socialize = effective_gregariousness * u_social * (0.8f + social_gate);
             u_socialize *= (0.5f + 0.5f * nearby_trust);
             u_socialize += soc.influence * 0.1f;
-            // Maslow boost doubles when well-fed and rested
-            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_socialize *= 2.5f;
-            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_socialize *= 1.5f;
+            // Maslow boost — stronger when fed and rested
+            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_socialize *= 4.0f;
+            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_socialize *= 2.0f;
         }
 
         // CREATE: THRESHOLD GATE (The Sims pattern)
