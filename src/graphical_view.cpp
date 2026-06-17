@@ -130,6 +130,7 @@ int GraphicalView::speed_ms() const {
 
 void GraphicalView::cycle_speed(int dir) {
     speed_idx_ = std::clamp(speed_idx_ + dir, 0, SPEED_COUNT - 1);
+    if (speed_cb_) speed_cb_(speed_ms());
 }
 
 // ============================================================

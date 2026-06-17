@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
+#include <functional>
 
 class GraphicalView {
 public:
@@ -15,6 +17,7 @@ public:
     ~GraphicalView();
 
     void run();
+    void set_speed_callback(std::function<void(int)> cb) { speed_cb_ = std::move(cb); }
 
 private:
     Simulation& sim_;
@@ -45,9 +48,10 @@ private:
     bool follow_agent_ = false;
 
     // Speed
-    int speed_idx_ = 2; // index into SPEED_PRESETS
-    static constexpr int SPEED_PRESETS[] = {20, 50, 100, 150, 200, 300, 500};
-    static constexpr int SPEED_COUNT = 7;
+    int speed_idx_ = 5; // index into SPEED_PRESETS (default 300ms = slow)
+    static constexpr int SPEED_PRESETS[] = {20, 50, 100, 150, 200, 300, 500, 800, 1200};
+    static constexpr int SPEED_COUNT = 9;
+    std::function<void(int)> speed_cb_;  // notifies main when speed changes
 
     // View toggles
     bool show_help_ = false;
@@ -74,6 +78,13 @@ private:
     // Hover
     int hover_gx_ = -1;
     int hover_gy_ = -1;
+
+    // Movement interpolation: stores previous tick's positions for smooth
+    // agent rendering between ticks. Keyed by agent entity ID.
+    struct PrevPos { int x, y; };
+    std::unordered_map<int, PrevPos> prev_positions_;
+    std::unordered_map<int, PrevPos> render_positions_;
+    int last_render_tick_ = -1;
 
     // --- Methods ---
     void handle_events();
