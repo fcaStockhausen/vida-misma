@@ -33,9 +33,9 @@ void Simulation::system_execute_actions() {
                 int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
                 if (d <= 3) crowd++;
             }
-            if (crowd >= 2) {
-                float passive = 0.001f * crowd;
-                if (grid_.at(pos.x, pos.y) == TileType::EatingZone) passive *= 2.0f;
+            if (crowd >= 3) {
+                float passive = 0.0003f * crowd;
+                if (grid_.at(pos.x, pos.y) == TileType::EatingZone) passive *= 1.5f;
                 needs.social = std::max(0.0f, needs.social - passive);
             }
         }
