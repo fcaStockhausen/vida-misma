@@ -6,6 +6,13 @@
 
 int main(int /*argc*/, char* /*argv*/[]) {
     std::string config_path = "config/default.toml";
+    FILE* test = std::fopen(config_path.c_str(), "r");
+    if (!test) {
+        // Try relative to executable (build/ dir → parent)
+        config_path = "../config/default.toml";
+        test = std::fopen(config_path.c_str(), "r");
+    }
+    if (test) std::fclose(test);
     Config cfg = load_config(config_path);
 
     Simulation sim(cfg);

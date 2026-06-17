@@ -16,7 +16,7 @@ Simulation::Simulation(const Config& cfg)
     , total_output_produced_(0.0f)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
-    , social_(cfg.initial_population)
+    , social_(cfg.max_population)
     , current_quota_per_tick_(cfg.quota_per_tick)
 {
     grid_.generate_wfc(cfg.seed);
@@ -181,9 +181,9 @@ void Simulation::spawn_initial_agents() {
         registry_.emplace<PositionComponent>(entity, sx, sy);
         registry_.emplace<AgentComponent>(entity, i, true);
 
-        // Personality from archetype with per-agent jitter.
-        // Distribution: ~4 Foremen, ~4 Networkers, ~3 Workers, ~3 Artisans,
-        //               ~4 Explorers, ~4 Survivors, then cycle.
+        // Balanced archetype distribution, cycles proportionally for any N.
+        // Ratios: 4 Foreman, 4 Networker, 4 Worker, 4 Artisan, 4 Explorer, 4 Survivor
+        // (equal split across 6 archetypes with slight variety)
         static const Archetype distribution[] = {
             Archetype::FOREMAN,  Archetype::FOREMAN,
             Archetype::NETWORKER, Archetype::NETWORKER,
@@ -205,8 +205,8 @@ void Simulation::spawn_initial_agents() {
             Archetype::ARTISAN,
             Archetype::STEADY_WORKER,
         };
-        Archetype at = (i < 24) ? distribution[i]
-                      : static_cast<Archetype>(i % (int)Archetype::COUNT);
+        constexpr int dist_size = sizeof(distribution) / sizeof(distribution[0]);
+        Archetype at = distribution[i % dist_size];
         auto base = archetype_traits(at);
 
         auto jitter = [&](float center, float j) -> float {

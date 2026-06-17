@@ -4,6 +4,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cmath>
 
 // ============================================================
 // Helpers
@@ -11,6 +13,12 @@
 
 static Config make_config(int argc, char* argv[], int arg_base, bool force_calm = false) {
     std::string config_path = "config/default.toml";
+    FILE* test = std::fopen(config_path.c_str(), "r");
+    if (!test) {
+        config_path = "../config/default.toml";
+        test = std::fopen(config_path.c_str(), "r");
+    }
+    if (test) std::fclose(test);
     Config cfg = load_config(config_path);
     if (force_calm) cfg.director_mode = DirectorMode::CALM;
     if (argc > arg_base + 0) cfg.seed = std::atoi(argv[arg_base + 0]);
@@ -451,6 +459,155 @@ static int cmd_map(int argc, char* argv[]) {
     return 0;
 }
 
+// ============================================================
+// Culture diagnostic: correlate personality traits with cultural actions
+// ============================================================
+static int cmd_culture(int argc, char* argv[]) {
+    int ticks = 2000;
+    if (argc > 2) ticks = std::atoi(argv[2]);
+    if (ticks <= 0) ticks = 2000;
+
+    Config cfg = make_config(argc, argv, 3, true);  // force calm
+    Simulation sim(cfg);
+
+    struct AgentTrack {
+        int id = -1;
+        const char* arch = "?";
+        float artistry = 0, gregariousness = 0, curiosity = 0, compliance = 0;
+        int create_ticks = 0, social_ticks = 0, explore_ticks = 0;
+        int work_ticks = 0, gather_ticks = 0, build_ticks = 0;
+        int rest_ticks = 0, eat_ticks = 0;
+        int alive_ticks = 0;
+    };
+    std::vector<AgentTrack> tracks;
+
+    // Initialize from spawn
+    {
+        auto view = sim.registry().view<const AgentComponent, const PersonalityComponent>();
+        for (auto e : view) {
+            auto& ag = sim.registry().get<AgentComponent>(e);
+            auto& ps = sim.registry().get<PersonalityComponent>(e);
+            AgentTrack t;
+            t.id = ag.id;
+            t.arch = archetype_name(ps.archetype);
+            t.artistry = ps.artistry;
+            t.gregariousness = ps.gregariousness;
+            t.curiosity = ps.curiosity;
+            t.compliance = ps.compliance;
+            tracks.push_back(t);
+        }
+        std::sort(tracks.begin(), tracks.end(), [](auto& a, auto& b) { return a.id < b.id; });
+    }
+
+    for (int t = 0; t < ticks; t++) {
+        sim.advance();
+        if (sim.alive_count() == 0) break;
+
+        auto view = sim.registry().view<const ActionComponent, const AgentComponent>();
+        for (auto e : view) {
+            auto& ag = sim.registry().get<AgentComponent>(e);
+            if (!ag.alive) continue;
+            if (ag.id < 0 || ag.id >= (int)tracks.size()) continue;
+            auto& a = sim.registry().get<ActionComponent>(e);
+            auto& tr = tracks[ag.id];
+            tr.alive_ticks++;
+            switch (a.current) {
+                case ActionType::CREATE:    tr.create_ticks++; break;
+                case ActionType::SOCIALIZE: tr.social_ticks++; break;
+                case ActionType::EXPLORE:   tr.explore_ticks++; break;
+                case ActionType::WORK:      tr.work_ticks++; break;
+                case ActionType::GATHER:    tr.gather_ticks++; break;
+                case ActionType::BUILD:     tr.build_ticks++; break;
+                case ActionType::REST:      tr.rest_ticks++; break;
+                case ActionType::EAT:       tr.eat_ticks++; break;
+                default: break;
+            }
+        }
+    }
+
+    // Print per-agent table
+    std::printf("# Cultural Behavior vs Personality (calm mode, %d ticks, seed %d)\n\n", ticks, cfg.seed);
+    std::printf("%3s %-9s %4s %4s %4s %4s | %5s %5s %5s %5s %5s %5s %5s\n",
+        "ID", "Arch", "Art", "Greg", "Cur", "Comp",
+        "CRE%", "SOC%", "EXP%", "WRK%", "BLD%", "GATH%", "RST%");
+    for (auto& tr : tracks) {
+        float at = std::max(1, tr.alive_ticks);
+        std::printf("%3d %-9s %.2f %.2f %.2f %.2f | %5.1f %5.1f %5.1f %5.1f %5.1f %5.1f %5.1f\n",
+            tr.id, tr.arch, tr.artistry, tr.gregariousness, tr.curiosity, tr.compliance,
+            100.0f * tr.create_ticks / at,
+            100.0f * tr.social_ticks / at,
+            100.0f * tr.explore_ticks / at,
+            100.0f * tr.work_ticks / at,
+            100.0f * tr.build_ticks / at,
+            100.0f * tr.gather_ticks / at,
+            100.0f * tr.rest_ticks / at);
+    }
+
+    // Pearson correlation helper
+    auto pearson = [](const std::vector<float>& xs, const std::vector<float>& ys) -> float {
+        int n = xs.size();
+        if (n < 3) return 0.0f;
+        float mx = 0, my = 0;
+        for (int i = 0; i < n; i++) { mx += xs[i]; my += ys[i]; }
+        mx /= n; my /= n;
+        float num = 0, dx2 = 0, dy2 = 0;
+        for (int i = 0; i < n; i++) {
+            float dx = xs[i] - mx, dy = ys[i] - my;
+            num += dx * dy; dx2 += dx * dx; dy2 += dy * dy;
+        }
+        float den = std::sqrt(dx2 * dy2);
+        return (den > 0.001f) ? num / den : 0.0f;
+    };
+
+    // Compute correlations
+    std::vector<float> art_vals, greg_vals, cur_vals, comp_vals;
+    std::vector<float> crea_pct, soc_pct, exp_pct, work_pct;
+    for (auto& tr : tracks) {
+        float at = std::max(1, tr.alive_ticks);
+        art_vals.push_back(tr.artistry);
+        greg_vals.push_back(tr.gregariousness);
+        cur_vals.push_back(tr.curiosity);
+        comp_vals.push_back(tr.compliance);
+        crea_pct.push_back(100.0f * tr.create_ticks / at);
+        soc_pct.push_back(100.0f * tr.social_ticks / at);
+        exp_pct.push_back(100.0f * tr.explore_ticks / at);
+        work_pct.push_back(100.0f * tr.work_ticks / at);
+    }
+
+    std::printf("\n# Correlations (Pearson r)\n");
+    std::printf("%-20s %6s %6s %6s %6s\n", "", "Art", "Greg", "Cur", "Comp");
+    std::printf("%-20s %6.2f %6.2f %6.2f %6.2f\n", "CREATE",
+        pearson(art_vals, crea_pct), pearson(greg_vals, crea_pct),
+        pearson(cur_vals, crea_pct), pearson(comp_vals, crea_pct));
+    std::printf("%-20s %6.2f %6.2f %6.2f %6.2f\n", "SOCIALIZE",
+        pearson(art_vals, soc_pct), pearson(greg_vals, soc_pct),
+        pearson(cur_vals, soc_pct), pearson(comp_vals, soc_pct));
+    std::printf("%-20s %6.2f %6.2f %6.2f %6.2f\n", "EXPLORE",
+        pearson(art_vals, exp_pct), pearson(greg_vals, exp_pct),
+        pearson(cur_vals, exp_pct), pearson(comp_vals, exp_pct));
+    std::printf("%-20s %6.2f %6.2f %6.2f %6.2f\n", "WORK",
+        pearson(art_vals, work_pct), pearson(greg_vals, work_pct),
+        pearson(cur_vals, work_pct), pearson(comp_vals, work_pct));
+
+    // Interpretation
+    std::printf("\n# Interpretation\n");
+    float r_art_crea = pearson(art_vals, crea_pct);
+    float r_greg_soc = pearson(greg_vals, soc_pct);
+    float r_cur_exp = pearson(cur_vals, exp_pct);
+    float r_comp_work = pearson(comp_vals, work_pct);
+    std::printf("  artistry  → CREATE:     r=%.2f  %s\n", r_art_crea,
+        r_art_crea > 0.3f ? "STRONG (correct)" : r_art_crea > 0.1f ? "weak" : "NONE (problem)");
+    std::printf("  gregariou → SOCIALIZE:  r=%.2f  %s\n", r_greg_soc,
+        r_greg_soc > 0.3f ? "STRONG (correct)" : r_greg_soc > 0.1f ? "weak" : "NONE (problem)");
+    std::printf("  curiosity → EXPLORE:    r=%.2f  %s\n", r_cur_exp,
+        r_cur_exp > 0.3f ? "STRONG (correct)" : r_cur_exp > 0.1f ? "weak" : "NONE (problem)");
+    std::printf("  compliance→ WORK:       r=%.2f  %s\n", r_comp_work,
+        r_comp_work > 0.3f ? "STRONG (correct)" : r_comp_work > 0.1f ? "weak" : "NONE (problem)");
+
+    std::printf("\nDone. alive=%d  artifacts=%d\n", sim.alive_count(), sim.artifacts_created());
+    return 0;
+}
+
 static void usage() {
     std::fprintf(stderr,
         "La Vida Misma — CLI\n"
@@ -458,6 +615,7 @@ static void usage() {
         "Usage: vida_batch <command> [args]\n"
         "\n"
         "Commands:\n"
+        "  culture <ticks> [seed]         Cultural behavior vs personality diagnostic\n"
         "  calm    <ticks> [seed]          Calm mode (no factory pressure)\n"
         "  run     <ticks> [seed]          Numeric timeline (default)\n"
         "  story   <ticks> [seed]          First-person narrative for all agents\n"
@@ -473,6 +631,7 @@ int main(int argc, char* argv[]) {
     if (argc < 2) { usage(); return 1; }
 
     std::string cmd = argv[1];
+    if (cmd == "culture")     return cmd_culture(argc, argv);
     bool force_calm = false;
     if (cmd == "calm") {
         force_calm = true;
