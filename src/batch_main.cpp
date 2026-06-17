@@ -419,6 +419,8 @@ static int cmd_map(int argc, char* argv[]) {
                 std::printf("  SCRAPPILE    at (%2d,%2d) amt=%.1f\n", x, y, d.resource_amount);
             } else if (t == TileType::FoodSource) {
                 std::printf("  FOODSOURCE   at (%2d,%2d) amt=%.1f\n", x, y, grid.data_at(x, y).resource_amount);
+            } else if (t == TileType::EatingZone) {
+                std::printf("  EATINGZONE   at (%2d,%2d) built=%d\n", x, y, grid.data_at(x, y).built);
             }
         }
 

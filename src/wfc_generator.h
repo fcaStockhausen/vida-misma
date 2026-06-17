@@ -303,6 +303,7 @@ private:
             }
 
         place_open_spaces(P);      // OpenSpace clusters (4+ tiles, guaranteed)
+        place_eating_zone(P);      // Central communal eating space (large, pre-built)
         place_exit_storage(P);     // 2 Storage tiles near Exit
         place_food_sources(P);     // Renewable raw food (agents build FoodMachine on top)
         place_scrap_piles(P);      // Renewable raw material (agents build OutputMachine on top)
@@ -369,6 +370,77 @@ private:
                         }
                     }
                 }
+        }
+    }
+
+    // ================================================================
+    // EatingZone: a large communal eating space at map center.
+    // Pre-built (part of the factory's initial infrastructure).
+    // Size: 5x3 to 7x4 tiles — enough for 8-12 agents to gather.
+    // Includes 1-2 Storage tiles at the edge for food access.
+    // ================================================================
+
+    void place_eating_zone(std::vector<Placement>& P) {
+        int mid_x = width_ / 2;
+        int mid_y = height_ / 2;
+
+        // Random size: wide enough for communal eating
+        std::uniform_int_distribution<int> rx(2, 3);  // half-width
+        std::uniform_int_distribution<int> ry(1, 2);  // half-height
+        int hw = rx(rng_);
+        int hh = ry(rng_);
+
+        // Stamp EatingZone tiles
+        int placed = 0;
+        for (int dy = -hh; dy <= hh; dy++)
+            for (int dx = -hw; dx <= hw; dx++) {
+                int px = mid_x + dx;
+                int py = mid_y + dy;
+                if (px > 1 && px < width_ - 2 && py > 1 && py < height_ - 2) {
+                    TileType cur = peek(P, px, py);
+                    if (cur == TileType::Floor || cur == TileType::OpenSpace) {
+                        set_placement(P, px, py,
+                            {px, py, TileType::EatingZone, MachineType::Food,
+                             0, 0, 0, 0, true, 0.0f, false, ConveyorDir::E});
+                        placed++;
+                    }
+                }
+            }
+
+        if (placed < 3) return;  // too small, skip storage
+
+        // Place 1-2 Storage tiles adjacent to the EatingZone edge.
+        // Search outward from the zone perimeter.
+        for (int side = 0; side < 2; side++) {
+            int sy = mid_y + (side == 0 ? hh + 1 : -(hh + 1));
+            for (int dx = -hw; dx <= hw && placed > 0; dx++) {
+                int sx = mid_x + dx;
+                if (sx > 1 && sx < width_ - 2 && sy > 1 && sy < height_ - 2) {
+                    TileType cur = peek(P, sx, sy);
+                    if (cur == TileType::Floor || cur == TileType::OpenSpace) {
+                        set_placement(P, sx, sy,
+                            {sx, sy, TileType::Storage, MachineType::Food,
+                             0, 0, 0, 20.0f, true, 0.0f, false, ConveyorDir::E});
+                        return;  // one storage is enough
+                    }
+                }
+            }
+        }
+        // Fallback: try left/right edges
+        for (int side = 0; side < 2; side++) {
+            int sx = mid_x + (side == 0 ? hw + 1 : -(hw + 1));
+            for (int dy = -hh; dy <= hh && placed > 0; dy++) {
+                int sy = mid_y + dy;
+                if (sx > 1 && sx < width_ - 2 && sy > 1 && sy < height_ - 2) {
+                    TileType cur = peek(P, sx, sy);
+                    if (cur == TileType::Floor || cur == TileType::OpenSpace) {
+                        set_placement(P, sx, sy,
+                            {sx, sy, TileType::Storage, MachineType::Food,
+                             0, 0, 0, 20.0f, true, 0.0f, false, ConveyorDir::E});
+                        return;
+                    }
+                }
+            }
         }
     }
 

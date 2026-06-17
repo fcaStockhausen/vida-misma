@@ -874,6 +874,11 @@ public:
                 d.stored_raw_material = 0.0f;
                 d.stored_output       = 0.0f;
             }
+            if (p.type == TileType::EatingZone) {
+                d.built          = p.built;   // pre-placed EatingZone is built
+                d.build_progress = p.built ? 1.0f : 0.0f;
+                d.build_cost     = p.build_cost > 0.0f ? p.build_cost : 2.0f;
+            }
             if (p.type == TileType::Conveyor) {
                 d.built              = false;
                 d.build_progress     = 0.0f;
