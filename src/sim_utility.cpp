@@ -889,30 +889,45 @@ void Simulation::system_compute_utility() {
             }
         }
 
-        // Set stickiness for WORK actions (The Sims pattern):
-        // WORK requires walking to machines, then sustained execution.
-        // BUILD doesn't need stickiness (it has build_progress for sustained execution).
-        // GATHER doesn't need it (agents gather where they stand).
-        // SOCIALIZE gets light stickiness to prevent chase-cancel loops.
-        if (action.current == ActionType::WORK) {
-            if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
-                action.sticky_action = action.current;
-                int dist = 30;
-                if (action.target_x >= 0 && action.target_y >= 0) {
-                    dist = std::abs(pos.x - action.target_x) + std::abs(pos.y - action.target_y);
-                }
-                action.sticky_ticks = dist + 15;
+        // Set stickiness for ALL actions (The Sims / DF pattern).
+        // Agents commit to actions for a minimum duration — they don't
+        // reconsider every tick. Duration modulated by personality:
+        // an Artisan stays longer in CREATE, a Foreman in WORK.
+        // Survival overrides (hunger > 0.8) still break through.
+        if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
+            action.sticky_action = action.current;
+            int dist = 30;
+            if (action.target_x >= 0 && action.target_y >= 0) {
+                dist = std::abs(pos.x - action.target_x) + std::abs(pos.y - action.target_y);
             }
-        } else if (action.current == ActionType::SOCIALIZE) {
-            if (action.sticky_action != action.current || action.sticky_ticks <= 0) {
-                action.sticky_action = action.current;
-                action.sticky_ticks = 10;  // persist for 10 ticks to close distance
-            }
-        } else {
-            // Clear stickiness when switching away from WORK
-            if (action.sticky_action == ActionType::WORK) {
-                action.sticky_ticks = 0;
-                action.sticky_action = ActionType::IDLE;
+            switch (action.current) {
+                case ActionType::WORK:
+                    action.sticky_ticks = dist + 15 + (int)(personality.compliance * 15);
+                    break;
+                case ActionType::SOCIALIZE:
+                    action.sticky_ticks = std::max(15, dist) + (int)(personality.gregariousness * 20);
+                    break;
+                case ActionType::CREATE:
+                    action.sticky_ticks = 20 + (int)(personality.artistry * 40);
+                    break;
+                case ActionType::GATHER:
+                    action.sticky_ticks = 10 + (int)(personality.compliance * 10);
+                    break;
+                case ActionType::BUILD:
+                    action.sticky_ticks = 10 + (int)(personality.compliance * 10);
+                    break;
+                case ActionType::REST:
+                    action.sticky_ticks = 20 + (int)(personality.laziness * 20);
+                    break;
+                case ActionType::EXPLORE:
+                    action.sticky_ticks = 15 + (int)(personality.curiosity * 25);
+                    break;
+                case ActionType::EAT:
+                    action.sticky_ticks = 5;
+                    break;
+                default:
+                    action.sticky_ticks = 8;
+                    break;
             }
         }
 

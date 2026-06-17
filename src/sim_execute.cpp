@@ -75,8 +75,7 @@ void Simulation::system_execute_actions() {
                             total_raw_gathered_ += amount;
                             skills.xp_domestic += 1.0f;
                             skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
-                            emit_log(agent.id, "gathered " + ff2(amount) + " raw food at (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                            // No per-tick log for gathering — too spammy
                         }
                     } else { // ScrapPile
                         if (inv.can_carry(amount)) {
@@ -85,8 +84,7 @@ void Simulation::system_execute_actions() {
                             total_raw_gathered_ += amount;
                             skills.xp_domestic += 1.0f;
                             skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
-                            emit_log(agent.id, "salvaged " + ff2(amount) + " scrap at (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                            // No per-tick log for salvaging — too spammy
                         }
                     }
                 }
@@ -137,9 +135,7 @@ void Simulation::system_execute_actions() {
                                      std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                         } else {
                             td.built = false;
-                            emit_log(agent.id, "building FoodMachine on FoodSource (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) +
-                                     ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                            // No per-tick building progress log
                         }
                     }
                     break;
@@ -167,9 +163,7 @@ void Simulation::system_execute_actions() {
                                      std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                         } else {
                             td.built = false;
-                            emit_log(agent.id, "building MaterialsMachine on ScrapPile (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) +
-                                     ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                            // No per-tick building progress log
                         }
                     }
                     break;
@@ -194,9 +188,7 @@ void Simulation::system_execute_actions() {
                                 emit_log(agent.id, std::string("COMPLETED ") + mtype + "Machine at (" +
                                          std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                             } else {
-                                emit_log(agent.id, "building Machine frame (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) +
-                                         ") " + ff2(td.build_progress) + "/" + ff2(needed));
+                                // No per-tick building progress log
                             }
                         }
                     }
@@ -231,9 +223,7 @@ void Simulation::system_execute_actions() {
                                          std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
                             } else {
                                 td.built = false;
-                                emit_log(agent.id, "building OutputMachine (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) +
-                                         ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                                // No per-tick building progress log
                             }
                             break;
                         }
@@ -297,9 +287,7 @@ void Simulation::system_execute_actions() {
                                 emit_log(agent.id, "BUILT a conveyor at (" +
                                          std::to_string(conv_x) + "," + std::to_string(conv_y) + ")");
                             } else {
-                                emit_log(agent.id, "building conveyor at (" +
-                                         std::to_string(conv_x) + "," + std::to_string(conv_y) +
-                                         ") " + ff2(td.build_progress) + "/" + ff2(td.build_cost));
+                                // No per-tick building progress log
                             }
                         }
                         break;
@@ -634,13 +622,8 @@ void Simulation::system_execute_actions() {
                         }
                     }
 
-                    if (deposited > 0.0f || !log_detail.empty()) {
-                        emit_log(agent.id, "worked [" + std::string(
-                            td.machine_type == MachineType::Food ? "FOOD" :
-                            td.machine_type == MachineType::Materials ? "MAT" : "OUT") +
-                            "] " + log_detail +
-                            (collab > 1.01f ? " (collab x" + ff2(collab) + ")" : ""));
-                    }
+                    // No per-tick work log — only log significant events
+                    // (handled by chronicle milestones, not every tick)
 
                     // Work satisfies purpose slightly and tires the worker.
                     needs.purpose = std::max(0.0f,
@@ -742,7 +725,7 @@ void Simulation::system_execute_actions() {
                     float pulled = pull_food_from_adjacent_storage(pos.x, pos.y, room);
                     if (pulled > 0.0f) {
                         inv.food += pulled;
-                        emit_log(agent.id, "grabbed " + ff2(pulled) + " food (snack to-go)");
+                        // No per-tick snack log
                     }
                 }
                 // Also pick up raw_material from storage if needed for building.
@@ -920,10 +903,9 @@ void Simulation::system_execute_actions() {
                     td.conveyor_condition += restored;
                     needs.purpose = std::max(0.0f,
                         needs.purpose - config_.work_purpose_gain * 0.5f);
-                    if (restored > 0.001f)
-                        emit_log(agent.id, "maintained conveyor at (" +
-                                 std::to_string(maint_x) + "," + std::to_string(maint_y) +
-                                 ") cond=" + ff2(td.conveyor_condition));
+                    if (restored > 0.001f) {
+                        // No per-tick maintain log
+                    }
                 }
                 break;
             }
