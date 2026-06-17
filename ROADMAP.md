@@ -8,9 +8,9 @@ live. Every mechanic exists to sharpen that tension.
 
 ## Current State
 
-**~9,600 LOC** across 24 source files. Compiles clean (Clang, C++20, CMake).
-Two targets: `vida_batch` (headless benchmark), `vida_gui` (SDL2 2.5D isometric).
-48 agents per simulation. Director system with CALM and NORMAL modes.
+**~9,800 LOC** across 24 source files. Compiles clean (Clang, C++20, CMake).
+Two targets: `vida_batch` (headless), `vida_gui` (SDL2 2.5D isometric).
+48 agents. Director system (CALM / NORMAL). Narrative journals.
 
 ### Architecture of Desire (implemented)
 
@@ -39,37 +39,51 @@ Personality-modulated action duration:
   Actions don't change every tick — behavior is visible and readable
 ```
 
-Culture diagnostic correlations (48 agents, calm mode, 2000 ticks):
-
-| Trait → Action | r (Pearson) |
-|---|---|
-| artistry → CREATE | **0.86** |
-| curiosity → EXPLORE | **0.78** |
-| gregariousness → SOCIALIZE | **0.42** |
-| compliance → WORK | 0.23 |
-
-### 3-Tier Production Chain
+### Congregation Spaces (implemented)
 
 ```
-ScrapPile ──GATHER──► raw_material
-    │
-    ▼
-MaterialsMachine: raw_material → construction_material
-    │                   │
-    │                   ├──► agent inventory (build conveyors, machines)
-    │                   └──► adjacent Storage
-    │                                      │
-    ▼                                      ▼
-OutputMachine: construction_material → output
-    │                                       │
-    ├──► conveyor chain ──────────────────► │
-    ├──► agent hauling (output inventory) ─►│
-    └──► adjacent Storage (fallback)        │
-                                            ▼
-                              Exit-adjacent Storage
-                                            │
-                                            ▼
-                              system_ship_out_food (quota drain)
+WFC pre-builds a large EatingZone (5×3 to 7×4 tiles) at map center.
+Adjacent Storage provides food access.
+
+Social mechanics:
+  SOCIALIZE targets EatingZone as congregation point
+  Communal eating: 3+ agents at EatingZone → social satisfaction bonus
+  Congregation bonus: 2+ nearby agents → satisfaction +50%, 3+ → +100%
+  Passive social: agents near 3+ others get small social satisfaction
+  Artifact attraction: CREATE targets OpenSpace near existing artifacts
+    → emergent galleries/studios where artists cluster
+```
+
+Culture diagnostic correlations (48 agents, calm mode, 2000 ticks):
+
+| Trait → Action | r (Pearson) | Status |
+|---|---|---|
+| artistry → CREATE | **0.86-0.92** | ✅ Strong |
+| curiosity → EXPLORE | **0.65-0.89** | ✅ Strong |
+| gregariousness → SOCIALIZE | **0.30-0.42** | ✅ Correct |
+| compliance → WORK | 0.23-0.41 | ⚠️ Variable |
+
+### Narrative System (implemented)
+
+```
+Chronicle dedup: same agent+type within 50 ticks is suppressed
+Event grouping: consecutive same-type events collapsed into summaries
+  "created 55 artworks" instead of 55 identical entries
+
+agent_arc generates archetype-based narrative:
+  "Artisan. A creator — made 60 artifacts in 997 ticks."
+  "Worker. A rebel — struck back 5 times against the machine."
+  "Networker. A giver — shared food 3 times. The community held."
+
+agent_journal shows collapsed life arc:
+  [    0] Artisan — appeared with something to make
+  [  166] created 55 artworks
+  [  907] struck at the machine
+  [  997] struck at the machine
+
+Per-archetype spawn phrases:
+  "Survivor — stumbled in — just wants to see tomorrow"
+  "Foreman — arrived — sleeves rolled, ready to run the floor"
 ```
 
 ---
@@ -92,6 +106,7 @@ OutputMachine: construction_material → output
 - [x] Focus system: unmet higher needs reduce WORK/GATHER/BUILD utility
 - [x] Threshold gates: cultural actions activate above need threshold
 - [x] Purpose decoupled from work (CREATE and SOCIALIZE also satisfy purpose)
+- [x] `infra_gap` reform: need-based formula, not total-tiles-based. BUILD collapses to 5-13% when needs met.
 
 ### Stress & Trauma
 - [x] 5 stress states: NORMAL → DISSOCIATED → EUPHORIC → BROKEN → REDEEMED
@@ -111,7 +126,6 @@ OutputMachine: construction_material → output
 - [x] Factory health, machine breaks, conveyor condition decay
 - [x] `machine_connected_to_exit()` flow verification
 - [x] Dynamic routing based on construction_material supply
-- [x] `infra_gap` reform: need-based, not total-tiles-based
 
 ### Pathfinding
 - [x] A* with per-agent `PathCache` (invalidates on target change or 20 ticks)
@@ -125,9 +139,27 @@ OutputMachine: construction_material → output
 - [x] Opinion dynamics (bounded confidence + DeGroot)
 - [x] Faction formation and trust modulation
 
+### Congregation Spaces
+- [x] WFC pre-builds large EatingZone (5×3 to 7×4) at map center with Storage
+- [x] SOCIALIZE targets EatingZone as congregation point
+- [x] Communal eating bonus: 3+ agents eating together → social satisfaction
+- [x] Passive social satisfaction: agents near 3+ others get small social tick
+- [x] Congregation count in SOCIALIZE: more agents = higher satisfaction
+- [x] Artifact attraction: CREATE targets tiles near existing artifacts
+
 ### Director System
 - [x] CALM mode: no quota, no deterioration, no restructure — pure observation
 - [x] NORMAL mode: standard factory pressure with quota escalation
+
+### Narrative & Chronicle
+- [x] Chronicle dedup: same agent+type within 50 ticks suppressed
+- [x] Event grouping: consecutive same-type collapsed into summaries
+- [x] agent_arc: archetype-based narrative ("A creator — made 60 artifacts")
+- [x] agent_journal: collapsed life arc with narrative phrasing
+- [x] Per-archetype spawn phrases
+- [x] Per-event-type first-person narrative texts
+- [x] CREATE/EXPLORE/SOCIALIZE generate chronicle events
+- [x] "ate at work" suppressed from chronicle (mechanical penalty still fires)
 
 ### Interface
 - [x] Headless batch runner: run, calm, culture, story, agent, analysis, map, jsonl
@@ -139,44 +171,17 @@ OutputMachine: construction_material → output
 ## In Progress / Needs Work
 
 ### Balance Tuning
-- [ ] **GATHER dominates** (36-53% of agent time) — next `infra_gap`-like to reform
-- [ ] **SOCIALIZE frequency low** (0-3%) — correlation correct but agents too dispersed
+- [ ] **GATHER dominates** (24-53% of agent time) — next `infra_gap`-like to reform
+- [ ] **SOCIALIZE correlation variable** (r=0.08 to 0.42 across seeds) — layout-dependent
 - [ ] **Logistics throughput** caps quota at ~33% avg in NORMAL mode
 - [ ] **Seed variance**: layout-dependent outcomes (food/machine placement)
+- [ ] **Narrative arc spam**: REDEMPTION/SABOTAGE still repeat in narrative summary
 
 ---
 
 ## Planned Features (by priority)
 
-### Priority 1: Congregation Spaces & Social Emergence
-
-The core problem: agents don't form community because they never gather in
-the same place. Socialization requires proximity (radius 6) but agents are
-dispersed across the map gathering and building.
-
-Design (inspired by DF meeting zones and The Sims community lots):
-
-- [ ] **EatingZone as congregation point**: agents with high social need path
-      to EatingZone even when not hungry. EatingZones "advertise" social value.
-      Multiple agents eating simultaneously get social satisfaction bonus.
-- [ ] **Gathering zones**: new tile type or EatingZone extension where agents
-      with high social/expression needs congregate. Not designated by the
-      factory — emerges from agent density (Schelling dynamics).
-      - Agents near 3+ others get social satisfaction passive tick
-      - High-artistry agents near other creatives form "studio" zones
-      - High-gregariousness agents form "plaza" zones
-- [ ] **Artifact attraction**: cultural artifacts boost mood of nearby agents
-      (already implemented) AND attract high-artistry agents to the location.
-      Creates emergent "galleries" — places agents visit for inspiration.
-- [ ] **Communal eating bonus**: when 3+ agents eat simultaneously in an
-      EatingZone, all get +social satisfaction and mood boost. Makes
-      synchronized eating socially valuable, not just nutritionally.
-- [ ] **Sleeping/nesting**: agents that REST repeatedly in the same area
-      develop affinity for that location. Creates "neighborhoods".
-
-Estimated: ~400-600 LOC across `sim_utility.cpp`, `sim_execute.cpp`, `grid.h`
-
-### Priority 2: Construction Recipes & Collaborative Building
+### Priority 1: Construction Recipes & Collaborative Building
 
 Currently agents build blindly — the WFC generator places machine frames and
 agents build whatever is nearest. There is no concept of "what the colony
@@ -205,15 +210,14 @@ Design (inspired by RimWorld blueprints and DF work orders):
       right way. This is the "they can correct between them" behavior.
 - [ ] **Construction planning**: agents with high compliance + high influence
       become "foremen" who evaluate the colony's needs and mark tiles for
-      construction. Other agents see the marks and build them. This replaces
-      the current WFC-frame system with emergent, need-driven planning.
+      construction. Other agents see the marks and build them.
 - [ ] **Error correction**: if a conveyor chain is incomplete (dead-end),
       agents with high compliance recognize it and prioritize completing
       or dismantling it. Visual feedback in the GUI (highlight broken chains).
 
 Estimated: ~500-800 LOC across `grid.h`, `sim_execute.cpp`, `sim_utility.cpp`, new `recipes.h`
 
-### Priority 3: Storyteller / Director (Full Implementation)
+### Priority 2: Storyteller / Director (Full Implementation)
 
 CALM and NORMAL modes exist. The full Director adds:
 
@@ -231,13 +235,28 @@ CALM and NORMAL modes exist. The full Director adds:
 
 Estimated: ~600-800 LOC in `simulation.cpp` + new `director.h`
 
-### Priority 4: Generational Turnover
+### Priority 3: Generational Turnover
 - [ ] Agent reproduction: high trust + low stress + sufficient food
 - [ ] Offspring inherits blended personality
 - [ ] Population cap, grief on elder death
 - [ ] Social memory through relationship graph only
 
 Estimated: ~600-800 LOC in `simulation.cpp`
+
+### Priority 4: Deeper Congregation & Emergent Spaces
+Congregation spaces are functional but basic. Deeper social emergence:
+
+- [ ] **Schelling zones**: agents with similar traits cluster spatially over time.
+      High-artistry agents near other creatives form "studio" zones.
+      High-gregariousness agents form "plaza" zones.
+- [ ] **Location affinity**: agents that REST/EAT repeatedly in the same area
+      develop affinity for that location. Creates "neighborhoods".
+- [ ] **Ritual emergence**: repeated communal eating at same time → tradition
+      bonus that reinforces the behavior (positive feedback loop).
+- [ ] **Gallery spaces**: artifact clusters become named locations that
+      attract visitors, creating cultural pilgrimage points.
+
+Estimated: ~400-600 LOC across `sim_utility.cpp`, `sim_execute.cpp`, `grid.h`
 
 ---
 
@@ -263,6 +282,8 @@ Estimated: ~600-800 LOC in `simulation.cpp`
    the agents' self-actualization. Culture emerges from the cracks.
 9. **Personality drives behavior** — artistry→CREATE r=0.86, curiosity→EXPLORE
    r=0.78. The architecture of desire is validated.
+10. **Congregation enables culture** — EatingZone as the communal hearth.
+    Socialization, eating, and art converge in shared physical space.
 
 ---
 
@@ -270,11 +291,20 @@ Estimated: ~600-800 LOC in `simulation.cpp`
 
 | Trait → Action | r (Pearson) | Status |
 |---|---|---|
-| artistry → CREATE | 0.86 | ✅ Strong |
-| curiosity → EXPLORE | 0.78 | ✅ Strong |
-| gregariousness → SOCIALIZE | 0.42 | ✅ Correct (frequency low) |
-| compliance → WORK | 0.23 | ⚠️ Weak (positive) |
+| artistry → CREATE | 0.86-0.92 | ✅ Strong |
+| curiosity → EXPLORE | 0.65-0.89 | ✅ Strong |
+| gregariousness → SOCIALIZE | 0.08-0.42 | ⚠️ Variable |
+| compliance → WORK | 0.09-0.41 | ⚠️ Variable |
 
-**Main bottleneck for social emergence**: agents are dispersed across the map.
-Congregation spaces (Priority 1) will fix this by creating natural gathering
-points where socialization, eating, and cultural exchange happen simultaneously.
+Agent time distribution (calm mode):
+- BUILD: 5-14% (was 40-55% before infra_gap reform)
+- GATHER: 24-53% (next target for reform)
+- CREATE: 4-12%
+- SOCIALIZE: 2-7%
+- EXPLORE: 1-8%
+- REST: 15-19%
+
+**Main bottlenecks**:
+1. GATHER dominance — agents compulsively gather raw materials
+2. SOCIALIZE correlation variable — needs more consistent congregation
+3. Logistics throughput in NORMAL mode — conveyor chain reliability
