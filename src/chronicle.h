@@ -297,8 +297,36 @@ private:
 class Chronicle {
 public:
     // --- Recording ---
+
+    // Deduplication: suppress the same event type from the same agent
+    // if it happened within the last `dedup_window` ticks. Prevents spam
+    // from repeated REDEMPTION, SABOTAGE, "ate at work" events.
+    static constexpr int DEDUP_WINDOW = 50;
+
     void record(ChronicleEvent ev) {
         int aid = ev.agent_id;
+        int ti = (int)ev.type;
+
+        // Check for recent duplicate (same agent + type within window)
+        // Only for spam-prone types
+        if (aid >= 0 && aid < MAX_AGENT_INDEX) {
+            bool is_spam_prone = (ev.type == EventType::REDEMPTION
+                               || ev.type == EventType::SABOTAGE
+                               || ev.type == EventType::FOOD_SHARED
+                               || ev.type == EventType::WORK_COMPLETED
+                               || ev.type == EventType::GATHERED
+                               || ev.type == EventType::MAINTAINED
+                               || ev.type == EventType::COUNT);  // unclassified = spam-prone
+            if (is_spam_prone) {
+                for (int idx : agent_index_[aid]) {
+                    if (events_[idx].type == ev.type
+                        && ev.tick - events_[idx].tick < DEDUP_WINDOW) {
+                        return;  // suppress duplicate
+                    }
+                }
+            }
+        }
+
         events_.push_back(std::move(ev));
 
         // Agent index
@@ -307,7 +335,6 @@ public:
         }
 
         // Type index
-        int ti = (int)ev.type;
         if (ti < (int)EventType::COUNT) {
             type_index_[ti].push_back((int)events_.size() - 1);
         }
@@ -475,14 +502,16 @@ public:
         return out;
     }
 
-    // One-line arc summary for an agent
+    // One-line arc summary for an agent — narrative, not technical
     std::string agent_arc(int agent_id, const char* archetype_name = nullptr) const {
         auto evs = by_agent(agent_id);
         if (evs.empty()) return "(no events)";
 
         int built = 0, gathered = 0, worked = 0, shared = 0, sabotaged = 0;
+        int artifacts = 0, explored = 0;
         int first_tick = evs.front()->tick;
         int last_tick = evs.back()->tick;
+        int lifespan = last_tick - first_tick;
         std::string death;
 
         for (auto* ev : evs) {
@@ -491,10 +520,12 @@ public:
                 case EventType::BUILT_CONVEYOR:
                 case EventType::BUILT_EATING_ZONE:
                     built++; break;
-                case EventType::GATHERED:     gathered++; break;
+                case EventType::GATHERED:      gathered++; break;
                 case EventType::WORK_COMPLETED: worked++; break;
-                case EventType::FOOD_SHARED:  shared++; break;
-                case EventType::SABOTAGE:     sabotaged++; break;
+                case EventType::FOOD_SHARED:   shared++; break;
+                case EventType::SABOTAGE:      sabotaged++; break;
+                case EventType::ARTIFACT_CREATED: artifacts++; break;
+                case EventType::HIDDEN_SPACE_FOUND: explored++; break;
                 case EventType::DIED_STARVATION: death = "starvation"; break;
                 case EventType::DIED_EXHAUSTION: death = "exhaustion"; break;
                 case EventType::DIED_BREAKDOWN:  death = "breakdown"; break;
@@ -504,33 +535,53 @@ public:
             }
         }
 
-        char buf[256];
         const char* arch = archetype_name ? archetype_name : "?";
-        if (death.empty()) {
-            std::snprintf(buf, sizeof(buf),
-                "%s. Lived %d ticks. Built %d, gathered %d, worked %d, shared %d.%s%s",
-                arch, last_tick - first_tick,
-                built, gathered, worked, shared,
-                sabotaged > 0 ? " Sabotaged." : "",
-                evs.size() > 50 ? " (eventful life)" : "");
+        std::string out;
+
+        // Build a narrative sentence from what defined this agent's life
+        if (artifacts > 0 && artifacts >= worked) {
+            out = std::string(arch) + ". A creator — made " + std::to_string(artifacts)
+                + " artifacts in " + std::to_string(lifespan) + " ticks.";
+        } else if (built > 5) {
+            out = std::string(arch) + ". A builder — raised " + std::to_string(built)
+                + " structures over " + std::to_string(lifespan) + " ticks.";
+        } else if (sabotaged > 2) {
+            out = std::string(arch) + ". A rebel — struck back " + std::to_string(sabotaged)
+                + " times against the machine.";
+        } else if (shared > 2) {
+            out = std::string(arch) + ". A giver — shared food " + std::to_string(shared)
+                + " times. The community held.";
+        } else if (explored > 0) {
+            out = std::string(arch) + ". A wanderer — found " + std::to_string(explored)
+                + " hidden spaces in " + std::to_string(lifespan) + " ticks.";
+        } else if (worked > 5) {
+            out = std::string(arch) + ". A worker — " + std::to_string(worked)
+                + " shifts completed. The factory consumed " + std::to_string(lifespan) + " ticks of their life.";
+        } else if (lifespan < 50) {
+            out = std::string(arch) + ". Barely lived — only " + std::to_string(lifespan) + " ticks.";
         } else {
-            std::snprintf(buf, sizeof(buf),
-                "%s. Lived %d ticks. Built %d, gathered %d, worked %d. Died of %s at tick %d.%s%s",
-                arch, last_tick - first_tick,
-                built, gathered, worked, death.c_str(), last_tick,
-                sabotaged > 0 ? " Sabotaged." : "",
-                shared > 0 ? " Shared food." : "");
+            out = std::string(arch) + ". Survived " + std::to_string(lifespan) + " ticks in the factory.";
         }
-        return buf;
+
+        if (!death.empty()) {
+            const char* death_phrase = "died";
+            if (death == "starvation") death_phrase = "starved to death";
+            else if (death == "exhaustion") death_phrase = "collapsed from exhaustion";
+            else if (death == "breakdown") death_phrase = "broke down completely";
+            else if (death == "suicide") death_phrase = "chose to end it";
+            else if (death == "collapse") death_phrase = "was crushed in a factory collapse";
+            out += std::string(" ") + death_phrase + ".";
+        }
+        return out;
     }
 
     // Narrative timeline for an agent (first-person), limited lines
+    // Uses narrative phrasing for key events instead of raw emit_log text
     std::string agent_journal(int agent_id, int head = 3, int tail = 15) const {
         auto evs = by_agent(agent_id);
         std::string out;
         if (evs.empty()) return "  (no memories)\n";
 
-        // Show first N and last M events, with ellipsis
         int shown_head = std::min(head, (int)evs.size());
         int shown_tail = std::min(tail, (int)evs.size() - shown_head);
         if (shown_tail < 0) shown_tail = 0;
@@ -548,7 +599,18 @@ public:
         for (int i = (int)evs.size() - shown_tail; i < (int)evs.size(); i++) {
             if (i < shown_head) continue;
             std::snprintf(buf, sizeof(buf), "[%5d] ", evs[i]->tick);
-            out += "  " + std::string(buf) + evs[i]->text + "\n";
+            std::string line = evs[i]->text;
+            switch (evs[i]->type) {
+                case EventType::SABOTAGE:       line = "struck at the machine"; break;
+                case EventType::REDEMPTION:     line = "found redemption — chose to help"; break;
+                case EventType::DIED_SUICIDE:   line = "this machine ate everything I was"; break;
+                case EventType::ARTIFACT_CREATED: line = "created something beautiful"; break;
+                case EventType::FOOD_SHARED:    line = "shared food — kindness in a hard place"; break;
+                case EventType::HIDDEN_SPACE_FOUND: line = "found a hidden corner"; break;
+                case EventType::FACTION_FORMED: line = "found their people"; break;
+                default: break;
+            }
+            out += "  " + std::string(buf) + line + "\n";
         }
         return out;
     }
