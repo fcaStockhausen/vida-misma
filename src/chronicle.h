@@ -238,43 +238,91 @@ struct ChronicleEvent {
 
 private:
     const char* narrative_text(Archetype arch) const {
-        (void)arch;
         switch (type) {
-            case EventType::SPAWNED:        return "I woke up somewhere I've never been. The factory hums.";
-            case EventType::DIED_STARVATION:return "I couldn't feed myself. The machine didn't care.";
-            case EventType::DIED_EXHAUSTION:return "I just needed to rest. I couldn't stop.";
-            case EventType::DIED_BREAKDOWN: return "Something in me broke. I couldn't put it back.";
+            case EventType::SPAWNED:
+                switch (arch) {
+                    case Archetype::FOREMAN:       return "I showed up. The floor needed running. I got to work.";
+                    case Archetype::NETWORKER:     return "I walked in and looked for faces. Anyone.";
+                    case Archetype::ARTISAN:       return "I arrived with my hands already itching to make something.";
+                    case Archetype::SURVIVOR:      return "I stumbled in. I just want to see tomorrow.";
+                    case Archetype::EXPLORER:      return "New place. I want to see every corner of it.";
+                    case Archetype::STEADY_WORKER: return "I showed up quietly. Hands ready.";
+                    default: return "I woke up somewhere I didn't choose to be.";
+                }
+            case EventType::DIED_STARVATION:
+                return arch == Archetype::SURVIVOR
+                    ? "After everything... hunger took me. The one thing I outran."
+                    : "I couldn't feed myself. The machine didn't care.";
+            case EventType::DIED_EXHAUSTION:return "I just needed to rest. My body gave out.";
+            case EventType::DIED_BREAKDOWN:
+                return arch == Archetype::FOREMAN
+                    ? "I held everything together for everyone. Nobody held me."
+                    : "Something in me broke. I couldn't put it back.";
             case EventType::DIED_COLLAPSE:  return "The ceiling came down. That was it.";
-            case EventType::DIED_SUICIDE:   return "This machine ate everything I was.";
+            case EventType::DIED_SUICIDE:   return "This machine ate everything I was. I chose to stop letting it.";
 
             case EventType::STRESS_STATE_CHANGE: return text.c_str();
-            case EventType::TRAUMA_GAINED:  return "Something broke inside me that won't heal.";
-            case EventType::BREAKDOWN:      return "I can't do this anymore. None of it.";
-            case EventType::REDEMPTION:     return "I look at them and I can't keep destroying. I have to help.";
-            case EventType::SABOTAGE:       return "If I break it, maybe they'll see us. Maybe they'll stop.";
-
+            case EventType::TRAUMA_GAINED:  return "Something broke inside me that won't heal right.";
+            case EventType::BREAKDOWN:
+                return arch == Archetype::FOREMAN
+                    ? "I can't hold the floor anymore. I can't hold anything."
+                    : "I can't do this. None of it. Not anymore.";
+            case EventType::REDEMPTION:
+                switch (arch) {
+                    case Archetype::FOREMAN:  return "I built this place FOR them. Not for the machine. I see that now.";
+                    case Archetype::ARTISAN:  return "I've been destroying when I should be creating. I see that now.";
+                    case Archetype::SURVIVOR: return "If I'm going to die here, it won't be for nothing. I'll help them.";
+                    default:                  return "I look at them and I can't keep destroying. I have to help.";
+                }
+            case EventType::SABOTAGE:
+                switch (arch) {
+                    case Archetype::FOREMAN:  return "I know this machine. I know where it hurts.";
+                    case Archetype::SURVIVOR: return "I'm not going quietly. Not this time.";
+                    default:                  return "I hit it. I hit the machine. It felt like the only thing I could do.";
+                }
             case EventType::OPINION_SHIFT:  return "I'm starting to see things differently.";
-            case EventType::TRUST_MILESTONE:return "I think I can trust them now.";
-            case EventType::FOOD_SHARED:    return "Here. Take this. We're in this together.";
+            case EventType::TRUST_MILESTONE:
+                return arch == Archetype::NETWORKER
+                    ? "I found someone I can trust. That's worth more than food."
+                    : "I think I can trust them now. Maybe.";
+            case EventType::FOOD_SHARED:
+                return arch == Archetype::SURVIVOR
+                    ? "I shared what I had. I know what it's like to have nothing."
+                    : "Here. Take this. We're in this together.";
             case EventType::FACTION_FORMED: return "We found each other. We stand together now.";
             case EventType::FACTION_JOINED: return "I'm not alone anymore.";
             case EventType::FACTION_LEFT:   return "I have to walk my own path.";
 
-            case EventType::BUILT_MACHINE:     return "I built something real today. Something that lasts.";
+            case EventType::BUILT_MACHINE:
+                return arch == Archetype::FOREMAN
+                    ? "Another machine on the floor. It runs because I built it right."
+                    : "I built something that lasts. That's something.";
             case EventType::BUILT_CONVEYOR:    return "Another belt. Another vein in the machine's body.";
             case EventType::BUILT_EATING_ZONE: return "A place to eat together. Like a home, almost.";
-            case EventType::WORK_COMPLETED:    return "Shift done. The quota doesn't care if I'm tired.";
+            case EventType::WORK_COMPLETED:
+                return arch == Archetype::STEADY_WORKER
+                    ? "Shift done. I don't mind. It's what I know."
+                    : "Shift done. The quota doesn't care if I'm tired.";
             case EventType::GATHERED:          return "Found something useful out there in the scrap.";
-            case EventType::MAINTAINED:        return "I keep things running. That's all I know how to do.";
-            case EventType::DISMANTLED:        return "We don't need this anymore. I'll use the pieces.";
+            case EventType::MAINTAINED:
+                return arch == Archetype::STEADY_WORKER
+                    ? "I keep things running. It's what I do. It's enough."
+                    : "I fix what I can. It's not much.";
+            case EventType::DISMANTLED:        return "We don't need this anymore. I'll use the pieces for something better.";
 
             case EventType::MACHINE_ACTIVATED:  return "It lives. The machine breathes again.";
-            case EventType::MACHINE_BROKE:      return "Another one grinds to a halt. We're losing.";
-            case EventType::FACTORY_RESTRUCTURE: return "The walls shift. The factory reshapes itself.";
+            case EventType::MACHINE_BROKE:      return "Another one grinds to a halt. We're losing ground.";
+            case EventType::FACTORY_RESTRUCTURE: return "The walls shift. The factory reshapes itself around us.";
             case EventType::FACTORY_CONFISCATED: return "They took it. They always take from us.";
             case EventType::FACTORY_SEALED_SPACE: return "There are places here we can't go anymore.";
-            case EventType::ARTIFACT_CREATED:    return "I made something... it doesn't feed anyone. But it's beautiful.";
-            case EventType::HIDDEN_SPACE_FOUND:  return "There's a corner here nobody knows about.";
+            case EventType::ARTIFACT_CREATED:
+                return arch == Archetype::ARTISAN
+                    ? "I made something that doesn't feed anyone. But it's mine, and it's beautiful."
+                    : "I made something. I don't know why. It just needed to exist.";
+            case EventType::HIDDEN_SPACE_FOUND:
+                return arch == Archetype::EXPLORER
+                    ? "There's a corner here nobody knows about. I found it first."
+                    : "There's a hidden place here. Somewhere the machine can't see.";
             case EventType::QUOTA_MILESTONE:     return "We made the quota. For once, the pressure lifts.";
 
             case EventType::FIRST_BUILD:      return "The first thing anyone built here. It begins.";
@@ -587,27 +635,26 @@ public:
     // Helper: generate text for a collapsed event group
     std::string group_text(const EventGroup& g) const {
         if (g.count <= 1) return g.text;
-        // Pluralize based on type
         char buf[128];
         switch (g.type) {
             case EventType::ARTIFACT_CREATED:
-                std::snprintf(buf, sizeof(buf), "created %d artworks", g.count);
+                std::snprintf(buf, sizeof(buf), "made %d artworks — each one a small act of defiance", g.count);
                 return buf;
             case EventType::SABOTAGE:
-                std::snprintf(buf, sizeof(buf), "struck at the machine %d times", g.count);
+                std::snprintf(buf, sizeof(buf), "struck at the machine %d times. Each time it felt less.", g.count);
                 return buf;
             case EventType::BUILT_MACHINE:
             case EventType::BUILT_CONVEYOR:
-                std::snprintf(buf, sizeof(buf), "built %d structures", g.count);
+                std::snprintf(buf, sizeof(buf), "built %d things. The factory grew under my hands.", g.count);
                 return buf;
             case EventType::WORK_COMPLETED:
-                std::snprintf(buf, sizeof(buf), "worked %d shifts", g.count);
+                std::snprintf(buf, sizeof(buf), "worked %d shifts. The days blur together.", g.count);
                 return buf;
             case EventType::FOOD_SHARED:
-                std::snprintf(buf, sizeof(buf), "shared food %d times", g.count);
+                std::snprintf(buf, sizeof(buf), "shared food %d times. Small kindnesses.", g.count);
                 return buf;
             case EventType::GATHERED:
-                std::snprintf(buf, sizeof(buf), "gathered materials %d times", g.count);
+                std::snprintf(buf, sizeof(buf), "scavenged %d times. Always looking for scraps.", g.count);
                 return buf;
             default:
                 std::snprintf(buf, sizeof(buf), "%s (x%d)", g.text.c_str(), g.count);
