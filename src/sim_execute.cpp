@@ -21,6 +21,25 @@ void Simulation::system_execute_actions() {
         auto& stress = registry_.get<StressComponent>(e);
         auto& personality = registry_.get<PersonalityComponent>(e);
 
+        // Passive social satisfaction: proximity to other agents slowly
+        // satisfies social need. Being near a crowd is inherently social.
+        {
+            int crowd = 0;
+            auto alive_view = registry_.view<PositionComponent, const AgentComponent>();
+            for (auto other : alive_view) {
+                if (other == e) continue;
+                if (!registry_.get<AgentComponent>(other).alive) continue;
+                auto& opos = registry_.get<PositionComponent>(other);
+                int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                if (d <= 3) crowd++;
+            }
+            if (crowd >= 2) {
+                float passive = 0.001f * crowd;
+                if (grid_.at(pos.x, pos.y) == TileType::EatingZone) passive *= 2.0f;
+                needs.social = std::max(0.0f, needs.social - passive);
+            }
+        }
+
         // Passive output deposit: if carrying output and near Exit-adjacent Storage, drop it off.
         // This is the agent hauling mechanism — agents carry output from OutputMachine to Exit.
         if (inv.output > 0.01f) {

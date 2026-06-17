@@ -311,13 +311,37 @@ void Simulation::system_find_targets() {
             }
 
             case ActionType::CREATE: {
-                auto target = grid_.find_nearest(TileType::OpenSpace, pos.x, pos.y);
-                if (target.first >= 0) {
-                    tx = target.first;
-                    ty = target.second;
+                // Prefer OpenSpace tiles near existing artifacts — creates
+                // emergent "studio/gallery" zones where artists cluster.
+                auto artifact_view = registry_.view<PositionComponent, struct ArtifactComponent>();
+                int best_art_dist = 999999;
+                int best_os_x = -1, best_os_y = -1;
+                // First try: find OpenSpace near an artifact
+                for (auto ae : artifact_view) {
+                    auto& apos = registry_.get<PositionComponent>(ae);
+                    for (int dy = -4; dy <= 4 && best_art_dist > 1; dy++)
+                        for (int dx = -4; dx <= 4 && best_art_dist > 1; dx++) {
+                            int nx = apos.x + dx, ny = apos.y + dy;
+                            if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
+                            if (grid_.at(nx, ny) != TileType::OpenSpace) continue;
+                            int d = std::abs(nx - pos.x) + std::abs(ny - pos.y);
+                            if (d < best_art_dist) {
+                                best_art_dist = d;
+                                best_os_x = nx; best_os_y = ny;
+                            }
+                        }
+                }
+                if (best_os_x >= 0) {
+                    tx = best_os_x; ty = best_os_y;
                 } else {
-                    tx = pos.x;
-                    ty = pos.y;
+                    // No artifacts nearby — find nearest OpenSpace
+                    auto target = grid_.find_nearest(TileType::OpenSpace, pos.x, pos.y);
+                    if (target.first >= 0) {
+                        tx = target.first;
+                        ty = target.second;
+                    } else {
+                        tx = pos.x; ty = pos.y;
+                    }
                 }
                 break;
             }
