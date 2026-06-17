@@ -678,6 +678,23 @@ void Simulation::system_execute_actions() {
                     needs.hunger = std::max(0.0f,
                         needs.hunger - config_.eat_satisfaction * satisfaction_mul);
 
+                    // Communal eating: eating at EatingZone with 3+ others nearby
+                    // gives social satisfaction — meals are a social ritual.
+                    if (grid_.at(pos.x, pos.y) == TileType::EatingZone) {
+                        int eat_neighbors = 0;
+                        auto agents_alive = alive_agents();
+                        for (auto other : agents_alive) {
+                            if (other == e) continue;
+                            auto& opos = registry_.get<PositionComponent>(other);
+                            int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                            if (d <= 5) eat_neighbors++;
+                        }
+                        if (eat_neighbors >= 2) {
+                            float communal_bonus = 0.008f * (eat_neighbors >= 3 ? 1.5f : 1.0f);
+                            needs.social = std::max(0.0f, needs.social - communal_bonus);
+                        }
+                    }
+
                     // P5(c): eating at Storage also tops up the snack for to-go.
                     if (from_storage) {
                         float room = config_.inv_food_cap - inv.food;
@@ -751,22 +768,31 @@ void Simulation::system_execute_actions() {
                 bool has_neighbor = false;
                 entt::entity neighbor = entt::null;
                 int neighbor_id = -1;
+                int nearby_count = 0;
                 auto agents = alive_agents();
                 for (auto other : agents) {
                     if (other == e) continue;
                     auto& opos = registry_.get<PositionComponent>(other);
                     int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                    if (d <= 6) {  // C: radius 6 for socialization — with 36 agents on 60x40, avg distance ~8
-                        has_neighbor = true;
-                        neighbor = other;
-                        neighbor_id = registry_.get<AgentComponent>(other).id;
-                        break;
+                    if (d <= 6) {  // C: radius 6 for socialization
+                        nearby_count++;
+                        if (!has_neighbor) {
+                            has_neighbor = true;
+                            neighbor = other;
+                            neighbor_id = registry_.get<AgentComponent>(other).id;
+                        }
                     }
                 }
                 if (has_neighbor) {
                     // Satisfaction weighted by gregariousness (doc §15/§17)
                     float satisfaction = config_.social_satisfaction
                                        * (0.5f + 0.5f * personality.gregariousness);
+                    // Congregation bonus: more agents nearby = richer social experience.
+                    if (nearby_count >= 3) satisfaction *= 2.0f;
+                    else if (nearby_count >= 2) satisfaction *= 1.5f;
+                    // Eating at a congregation point gives extra social value
+                    if (grid_.at(pos.x, pos.y) == TileType::EatingZone)
+                        satisfaction *= 1.5f;
                     needs.social = std::max(0.0f, needs.social - satisfaction);
                     // Process social interaction
                     social_.process_interaction(agent.id, neighbor_id, tick_);

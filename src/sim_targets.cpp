@@ -286,17 +286,24 @@ void Simulation::system_find_targets() {
                 break;
 
             case ActionType::SOCIALIZE: {
-                // Find nearest other alive agent
-                auto agents = alive_agents();
-                int best_dist = 999999;
-                for (auto other : agents) {
-                    if (other == e) continue;
-                    auto& opos = registry_.get<PositionComponent>(other);
-                    int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                    if (d < best_dist && d > 0) {
-                        best_dist = d;
-                        tx = opos.x;
-                        ty = opos.y;
+                // Priority 1: go to a built EatingZone — it's a congregation point.
+                auto ez = grid_.find_nearest_built_eatingzone(pos.x, pos.y);
+                if (ez.first >= 0) {
+                    tx = ez.first;
+                    ty = ez.second;
+                } else {
+                    // No EatingZone — find nearest other alive agent
+                    auto agents = alive_agents();
+                    int best_dist = 999999;
+                    for (auto other : agents) {
+                        if (other == e) continue;
+                        auto& opos = registry_.get<PositionComponent>(other);
+                        int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                        if (d < best_dist && d > 0) {
+                            best_dist = d;
+                            tx = opos.x;
+                            ty = opos.y;
+                        }
                     }
                 }
                 if (tx < 0) { tx = pos.x; ty = pos.y; }
