@@ -744,8 +744,7 @@ void Simulation::system_execute_actions() {
                                 factory_health_ - config_.eat_at_work_health_decay);
                             auto& st = registry_.get<StressComponent>(e);
                             st.value = std::min(1.0f, st.value + config_.eat_at_work_stress);
-                            emit_log(agent.id, "ate at work — reported by A" +
-                                     std::to_string(witness_id));
+                            // No log — too spammy. The trust penalty still fires.
                             // Witness loses trust in transgressor (antagonism mechanic)
                             social_.negative_interaction(witness_id, agent.id, tick_, 0.05f);
                         }
@@ -875,6 +874,11 @@ void Simulation::system_execute_actions() {
                 } else {
                     needs.social = std::max(0.0f, needs.social - 0.002f);
                 }
+                // Record social milestone occasionally
+                if (has_neighbor && nearby_count >= 3) {
+                    chronicle(agent.id, EventType::FOOD_SHARED,
+                        "gathered with " + std::to_string(nearby_count) + " others", pos.x, pos.y);
+                }
                 break;
             }
 
@@ -894,6 +898,8 @@ void Simulation::system_execute_actions() {
                 needs.purpose = std::max(0.0f, needs.purpose - 0.006f);
                 // S5: CREATE reduces stress — the only real cure
                 stress.value = std::max(0.0f, stress.value - 0.008f);
+                chronicle(agent.id, EventType::ARTIFACT_CREATED,
+                    "created art", pos.x, pos.y);
                 break;
 
             case ActionType::EXPLORE:

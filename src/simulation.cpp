@@ -248,8 +248,18 @@ void Simulation::spawn_initial_agents() {
         registry_.emplace<InventoryComponent>(entity, inv);
         registry_.emplace<SkillsComponent>(entity);
 
+        const char* spawn_phrase = "";
+        switch (at) {
+            case Archetype::FOREMAN:       spawn_phrase = "arrived — sleeves rolled, ready to run the floor"; break;
+            case Archetype::NETWORKER:     spawn_phrase = "walked in looking for people"; break;
+            case Archetype::ARTISAN:       spawn_phrase = "appeared with something to make"; break;
+            case Archetype::SURVIVOR:      spawn_phrase = "stumbled in — just wants to see tomorrow"; break;
+            case Archetype::EXPLORER:      spawn_phrase = "arrived already looking for exits"; break;
+            case Archetype::STEADY_WORKER: spawn_phrase = "showed up quietly, hands ready"; break;
+            default:                       spawn_phrase = "arrived"; break;
+        }
         chronicle_.log(tick_, EventType::SPAWNED, i,
-            std::string("born as ") + archetype_name(at),
+            std::string(archetype_name(at)) + " — " + spawn_phrase,
             sx, sy);
     }
 }

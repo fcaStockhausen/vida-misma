@@ -240,49 +240,49 @@ private:
     const char* narrative_text(Archetype arch) const {
         (void)arch;
         switch (type) {
-            case EventType::SPAWNED:        return "I woke up. The factory hums around me.";
-            case EventType::DIED_STARVATION:return "I can't... the hunger took me.";
-            case EventType::DIED_EXHAUSTION:return "So tired... I just need to close my eyes.";
-            case EventType::DIED_BREAKDOWN: return "I can't take this anymore.";
-            case EventType::DIED_COLLAPSE:  return "The ceiling... it's coming down!";
+            case EventType::SPAWNED:        return "I woke up somewhere I've never been. The factory hums.";
+            case EventType::DIED_STARVATION:return "I couldn't feed myself. The machine didn't care.";
+            case EventType::DIED_EXHAUSTION:return "I just needed to rest. I couldn't stop.";
+            case EventType::DIED_BREAKDOWN: return "Something in me broke. I couldn't put it back.";
+            case EventType::DIED_COLLAPSE:  return "The ceiling came down. That was it.";
             case EventType::DIED_SUICIDE:   return "This machine ate everything I was.";
 
             case EventType::STRESS_STATE_CHANGE: return text.c_str();
-            case EventType::TRAUMA_GAINED:  return "Something broke inside me.";
-            case EventType::BREAKDOWN:      return "I can't... I just can't.";
-            case EventType::REDEMPTION:     return "I see them suffering. I have to help.";
-            case EventType::SABOTAGE:       return "If I break it, maybe they'll listen.";
+            case EventType::TRAUMA_GAINED:  return "Something broke inside me that won't heal.";
+            case EventType::BREAKDOWN:      return "I can't do this anymore. None of it.";
+            case EventType::REDEMPTION:     return "I look at them and I can't keep destroying. I have to help.";
+            case EventType::SABOTAGE:       return "If I break it, maybe they'll see us. Maybe they'll stop.";
 
             case EventType::OPINION_SHIFT:  return "I'm starting to see things differently.";
             case EventType::TRUST_MILESTONE:return "I think I can trust them now.";
             case EventType::FOOD_SHARED:    return "Here. Take this. We're in this together.";
-            case EventType::FACTION_FORMED: return "We found each other. We stand together.";
+            case EventType::FACTION_FORMED: return "We found each other. We stand together now.";
             case EventType::FACTION_JOINED: return "I'm not alone anymore.";
             case EventType::FACTION_LEFT:   return "I have to walk my own path.";
 
-            case EventType::BUILT_MACHINE:     return "I built something real today.";
-            case EventType::BUILT_CONVEYOR:    return "Another piece of the machine takes shape.";
-            case EventType::BUILT_EATING_ZONE: return "A place to eat. That's something.";
-            case EventType::WORK_COMPLETED:    return "Done. Another shift, another quota.";
-            case EventType::GATHERED:          return "Found something useful out there.";
-            case EventType::MAINTAINED:        return "I keep things running. That's my job.";
-            case EventType::DISMANTLED:        return "We don't need this anymore.";
+            case EventType::BUILT_MACHINE:     return "I built something real today. Something that lasts.";
+            case EventType::BUILT_CONVEYOR:    return "Another belt. Another vein in the machine's body.";
+            case EventType::BUILT_EATING_ZONE: return "A place to eat together. Like a home, almost.";
+            case EventType::WORK_COMPLETED:    return "Shift done. The quota doesn't care if I'm tired.";
+            case EventType::GATHERED:          return "Found something useful out there in the scrap.";
+            case EventType::MAINTAINED:        return "I keep things running. That's all I know how to do.";
+            case EventType::DISMANTLED:        return "We don't need this anymore. I'll use the pieces.";
 
-            case EventType::MACHINE_ACTIVATED:  return "It lives. The machine breathes.";
-            case EventType::MACHINE_BROKE:      return "Another one down. We're losing ground.";
-            case EventType::FACTORY_RESTRUCTURE: return "The walls are shifting again.";
-            case EventType::FACTORY_CONFISCATED: return "They took it. They always take.";
-            case EventType::FACTORY_SEALED_SPACE: return "There are places here we can't go.";
-            case EventType::ARTIFACT_CREATED:    return "I made something... beautiful.";
-            case EventType::HIDDEN_SPACE_FOUND:  return "What's behind here?";
-            case EventType::QUOTA_MILESTONE:     return "We made quota. For once.";
+            case EventType::MACHINE_ACTIVATED:  return "It lives. The machine breathes again.";
+            case EventType::MACHINE_BROKE:      return "Another one grinds to a halt. We're losing.";
+            case EventType::FACTORY_RESTRUCTURE: return "The walls shift. The factory reshapes itself.";
+            case EventType::FACTORY_CONFISCATED: return "They took it. They always take from us.";
+            case EventType::FACTORY_SEALED_SPACE: return "There are places here we can't go anymore.";
+            case EventType::ARTIFACT_CREATED:    return "I made something... it doesn't feed anyone. But it's beautiful.";
+            case EventType::HIDDEN_SPACE_FOUND:  return "There's a corner here nobody knows about.";
+            case EventType::QUOTA_MILESTONE:     return "We made the quota. For once, the pressure lifts.";
 
-            case EventType::FIRST_BUILD:      return "The first thing anyone built here.";
+            case EventType::FIRST_BUILD:      return "The first thing anyone built here. It begins.";
             case EventType::FIRST_DEATH:       return "Someone died. The first, but not the last.";
-            case EventType::FIRST_SABOTAGE:    return "Someone fought back.";
+            case EventType::FIRST_SABOTAGE:    return "Someone fought back. The factory felt it.";
             case EventType::FIRST_FACTION:     return "A group formed. Strength in numbers.";
-            case EventType::FIRST_ARTIFACT:    return "Someone created art in this place.";
-            case EventType::POPULATION_MILESTONE: return "More of us now. Or fewer.";
+            case EventType::FIRST_ARTIFACT:    return "Someone made art in this place. Beauty amid machinery.";
+            case EventType::POPULATION_MILESTONE: return "More of us now. Or fewer. The factory doesn't care.";
             case EventType::CRISIS_PERIOD:     return "Everything is falling apart.";
 
             default: return text.c_str();
@@ -575,42 +575,83 @@ public:
         return out;
     }
 
+    // Helper struct for collapsed event groups
+    struct EventGroup {
+        EventType type;
+        int tick_start;
+        int tick_end;
+        int count;
+        std::string text;
+    };
+
+    // Helper: generate text for a collapsed event group
+    std::string group_text(const EventGroup& g) const {
+        if (g.count <= 1) return g.text;
+        // Pluralize based on type
+        char buf[128];
+        switch (g.type) {
+            case EventType::ARTIFACT_CREATED:
+                std::snprintf(buf, sizeof(buf), "created %d artworks", g.count);
+                return buf;
+            case EventType::SABOTAGE:
+                std::snprintf(buf, sizeof(buf), "struck at the machine %d times", g.count);
+                return buf;
+            case EventType::BUILT_MACHINE:
+            case EventType::BUILT_CONVEYOR:
+                std::snprintf(buf, sizeof(buf), "built %d structures", g.count);
+                return buf;
+            case EventType::WORK_COMPLETED:
+                std::snprintf(buf, sizeof(buf), "worked %d shifts", g.count);
+                return buf;
+            case EventType::FOOD_SHARED:
+                std::snprintf(buf, sizeof(buf), "shared food %d times", g.count);
+                return buf;
+            case EventType::GATHERED:
+                std::snprintf(buf, sizeof(buf), "gathered materials %d times", g.count);
+                return buf;
+            default:
+                std::snprintf(buf, sizeof(buf), "%s (x%d)", g.text.c_str(), g.count);
+                return buf;
+        }
+    }
+
     // Narrative timeline for an agent (first-person), limited lines
-    // Uses narrative phrasing for key events instead of raw emit_log text
+    // Collapses consecutive same-type events into a single summary line
     std::string agent_journal(int agent_id, int head = 3, int tail = 15) const {
         auto evs = by_agent(agent_id);
         std::string out;
         if (evs.empty()) return "  (no memories)\n";
 
-        int shown_head = std::min(head, (int)evs.size());
-        int shown_tail = std::min(tail, (int)evs.size() - shown_head);
+        // Collapse consecutive same-type events into groups
+        std::vector<EventGroup> groups;
+        for (auto* ev : evs) {
+            if (!groups.empty() && groups.back().type == ev->type
+                && ev->tick - groups.back().tick_end < 100) {
+                groups.back().count++;
+                groups.back().tick_end = ev->tick;
+            } else {
+                groups.push_back({ev->type, ev->tick, ev->tick, 1, ev->text});
+            }
+        }
+
+        int shown_head = std::min(head, (int)groups.size());
+        int shown_tail = std::min(tail, (int)groups.size() - shown_head);
         if (shown_tail < 0) shown_tail = 0;
 
         char buf[64];
         for (int i = 0; i < shown_head; i++) {
-            std::snprintf(buf, sizeof(buf), "[%5d] ", evs[i]->tick);
-            out += "  " + std::string(buf) + evs[i]->text + "\n";
+            std::snprintf(buf, sizeof(buf), "[%5d] ", groups[i].tick_start);
+            out += "  " + std::string(buf) + group_text(groups[i]) + "\n";
         }
-        if ((int)evs.size() > shown_head + shown_tail) {
+        if ((int)groups.size() > shown_head + shown_tail) {
             std::snprintf(buf, sizeof(buf), "  ... (%d more) ...\n",
-                (int)evs.size() - shown_head - shown_tail);
+                (int)groups.size() - shown_head - shown_tail);
             out += buf;
         }
-        for (int i = (int)evs.size() - shown_tail; i < (int)evs.size(); i++) {
+        for (int i = (int)groups.size() - shown_tail; i < (int)groups.size(); i++) {
             if (i < shown_head) continue;
-            std::snprintf(buf, sizeof(buf), "[%5d] ", evs[i]->tick);
-            std::string line = evs[i]->text;
-            switch (evs[i]->type) {
-                case EventType::SABOTAGE:       line = "struck at the machine"; break;
-                case EventType::REDEMPTION:     line = "found redemption — chose to help"; break;
-                case EventType::DIED_SUICIDE:   line = "this machine ate everything I was"; break;
-                case EventType::ARTIFACT_CREATED: line = "created something beautiful"; break;
-                case EventType::FOOD_SHARED:    line = "shared food — kindness in a hard place"; break;
-                case EventType::HIDDEN_SPACE_FOUND: line = "found a hidden corner"; break;
-                case EventType::FACTION_FORMED: line = "found their people"; break;
-                default: break;
-            }
-            out += "  " + std::string(buf) + line + "\n";
+            std::snprintf(buf, sizeof(buf), "[%5d] ", groups[i].tick_start);
+            out += "  " + std::string(buf) + group_text(groups[i]) + "\n";
         }
         return out;
     }
