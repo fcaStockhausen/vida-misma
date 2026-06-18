@@ -12,12 +12,14 @@
 //   - Cheap: O(1) push, O(k) query where k = result set
 
 #include "components.h"
+#include "textgen.h"
 #include <vector>
 #include <string>
 #include <deque>
 #include <functional>
 #include <cstdio>
 #include <algorithm>
+#include <random>
 
 // ============================================================
 // Event taxonomy
@@ -231,9 +233,44 @@ struct ChronicleEvent {
             default: break;
         }
 
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), "%s%s", mood, narrative_text(arch));
-        return buf;
+        // Try CFG generation if available
+        if (s_textgen && s_rng) {
+            const char* sym = event_symbol(type);
+            if (sym) {
+                return std::string(mood) + s_textgen->generate(sym, *s_rng);
+            }
+        }
+
+        return std::string(mood) + narrative_text(arch);
+    }
+
+    // Static pointers for CFG text generation (set by Simulation)
+    static TextGen* s_textgen;
+    static std::mt19937* s_rng;
+
+    static const char* event_symbol(EventType t) {
+        switch (t) {
+            case EventType::SPAWNED:            return "spawned";
+            case EventType::DIED_STARVATION:    return "died_starvation";
+            case EventType::DIED_EXHAUSTION:    return "died_exhaustion";
+            case EventType::DIED_BREAKDOWN:     return "died_breakdown";
+            case EventType::DIED_SUICIDE:       return "died_suicide";
+            case EventType::BREAKDOWN:          return "breakdown";
+            case EventType::REDEMPTION:         return "redemption";
+            case EventType::SABOTAGE:           return "sabotage";
+            case EventType::ARTIFACT_CREATED:   return "artifact";
+            case EventType::BUILT_MACHINE:      return "built";
+            case EventType::BUILT_CONVEYOR:     return "built";
+            case EventType::WORK_COMPLETED:     return "work";
+            case EventType::FOOD_SHARED:        return "shared";
+            case EventType::GATHERED:           return "gathered";
+            case EventType::HIDDEN_SPACE_FOUND: return "hidden_space";
+            case EventType::FACTION_FORMED:     return "faction_formed";
+            case EventType::TRUST_MILESTONE:    return "trust";
+            case EventType::MACHINE_BROKE:      return "machine_broke";
+            case EventType::CRISIS_PERIOD:      return "crisis";
+            default: return nullptr;
+        }
     }
 
 private:
@@ -633,8 +670,31 @@ public:
     };
 
     // Helper: generate text for a collapsed event group
-    std::string group_text(const EventGroup& g) const {
-        if (g.count <= 1) return g.text;
+    std::string group_text(const EventGroup& g, Archetype arch = Archetype::COUNT) const {
+        // Set archetype context if available
+        if (arch != Archetype::COUNT && ChronicleEvent::s_textgen) {
+            const char* feelings[] = {
+                "I showed up to run the floor",     // FOREMAN
+                "I came looking for people",        // NETWORKER
+                "I arrived with something to make", // ARTISAN
+                "I just wanted to see tomorrow",    // SURVIVOR
+                "I wanted to see every corner",     // EXPLORER
+                "I showed up with my hands ready",  // STEADY_WORKER
+            };
+            int ai = (int)arch;
+            if (ai < 6) ChronicleEvent::s_textgen->set_context("arch_feeling", feelings[ai]);
+        }
+        // Single event: try CFG generation
+        if (g.count <= 1) {
+            if (ChronicleEvent::s_textgen && ChronicleEvent::s_rng) {
+                const char* sym = ChronicleEvent::event_symbol(g.type);
+                if (sym) {
+                    return ChronicleEvent::s_textgen->generate(sym, *ChronicleEvent::s_rng);
+                }
+            }
+            return g.text;
+        }
+        // Collapsed groups: narrative summaries
         char buf[128];
         switch (g.type) {
             case EventType::ARTIFACT_CREATED:
@@ -663,21 +723,37 @@ public:
     }
 
     // Narrative timeline for an agent (first-person), limited lines
-    // Collapses consecutive same-type events into a single summary line
-    std::string agent_journal(int agent_id, int head = 3, int tail = 15) const {
+    std::string agent_journal(int agent_id, const char* archetype_name = nullptr,
+                              int head = 3, int tail = 15) const {
         auto evs = by_agent(agent_id);
         std::string out;
         if (evs.empty()) return "  (no memories)\n";
 
+        // Resolve archetype
+        Archetype arch = Archetype::COUNT;
+        if (archetype_name) {
+            std::string name(archetype_name);
+            if (name == "Foreman")       arch = Archetype::FOREMAN;
+            else if (name == "Networker") arch = Archetype::NETWORKER;
+            else if (name == "Artisan")   arch = Archetype::ARTISAN;
+            else if (name == "Survivor")  arch = Archetype::SURVIVOR;
+            else if (name == "Explorer")  arch = Archetype::EXPLORER;
+            else if (name == "Worker")    arch = Archetype::STEADY_WORKER;
+        }
+
         // Collapse consecutive same-type events into groups
         std::vector<EventGroup> groups;
         for (auto* ev : evs) {
+            // Use generated narrative text if CFG available, otherwise raw text
+            std::string display_text = ev->text;
+            // (narrative() is called at display time in the loop below for groups)
+
             if (!groups.empty() && groups.back().type == ev->type
                 && ev->tick - groups.back().tick_end < 100) {
                 groups.back().count++;
                 groups.back().tick_end = ev->tick;
             } else {
-                groups.push_back({ev->type, ev->tick, ev->tick, 1, ev->text});
+                groups.push_back({ev->type, ev->tick, ev->tick, 1, display_text});
             }
         }
 
@@ -688,7 +764,7 @@ public:
         char buf[64];
         for (int i = 0; i < shown_head; i++) {
             std::snprintf(buf, sizeof(buf), "[%5d] ", groups[i].tick_start);
-            out += "  " + std::string(buf) + group_text(groups[i]) + "\n";
+            out += "  " + std::string(buf) + group_text(groups[i], arch) + "\n";
         }
         if ((int)groups.size() > shown_head + shown_tail) {
             std::snprintf(buf, sizeof(buf), "  ... (%d more) ...\n",
@@ -698,7 +774,7 @@ public:
         for (int i = (int)groups.size() - shown_tail; i < (int)groups.size(); i++) {
             if (i < shown_head) continue;
             std::snprintf(buf, sizeof(buf), "[%5d] ", groups[i].tick_start);
-            out += "  " + std::string(buf) + group_text(groups[i]) + "\n";
+            out += "  " + std::string(buf) + group_text(groups[i], arch) + "\n";
         }
         return out;
     }

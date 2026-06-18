@@ -736,11 +736,25 @@ void GraphicalView::render_side_panel() {
     int max_ch = (pw - margin * 2) / (fonts_.text_width("m", FontSize::Small));
     SDL_Color line_col = stress_color(st.state);
     for (auto* ev : events) {
-        if (y + log_line_h > footer_y - 2) break;
         std::string line = ev->narrative(ps.archetype, st.state);
-        if ((int)line.size() > max_ch) line.resize(max_ch);
-        fonts_.draw(px + margin, y, line, line_col, FontSize::Small);
-        y += log_line_h;
+        // Word-wrap instead of truncating
+        size_t pos = 0;
+        while (pos < line.size()) {
+            if (y + log_line_h > footer_y - 2) break;
+            size_t end = std::min(pos + max_ch, line.size());
+            if (end < line.size()) {
+                size_t sp = line.rfind(' ', end);
+                if (sp != std::string::npos && sp > pos) end = sp;
+            }
+            std::string chunk = line.substr(pos, end - pos);
+            // Trim leading space on continuation lines
+            if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
+            fonts_.draw(px + margin, y, chunk, line_col, FontSize::Small);
+            y += log_line_h;
+            pos = end;
+            if (pos < line.size() && line[pos] == ' ') pos++;
+        }
+        if (y + log_line_h > footer_y - 2) break;
     }
 
     if (events.empty()) {

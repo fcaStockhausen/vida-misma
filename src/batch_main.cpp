@@ -201,13 +201,13 @@ static int cmd_story(int argc, char* argv[]) {
         const char* arch = find_archetype_name(sim, id);
         std::printf("\n--- Agent %d (%s) ALIVE ---\n", id, arch);
         std::printf("  %s\n", sim.chronicle().agent_arc(id, arch).c_str());
-        std::printf("%s", sim.chronicle().agent_journal(id, 3, 12).c_str());
+        std::printf("%s", sim.chronicle().agent_journal(id, arch, 3, 12).c_str());
     }
     for (int id : dead_ids) {
         const char* arch = find_archetype_name(sim, id);
         std::printf("\n--- Agent %d (%s) DEAD ---\n", id, arch);
         std::printf("  %s\n", sim.chronicle().agent_arc(id, arch).c_str());
-        std::printf("%s", sim.chronicle().agent_journal(id, 2, 8).c_str());
+        std::printf("%s", sim.chronicle().agent_journal(id, arch, 2, 8).c_str());
     }
 
     // Death report

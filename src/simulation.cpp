@@ -1,6 +1,11 @@
 #include "simulation.h"
+#include "textgen.h"
 #include <algorithm>
 #include <set>
+
+// Static members for ChronicleEvent CFG text generation
+TextGen* ChronicleEvent::s_textgen = nullptr;
+std::mt19937* ChronicleEvent::s_rng = nullptr;
 
 // ============================================================
 // Construction & lifecycle
@@ -17,9 +22,13 @@ Simulation::Simulation(const Config& cfg)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
     , social_(cfg.max_population)
+    , textgen_(make_narrative_grammar())
     , current_quota_per_tick_(cfg.quota_per_tick)
 {
     grid_.generate_wfc(cfg.seed);
+    // Connect CFG text generator to ChronicleEvent
+    ChronicleEvent::s_textgen = &textgen_;
+    ChronicleEvent::s_rng = &rng_;
     spawn_initial_agents();
 }
 

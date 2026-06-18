@@ -5,6 +5,7 @@
 #include "grid.h"
 #include "social.h"
 #include "chronicle.h"
+#include "textgen.h"
 #include <entt/entt.hpp>
 #include <random>
 #include <vector>
@@ -79,6 +80,7 @@ private:
     Grid grid_;
     SocialFabric social_;
     Chronicle chronicle_;
+    TextGen textgen_;
     std::mt19937 rng_;
 
     // Narrative tracking
