@@ -236,6 +236,7 @@ void GraphicalView::handle_events() {
                     case SDLK_2: panel_tab_ = PanelTab::Personality; break;
                     case SDLK_3: panel_tab_ = PanelTab::Social; break;
                     case SDLK_4: panel_tab_ = PanelTab::Utility; break;
+                    case SDLK_5: panel_tab_ = PanelTab::Journal; break;
 
                     // Panel scroll
                     case SDLK_PAGEUP:   panel_scroll_ = std::max(0, panel_scroll_ - 5); break;
@@ -595,9 +596,9 @@ void GraphicalView::render_side_panel() {
 
     // Tabs
     render_separator(px + 3, y, pw - 6); y += 2;
-    static const char* tab_names[] = {"Needs", "Pers", "Soc", "Util"};
-    int tab_w = bw / 4;
-    for (int i = 0; i < 4; i++) {
+    static const char* tab_names[] = {"Needs", "Pers", "Soc", "Util", "JrnL"};
+    int tab_w = bw / 5;
+    for (int i = 0; i < 5; i++) {
         SDL_Color bg = (i == (int)panel_tab_) ? COL_TAB_ACTIVE : COL_TAB_INACTIVE;
         render_rect(px + margin + i * tab_w, y, tab_w - 1, lh_s + 4, bg);
         SDL_Color tc = (i == (int)panel_tab_) ? COL_HIGHLIGHT : COL_DIM;
@@ -700,65 +701,64 @@ void GraphicalView::render_side_panel() {
         }
     }
 
-    // Chronicle log — first-person narrative from selected agent
-    render_separator(px + 3, y, pw - 6); y += 4;
-    fonts_.draw(px + margin, y, "JOURNAL", COL_WHITE, FontSize::Small);
-    fonts_.draw(px + margin + fonts_.text_width("JOURNAL", FontSize::Small) + 6, y, "PgUp/Dn scroll", COL_DIM, FontSize::Small);
-    y += lh_s + 2;
-
     int footer_y = wh - lh_s - 4;
-    int log_line_h = lh_s + 1;
-    int max_log_lines = (footer_y - y - 4) / log_line_h;
-    if (max_log_lines < 1) max_log_lines = 1;
-    if (max_log_lines > 30) max_log_lines = 30;
 
-    auto stress_color = [](StressState ss) -> SDL_Color {
-        switch (ss) {
-            case StressState::NORMAL:          return {180, 200, 180, 255};
-            case StressState::DISSOCIATED:     return {120, 120, 160, 255};
-            case StressState::HOSTILE_EUPHORIA: return {220, 80, 80, 255};
-            case StressState::BROKEN:          return {90, 90, 90, 255};
-            case StressState::REDEEMED:        return {80, 220, 160, 255};
-            default:                           return COL_DIM;
-        }
-    };
+    // Journal only shown in Journal tab (uses full panel height)
+    if (panel_tab_ == PanelTab::Journal) {
+        fonts_.draw(px + margin, y, "JOURNAL", COL_WHITE, FontSize::Small);
+        fonts_.draw(px + margin + fonts_.text_width("JOURNAL", FontSize::Small) + 6, y, "PgUp/Dn scroll", COL_DIM, FontSize::Small);
+        y += lh_s + 2;
 
-    // Fetch agent's events
-    std::vector<const ChronicleEvent*> events;
-    {
-        int total = sim_.chronicle().count_for_agent(ag.id);
-        int skip = std::max(0, total - max_log_lines - panel_scroll_);
-        auto all = sim_.chronicle().by_agent(ag.id);
-        for (int i = skip; i < (int)all.size() && (int)events.size() < max_log_lines; i++)
-            events.push_back(all[i]);
-    }
+        int log_line_h = lh_s + 1;
+        int max_log_lines = (footer_y - y - 4) / log_line_h;
+        if (max_log_lines < 1) max_log_lines = 1;
+        if (max_log_lines > 40) max_log_lines = 40;
 
-    int max_ch = (pw - margin * 2) / (fonts_.text_width("m", FontSize::Small));
-    SDL_Color line_col = stress_color(st.state);
-    for (auto* ev : events) {
-        std::string line = ev->narrative(ps.archetype, st.state);
-        // Word-wrap instead of truncating
-        size_t pos = 0;
-        while (pos < line.size()) {
-            if (y + log_line_h > footer_y - 2) break;
-            size_t end = std::min(pos + max_ch, line.size());
-            if (end < line.size()) {
-                size_t sp = line.rfind(' ', end);
-                if (sp != std::string::npos && sp > pos) end = sp;
+        auto stress_color = [](StressState ss) -> SDL_Color {
+            switch (ss) {
+                case StressState::NORMAL:          return {180, 200, 180, 255};
+                case StressState::DISSOCIATED:     return {120, 120, 160, 255};
+                case StressState::HOSTILE_EUPHORIA: return {220, 80, 80, 255};
+                case StressState::BROKEN:          return {90, 90, 90, 255};
+                case StressState::REDEEMED:        return {80, 220, 160, 255};
+                default:                           return COL_DIM;
             }
-            std::string chunk = line.substr(pos, end - pos);
-            // Trim leading space on continuation lines
-            if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
-            fonts_.draw(px + margin, y, chunk, line_col, FontSize::Small);
-            y += log_line_h;
-            pos = end;
-            if (pos < line.size() && line[pos] == ' ') pos++;
-        }
-        if (y + log_line_h > footer_y - 2) break;
-    }
+        };
 
-    if (events.empty()) {
-        fonts_.draw(px + margin, y, "No memories yet.", COL_DIM, FontSize::Small);
+        std::vector<const ChronicleEvent*> events;
+        {
+            int total = sim_.chronicle().count_for_agent(ag.id);
+            int skip = std::max(0, total - max_log_lines - panel_scroll_);
+            auto all = sim_.chronicle().by_agent(ag.id);
+            for (int i = skip; i < (int)all.size() && (int)events.size() < max_log_lines; i++)
+                events.push_back(all[i]);
+        }
+
+        int max_ch = (pw - margin * 2) / (fonts_.text_width("m", FontSize::Small));
+        SDL_Color line_col = stress_color(st.state);
+        for (auto* ev : events) {
+            std::string line = ev->narrative(ps.archetype, st.state);
+            size_t pos = 0;
+            while (pos < line.size()) {
+                if (y + log_line_h > footer_y - 2) break;
+                size_t end = std::min(pos + max_ch, line.size());
+                if (end < line.size()) {
+                    size_t sp = line.rfind(' ', end);
+                    if (sp != std::string::npos && sp > pos) end = sp;
+                }
+                std::string chunk = line.substr(pos, end - pos);
+                if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
+                fonts_.draw(px + margin, y, chunk, line_col, FontSize::Small);
+                y += log_line_h;
+                pos = end;
+                if (pos < line.size() && line[pos] == ' ') pos++;
+            }
+            if (y + log_line_h > footer_y - 2) break;
+        }
+
+        if (events.empty()) {
+            fonts_.draw(px + margin, y, "No memories yet.", COL_DIM, FontSize::Small);
+        }
     }
 
     // Footer
@@ -879,7 +879,7 @@ void GraphicalView::render_help_overlay() {
     row("[ / ]", "First / last agent");
     row("LMB", "Select agent on tile");
     row("T", "Toggle panel");
-    row("1-4", "Panel tabs (Needs/Pers/Soc/Util)");
+    row("1-5", "Panel tabs (Needs/Pers/Soc/Util/Jrnl)");
     row("PgUp/PgDn", "Scroll journal");
     y += 4;
 

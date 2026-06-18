@@ -72,7 +72,7 @@ private:
     std::unordered_set<SDL_Keycode> keys_held_;
 
     // Panel tab
-    enum class PanelTab : int { Needs = 0, Personality, Social, Utility, COUNT };
+    enum class PanelTab : int { Needs = 0, Personality, Social, Utility, Journal, COUNT };
     PanelTab panel_tab_ = PanelTab::Needs;
 
     // Hover
