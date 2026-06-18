@@ -58,6 +58,7 @@ private:
     bool show_log_ = true;
     bool show_grid_coords_ = false;
     bool show_quit_confirm_ = false;
+    bool journal_colony_mode_ = false;  // false=per-agent, true=colony-wide
 
     // Drag
     bool drag_ = false;

@@ -219,6 +219,11 @@ void GraphicalView::handle_events() {
                         show_grid_coords_ = !show_grid_coords_; break;
                     case SDLK_h:
                         show_help_ = !show_help_; break;
+                    case SDLK_l:
+                        journal_colony_mode_ = !journal_colony_mode_;
+                        if (journal_colony_mode_) panel_tab_ = PanelTab::Journal;
+                        panel_scroll_ = 0;
+                        break;
 
                     // Agents
                     case SDLK_TAB:
@@ -705,8 +710,11 @@ void GraphicalView::render_side_panel() {
 
     // Journal only shown in Journal tab (uses full panel height)
     if (panel_tab_ == PanelTab::Journal) {
-        fonts_.draw(px + margin, y, "JOURNAL", COL_WHITE, FontSize::Small);
-        fonts_.draw(px + margin + fonts_.text_width("JOURNAL", FontSize::Small) + 6, y, "PgUp/Dn scroll", COL_DIM, FontSize::Small);
+        const char* jtitle = journal_colony_mode_ ? "COLONY LOG" : "JOURNAL";
+        fonts_.draw(px + margin, y, jtitle, COL_WHITE, FontSize::Small);
+        fonts_.draw(px + margin + fonts_.text_width(jtitle, FontSize::Small) + 6, y,
+                    journal_colony_mode_ ? "(L: agent mode)  PgUp/Dn" : "(L: colony mode)  PgUp/Dn",
+                    COL_DIM, FontSize::Small);
         y += lh_s + 2;
 
         int log_line_h = lh_s + 1;
@@ -725,39 +733,69 @@ void GraphicalView::render_side_panel() {
             }
         };
 
-        std::vector<const ChronicleEvent*> events;
-        {
-            int total = sim_.chronicle().count_for_agent(ag.id);
-            int skip = std::max(0, total - max_log_lines - panel_scroll_);
-            auto all = sim_.chronicle().by_agent(ag.id);
-            for (int i = skip; i < (int)all.size() && (int)events.size() < max_log_lines; i++)
-                events.push_back(all[i]);
-        }
-
         int max_ch = (pw - margin * 2) / (fonts_.text_width("m", FontSize::Small));
-        SDL_Color line_col = stress_color(st.state);
-        for (auto* ev : events) {
-            std::string line = ev->narrative(ps.archetype, st.state);
-            size_t pos = 0;
-            while (pos < line.size()) {
-                if (y + log_line_h > footer_y - 2) break;
-                size_t end = std::min(pos + max_ch, line.size());
-                if (end < line.size()) {
-                    size_t sp = line.rfind(' ', end);
-                    if (sp != std::string::npos && sp > pos) end = sp;
-                }
-                std::string chunk = line.substr(pos, end - pos);
-                if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
-                fonts_.draw(px + margin, y, chunk, line_col, FontSize::Small);
-                y += log_line_h;
-                pos = end;
-                if (pos < line.size() && line[pos] == ' ') pos++;
-            }
-            if (y + log_line_h > footer_y - 2) break;
-        }
 
-        if (events.empty()) {
-            fonts_.draw(px + margin, y, "No memories yet.", COL_DIM, FontSize::Small);
+        if (journal_colony_mode_) {
+            // Colony-wide log: last N events from ALL agents
+            auto all_events = sim_.chronicle().last(max_log_lines + panel_scroll_);
+            int skip = std::max(0, (int)all_events.size() - max_log_lines - panel_scroll_);
+            for (int i = skip; i < (int)all_events.size() && y + log_line_h <= footer_y - 2; i++) {
+                auto* ev = all_events[i];
+                std::string line = ev->summary();
+                // Word-wrap
+                size_t pos = 0;
+                while (pos < line.size() && y + log_line_h <= footer_y - 2) {
+                    size_t end = std::min(pos + max_ch, line.size());
+                    if (end < line.size()) {
+                        size_t sp = line.rfind(' ', end);
+                        if (sp != std::string::npos && sp > pos) end = sp;
+                    }
+                    std::string chunk = line.substr(pos, end - pos);
+                    if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
+                    SDL_Color c;
+                    if (ev->agent_id >= 0) c = COL_DIM;
+                    else c = SDL_Color{200, 180, 120, 255};
+                    fonts_.draw(px + margin, y, chunk, c, FontSize::Small);
+                    y += log_line_h;
+                    pos = end;
+                    if (pos < line.size() && line[pos] == ' ') pos++;
+                }
+            }
+        } else {
+            // Per-agent journal with CFG narrative
+            std::vector<const ChronicleEvent*> events;
+            {
+                int total = sim_.chronicle().count_for_agent(ag.id);
+                int skip = std::max(0, total - max_log_lines - panel_scroll_);
+                auto all = sim_.chronicle().by_agent(ag.id);
+                for (int i = skip; i < (int)all.size() && (int)events.size() < max_log_lines; i++)
+                    events.push_back(all[i]);
+            }
+
+            SDL_Color line_col = stress_color(st.state);
+            for (auto* ev : events) {
+                std::string line = ev->narrative(ps.archetype, st.state);
+                size_t pos = 0;
+                while (pos < line.size()) {
+                    if (y + log_line_h > footer_y - 2) break;
+                    size_t end = std::min(pos + max_ch, line.size());
+                    if (end < line.size()) {
+                        size_t sp = line.rfind(' ', end);
+                        if (sp != std::string::npos && sp > pos) end = sp;
+                    }
+                    std::string chunk = line.substr(pos, end - pos);
+                    if (pos > 0 && !chunk.empty() && chunk[0] == ' ') chunk = chunk.substr(1);
+                    fonts_.draw(px + margin, y, chunk, line_col, FontSize::Small);
+                    y += log_line_h;
+                    pos = end;
+                    if (pos < line.size() && line[pos] == ' ') pos++;
+                }
+                if (y + log_line_h > footer_y - 2) break;
+            }
+
+            if (events.empty()) {
+                fonts_.draw(px + margin, y, "No memories yet.", COL_DIM, FontSize::Small);
+            }
         }
     }
 
@@ -880,7 +918,8 @@ void GraphicalView::render_help_overlay() {
     row("LMB", "Select agent on tile");
     row("T", "Toggle panel");
     row("1-5", "Panel tabs (Needs/Pers/Soc/Util/Jrnl)");
-    row("PgUp/PgDn", "Scroll journal");
+    row("L", "Toggle agent/colony journal");
+    row("PgUp/Dn", "Scroll panel/journal");
     y += 4;
 
     fonts_.draw(x, y, "Other", COL_CYAN, FontSize::Small); y += lh + 2;
