@@ -323,13 +323,16 @@ void Simulation::system_compute_utility() {
                       * mood_factor * gather_urgency;
         }
 
-        // Focus dampener for GATHER — same as WORK.
-        // Only when food supply is healthy.
+        // Focus dampener for GATHER — only in CALM mode or when quota is met.
         {
-            float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
-            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                && food_supply_ratio > 0.8f)
-                u_gather *= 0.3f;
+            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
+                                   && last_quota_fill_ < 0.5f);
+            if (!factory_demands) {
+                float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
+                if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                    && food_supply_ratio > 0.8f)
+                    u_gather *= 0.3f;
+            }
         }
 
         // ================================================================
@@ -459,8 +462,12 @@ void Simulation::system_compute_utility() {
                 if (built_mach >= 4 && unconnected >= 2) conv_base *= 1.8f;
                 // CRITICAL: massive urgency when quota is failing — conveyors are the
                 // only way to move output from distant machines to Exit-adjacent Storage.
-                if (last_quota_fill_ < 0.5f) {
-                    float quota_urgency = (1.0f - last_quota_fill_) * 4.0f;
+                // Only fires when Output machines actually exist and have output to move.
+                int n_out_machines = count_built_machines(MachineType::Output);
+                float total_output_in_system = total_storage_output();
+                if (last_quota_fill_ < 0.5f && n_out_machines > 0
+                    && total_output_in_system > 0.1f) {
+                    float quota_urgency = (1.0f - last_quota_fill_) * 2.0f;
                     conv_base += quota_urgency;
                 }
 
@@ -527,9 +534,14 @@ void Simulation::system_compute_utility() {
         }
 
         // HARD GATE: when colony has enough infrastructure, BUILD collapses.
-        // This frees agents to socialize, create, explore.
-        // Only a fraction of agents should build at any given time.
-        u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
+        // In NORMAL mode with quota failing, BUILD stays strong.
+        {
+            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
+                                   && last_quota_fill_ < 0.5f);
+            if (!factory_demands) {
+                u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
+            }
+        }
 
         // Focus dampener for BUILD — same principle as WORK and GATHER.
         // Only when food supply is healthy.
@@ -590,19 +602,24 @@ void Simulation::system_compute_utility() {
             float work_pull = effective_compliance * built_ratio * 2.0f;
 
             // FOCUS SYSTEM (Dwarf Fortress pattern):
-            // Focus = ratio of met higher needs. Low focus = distracted worker.
-            // When social/expression/purpose are unmet, WORK efficiency drops.
-            // DF: unmet needs → -50% work speed. Here: WORK utility scales with focus.
-            float higher_unmet = (needs.social + needs.expression + needs.purpose) / 3.0f;
-            float focus = 1.0f - higher_unmet;  // 1.0 = fully focused, 0.0 = totally distracted
-            work_pull *= (0.3f + 0.7f * focus);  // min 30% at zero focus, 100% at full
+            // In CALM mode or when quota is met, unmet higher needs reduce WORK.
+            // In NORMAL mode with quota failing, the factory overrides — agents work.
+            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
+                                   && last_quota_fill_ < 0.5f);
+            if (factory_demands) {
+                // Factory pressure boosts WORK — the machine must be fed
+                work_pull *= 4.0f;
+                input_readiness = std::max(input_readiness, 1.0f);  // everyone can work
+            } else {
+                float higher_unmet = (needs.social + needs.expression + needs.purpose) / 3.0f;
+                float focus = 1.0f - higher_unmet;
+                work_pull *= (0.3f + 0.7f * focus);
 
-            // Strong Maslow gate: when higher needs are CRITICAL and survival is safe,
-            // WORK collapses — the agent needs to go create/socialize.
-            // Only fires when food supply is healthy (not during food crisis).
-            if (higher_unmet > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                && food_supply_ratio > 0.8f) {
-                work_pull *= 0.2f;  // 80% reduction — almost never WORK in this state
+                // Strong Maslow gate: only when survival is safe and food is healthy
+                if (higher_unmet > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                    && food_supply_ratio > 0.8f) {
+                    work_pull *= 0.2f;
+                }
             }
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
