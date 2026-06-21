@@ -229,6 +229,9 @@ void Simulation::system_compute_utility() {
 
         // === ACTION UTILITIES ===
 
+        // Production test mode: zero all cultural drives
+        bool no_culture = (config_.director_mode == DirectorMode::PRODUCTION_TEST);
+
         // Personal food buffer (processed only, since FoodSource is gone).
         float food_security = std::min(1.0f, inv.food / 2.0f);
 
@@ -323,16 +326,12 @@ void Simulation::system_compute_utility() {
                       * mood_factor * gather_urgency;
         }
 
-        // Focus dampener for GATHER — only in CALM mode or when quota is met.
-        {
-            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
-                                   && last_quota_fill_ < 0.5f);
-            if (!factory_demands) {
-                float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
-                if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                    && food_supply_ratio > 0.8f)
-                    u_gather *= 0.3f;
-            }
+        // Focus dampener for GATHER — only in CALM mode.
+        if (config_.director_mode == DirectorMode::CALM) {
+            float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
+            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
+                && food_supply_ratio > 0.8f)
+                u_gather *= 0.3f;
         }
 
         // ================================================================
@@ -533,19 +532,12 @@ void Simulation::system_compute_utility() {
             u_build = std::max(u_build, u_build_output);
         }
 
-        // HARD GATE: when colony has enough infrastructure, BUILD collapses.
-        // In NORMAL mode with quota failing, BUILD stays strong.
-        {
-            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
-                                   && last_quota_fill_ < 0.5f);
-            if (!factory_demands) {
-                u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
-            }
-        }
+        // HARD GATE: BUILD collapses when colony has enough infrastructure.
+        // This ALWAYS applies — it's logistics, not culture.
+        u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
 
-        // Focus dampener for BUILD — same principle as WORK and GATHER.
-        // Only when food supply is healthy.
-        {
+        // Focus dampener for BUILD — only when not under factory pressure.
+        if (config_.director_mode == DirectorMode::CALM) {
             float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
             if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
                 && food_supply_ratio > 0.8f)
@@ -602,24 +594,22 @@ void Simulation::system_compute_utility() {
             float work_pull = effective_compliance * built_ratio * 2.0f;
 
             // FOCUS SYSTEM (Dwarf Fortress pattern):
-            // In CALM mode or when quota is met, unmet higher needs reduce WORK.
-            // In NORMAL mode with quota failing, the factory overrides — agents work.
-            bool factory_demands = (config_.director_mode == DirectorMode::NORMAL
-                                   && last_quota_fill_ < 0.5f);
-            if (factory_demands) {
-                // Factory pressure boosts WORK — the machine must be fed
-                work_pull *= 4.0f;
-                input_readiness = std::max(input_readiness, 1.0f);  // everyone can work
-            } else {
+            // Only in CALM mode do higher needs suppress WORK.
+            // In NORMAL and PRODUCTION_TEST, agents work regardless.
+            if (config_.director_mode == DirectorMode::CALM) {
                 float higher_unmet = (needs.social + needs.expression + needs.purpose) / 3.0f;
                 float focus = 1.0f - higher_unmet;
                 work_pull *= (0.3f + 0.7f * focus);
 
-                // Strong Maslow gate: only when survival is safe and food is healthy
                 if (higher_unmet > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
                     && food_supply_ratio > 0.8f) {
                     work_pull *= 0.2f;
                 }
+            } else if (config_.director_mode == DirectorMode::NORMAL
+                       && last_quota_fill_ < 0.5f) {
+                // Factory pressure boosts WORK
+                work_pull *= 3.0f;
+                input_readiness = std::max(input_readiness, 1.0f);
             }
 
             // Food urgency: when food supply is LOW, WORK becomes critical.
@@ -683,7 +673,7 @@ void Simulation::system_compute_utility() {
         float effective_gregariousness = personality.gregariousness * gregariousness_mult
                                        * (1.0f - stress.trauma * config_.trauma_social_impact);
         float u_socialize = 0.0f;
-        if (needs.social > 0.15f) {
+        if (!no_culture && needs.social > 0.15f) {
             // Gate passed — social drive ramps up sharply
             float social_gate = (needs.social - 0.15f) / 0.85f;  // 0..1 above threshold
             u_socialize = effective_gregariousness * u_social * (0.8f + social_gate);
@@ -701,7 +691,7 @@ void Simulation::system_compute_utility() {
         bool open_space_available = grid_.find_nearest(TileType::OpenSpace,
             pos.x, pos.y).first >= 0;
         float u_create = 0.0f;
-        if (open_space_available && needs.expression > 0.25f) {
+        if (!no_culture && open_space_available && needs.expression > 0.25f) {
             float expr_gate = (needs.expression - 0.25f) / 0.75f;  // 0..1 above threshold
             u_create = personality.artistry * u_expression * (1.0f + expr_gate);
             if (needs.meaning > 0.4f)
@@ -714,7 +704,7 @@ void Simulation::system_compute_utility() {
 
         // EXPLORE: THRESHOLD GATE — curiosity fires above 0.25 purpose
         float u_explore = 0.0f;
-        if (needs.purpose > 0.25f) {
+        if (!no_culture && needs.purpose > 0.25f) {
             float explore_gate = (needs.purpose - 0.25f) / 0.75f;
             u_explore = personality.curiosity * u_purpose * (0.5f + explore_gate);
             if (needs.meaning > 0.4f)

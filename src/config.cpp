@@ -106,6 +106,8 @@ Config load_config(const std::string& path) {
         std::string mode_str = dir->get_as<std::string>("mode")->value_or("");
         if (mode_str == "calm" || mode_str == "CALM")
             cfg.director_mode = DirectorMode::CALM;
+        else if (mode_str == "production" || mode_str == "PRODUCTION")
+            cfg.director_mode = DirectorMode::PRODUCTION_TEST;
         else
             cfg.director_mode = DirectorMode::NORMAL;
     }

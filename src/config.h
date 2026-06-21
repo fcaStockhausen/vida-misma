@@ -3,8 +3,9 @@
 #include <toml++/toml.hpp>
 
 enum class DirectorMode {
-    CALM,     // No external pressure — observe cultural/social emergence
-    NORMAL,   // Standard factory pressure with quota escalation
+    CALM,           // No external pressure — observe cultural/social emergence
+    NORMAL,         // Standard factory pressure with quota escalation
+    PRODUCTION_TEST,// No cultural drives — pure production baseline measurement
 };
 
 struct Config {

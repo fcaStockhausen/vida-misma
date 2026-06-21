@@ -618,6 +618,7 @@ static void usage() {
         "\n"
         "Commands:\n"
         "  culture <ticks> [seed]         Cultural behavior vs personality diagnostic\n"
+        "  production <ticks> [seed]     Production test (no cultural drives)\n"
         "  calm    <ticks> [seed]          Calm mode (no factory pressure)\n"
         "  run     <ticks> [seed]          Numeric timeline (default)\n"
         "  story   <ticks> [seed]          First-person narrative for all agents\n"
@@ -634,6 +635,60 @@ int main(int argc, char* argv[]) {
 
     std::string cmd = argv[1];
     if (cmd == "culture")     return cmd_culture(argc, argv);
+    if (cmd == "production") {
+        Config cfg = make_config(argc, argv, 3);
+        cfg.director_mode = DirectorMode::PRODUCTION_TEST;
+        int ticks = 1000;
+        if (argc > 2) ticks = std::atoi(argv[2]);
+        if (ticks <= 0) ticks = 1000;
+        Simulation sim(cfg);
+        std::printf("=== La Vida Misma - PRODUCTION TEST (no culture) ===\n");
+        std::printf("Grid: %dx%d  Agents: %d  Ticks: %d  Seed: %d\n",
+            cfg.grid_width, cfg.grid_height, cfg.initial_population, ticks, cfg.seed);
+        int sample_interval = std::max(1, ticks / 20);
+        std::printf("\n%6s %5s %5s %5s %5s %5s %5s | %6s %6s %6s\n",
+            "tick", "alive", "GATH", "BUIL", "WORK", "EAT", "REST",
+            "food", "c_mat", "output");
+        for (int t = 0; t < ticks; t++) {
+            sim.advance();
+            if (sim.alive_count() == 0) break;
+            if (t % sample_interval == 0 || t == ticks - 1) {
+                int act_counts[12] = {};
+                auto view = sim.registry().view<const ActionComponent, const AgentComponent>();
+                for (auto e : view) {
+                    if (!sim.registry().get<AgentComponent>(e).alive) continue;
+                    auto& a = sim.registry().get<ActionComponent>(e);
+                    act_counts[(int)a.current]++;
+                }
+                std::printf("%6d %5d %5d %5d %5d %5d %5d | %6.1f %6.1f %6.1f\n",
+                    t, sim.alive_count(),
+                    act_counts[(int)ActionType::GATHER],
+                    act_counts[(int)ActionType::BUILD],
+                    act_counts[(int)ActionType::WORK],
+                    act_counts[(int)ActionType::EAT],
+                    act_counts[(int)ActionType::REST],
+                    sim.total_storage_food(),
+                    sim.total_storage_constr_mat(),
+                    sim.total_storage_output());
+            }
+        }
+        std::printf("\nDone. alive=%d  quota=%.0f%%  food=%.1f  output=%.1f  c_mat=%.1f\n",
+            sim.alive_count(), sim.last_quota_fill() * 100,
+            sim.total_storage_food(), sim.total_storage_output(),
+            sim.total_storage_constr_mat());
+        auto& g = sim.grid();
+        int nf=0, no=0, nm=0;
+        for (int y = 0; y < g.height(); y++)
+            for (int x = 0; x < g.width(); x++)
+                if (g.at(x, y) == TileType::Machine && g.data_at(x, y).built) {
+                    if (g.data_at(x, y).machine_type == MachineType::Food) nf++;
+                    else if (g.data_at(x, y).machine_type == MachineType::Output) no++;
+                    else nm++;
+                }
+        std::printf("  Machines: %d Food, %d Output, %d Mat  Conveyors: %d\n",
+            nf, no, nm, sim.built_conveyor_count());
+        return 0;
+    }
     bool force_calm = false;
     if (cmd == "calm") {
         force_calm = true;
