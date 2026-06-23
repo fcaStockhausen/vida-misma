@@ -1,5 +1,6 @@
 #include "simulation.h"
 #include "textgen.h"
+#include "production.h"
 #include <algorithm>
 #include <set>
 
@@ -55,6 +56,9 @@ void Simulation::advance() {
     system_execute_actions();
     system_conveyor_transport();
     system_ship_out_food();
+
+    // Assess production chain state (post-tick for next tick's decisions)
+    colony_prod_ = ProductionChain::assess(grid_, alive_count(), last_quota_fill_);
 
     // Pressure systems — disabled in CALM mode.
     // The factory doesn't deteriorate, restructure, or seal spaces.

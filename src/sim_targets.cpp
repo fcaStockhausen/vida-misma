@@ -1,4 +1,5 @@
 #include "simulation.h"
+#include "production.h"
 #include <cstdlib>
 
 void Simulation::system_find_targets() {
@@ -231,31 +232,27 @@ void Simulation::system_find_targets() {
                 } else if (inv.raw_material > 0.1f) {
                     prefer_materials = true;
                 } else {
-                    // Empty-handed: check factory needs
-                    float food_avail = total_storage_food();
-                    int n_out = count_built_machines(MachineType::Output);
-                    int n_mat = count_built_machines(MachineType::Materials);
+                    // Empty-handed: use production chain assessment for routing
+                    const auto& cp = colony_production();
+                    ProductionChain::need_to_preferences(cp.primary_need,
+                        prefer_food, prefer_output, prefer_materials);
 
-                    if (food_avail < 10.0f) {
-                        prefer_food = true;
-                    } else if (n_out > 0) {
-                        // Output machines exist. Route based on construction_material supply:
-                        // when scarce, prioritize Materials; when abundant, prioritize Output.
-                        float cm_avail = total_storage_constr_mat();
+                    // If chain is flowing, use probabilistic distribution
+                    // based on what the colony needs
+                    if (cp.primary_need == ColonyProduction::Need::NONE) {
                         int roll = agent.id % 10;
-                        if (cm_avail > 0.5f) {
-                            if (roll < 4) prefer_output = true;
-                            else if (roll < 7) prefer_materials = true;
-                            else prefer_food = true;
+                        if (cp.output_machines > 0 && cp.construction_material > 0.5f) {
+                            // Output is the priority for quota
+                            if (roll < 5) prefer_output = true;
+                            else if (roll < 8) prefer_food = true;
+                            else prefer_materials = true;
+                        } else if (cp.food < cp.alive_count * 0.5f) {
+                            prefer_food = true;
                         } else {
-                            if (roll < 6) prefer_materials = true;
-                            else if (roll < 9) prefer_output = true;
+                            // Default: keep materials flowing
+                            if (roll < 5) prefer_materials = true;
                             else prefer_food = true;
                         }
-                    } else if (n_mat == 0) {
-                        prefer_materials = true;
-                    } else {
-                        prefer_materials = true;
                     }
                 }
                 auto target = grid_.find_nearest_built_machine(

@@ -687,6 +687,9 @@ int main(int argc, char* argv[]) {
                 }
         std::printf("  Machines: %d Food, %d Output, %d Mat  Conveyors: %d\n",
             nf, no, nm, sim.built_conveyor_count());
+        const auto& cp = sim.colony_production();
+        std::printf("  Chain: health=%.2f  need=%d  bottleneck='%s'\n",
+            cp.chain_health, (int)cp.primary_need, cp.bottleneck);
         return 0;
     }
     bool force_calm = false;

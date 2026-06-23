@@ -6,6 +6,7 @@
 #include "social.h"
 #include "chronicle.h"
 #include "textgen.h"
+#include "production.h"
 #include <entt/entt.hpp>
 #include <random>
 #include <vector>
@@ -48,7 +49,8 @@ public:
     // External pressure
     float total_food_shipped() const { return total_food_shipped_; }
     int   total_machines_broken() const { return total_machines_broken_; }
-    float last_quota_fill() const { return last_quota_fill_; } // 0..1, last tick's quota completion
+    float last_quota_fill() const { return last_quota_fill_; }
+    const ColonyProduction& colony_production() const { return colony_prod_; }
     float current_quota() const { return current_quota_per_tick_; }
     int   total_restructures() const { return total_restructures_; }
     int   artifacts_created() const { return artifacts_created_; }
@@ -81,6 +83,7 @@ private:
     SocialFabric social_;
     Chronicle chronicle_;
     TextGen textgen_;
+    ColonyProduction colony_prod_;
     std::mt19937 rng_;
 
     // Narrative tracking
