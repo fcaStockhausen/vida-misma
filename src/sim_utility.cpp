@@ -1,4 +1,5 @@
 #include "simulation.h"
+#include "production.h"
 #include <algorithm>
 #include <cmath>
 
@@ -103,23 +104,27 @@ void Simulation::system_compute_utility() {
         // Critical needs (EAT when starving) CAN override stickiness.
         // ================================================================
         if (action.sticky_ticks > 0 && action.current == action.sticky_action) {
-            // Only critical needs can break commitment:
-            // hunger > 0.8 is "starving" — override anything
             bool survival_override = (needs.hunger > 0.8f && action.sticky_action != ActionType::EAT);
-            // Chain routing: if carrying construction_material, break WORK stickiness
-            // to deliver it to an OutputMachine (tier 2 of production chain).
             bool chain_delivery = (action.sticky_action == ActionType::WORK &&
-                                   inv.construction_material > 0.1f);
-            if (!survival_override && !chain_delivery) {
+                                   inv.construction_material > 1.5f);
+            // Production override: break stickiness if colony needs different
+            // machine type AND agent has been working long enough to produce.
+            bool production_override = false;
+            if (action.sticky_action == ActionType::WORK && action.sticky_ticks < 10) {
+                const auto& cp = colony_production();
+                if (cp.primary_need == ColonyProduction::Need::OPERATE_OUTPUT
+                    || cp.primary_need == ColonyProduction::Need::OPERATE_MATERIALS) {
+                    production_override = true;
+                }
+            }
+            if (!survival_override && !chain_delivery && !production_override) {
                 action.sticky_ticks--;
-                // Store last utilities for debugging but keep current action
                 action.last_utility_gather = 0.0f;
                 action.last_utility_build  = 0.0f;
                 action.last_utility_work   = 0.0f;
                 action.last_utility_eat    = 0.0f;
-                continue;  // skip re-evaluation entirely
+                continue;
             }
-            // Survival override: break stickiness
             action.sticky_ticks = 0;
         }
 

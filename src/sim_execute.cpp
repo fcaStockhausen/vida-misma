@@ -520,26 +520,10 @@ void Simulation::system_execute_actions() {
                             }
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
-                            // Split output: 60% to Storage (OutputMachine pulls from here),
-                            // 40% to agent inventory (agent can build new machines or carry to Output).
-                            // This ensures construction_material reaches Storage even when the
-                            // agent doesn't go to OutputMachine next.
-                            float keep_ratio = 0.4f;
-                            float to_inventory = mat_produced * keep_ratio;
-                            float to_store = mat_produced - to_inventory;
-                            inv.construction_material += to_inventory;
-                            float mat_dep = deposit_to_adjacent_storage(pos.x, pos.y,
-                                ResourceType::CONSTRUCTION_MATERIAL, to_store);
-                            float mat_left = to_store - mat_dep;
-                            if (mat_left > 0.01f) {
-                                mat_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
-                                    ResourceType::CONSTRUCTION_MATERIAL, mat_left);
-                                mat_left = to_store - mat_dep;
-                            }
-                            // Overflow to inventory
-                            if (mat_left > 0.01f) {
-                                inv.construction_material += mat_left;
-                            }
+                            // 100% to agent inventory — agent carries c_mat to Output machines.
+                            // Storage near Materials machines doesn't exist in most layouts,
+                            // so splitting was losing 60% to failed deposits.
+                            inv.construction_material += mat_produced;
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
                             float scrap = config_.machine_mat_output * 0.3f * efficiency * collab;

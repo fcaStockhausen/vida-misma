@@ -84,9 +84,10 @@ public:
         float food_ratio = (alive > 0) ? (float)cp.food_machines / alive : 0;
         float mat_ratio = (alive > 0) ? (float)cp.mat_machines / alive : 0;
 
-        // Determine primary need
+        // Determine primary and secondary needs
+        float c_mat_threshold = std::max(2.0f, alive * 0.3f);  // need buffer proportional to pop
         if (cp.food_machines == 0) {
-            cp.primary_need = ColonyProduction::Need::BUILD_OUTPUT; // bootstrap
+            cp.primary_need = ColonyProduction::Need::BUILD_OUTPUT;
             cp.bottleneck = "no food machines";
         } else if (cp.food < alive * 0.5f) {
             cp.primary_need = ColonyProduction::Need::OPERATE_FOOD;
@@ -94,11 +95,15 @@ public:
         } else if (cp.output_machines == 0 && cp.construction_material > 0.5f) {
             cp.primary_need = ColonyProduction::Need::BUILD_OUTPUT;
             cp.bottleneck = "no output machines, have c_mat";
-        } else if (cp.output_machines > 0 && cp.construction_material < 0.5f) {
+        } else if (cp.output_machines > 0 && cp.construction_material < c_mat_threshold) {
+            // c_mat running low — need Materials workers FIRST
             cp.primary_need = ColonyProduction::Need::OPERATE_MATERIALS;
-            cp.bottleneck = "output machines starved for c_mat";
-        } else if (cp.output_machines > 0 && cp.construction_material >= 0.5f) {
+            cp.secondary_need = ColonyProduction::Need::OPERATE_OUTPUT;
+            cp.bottleneck = "c_mat supply too low for output chain";
+        } else if (cp.output_machines > 0 && cp.construction_material >= c_mat_threshold) {
+            // c_mat healthy — operate Output, but keep Materials as secondary
             cp.primary_need = ColonyProduction::Need::OPERATE_OUTPUT;
+            cp.secondary_need = ColonyProduction::Need::OPERATE_MATERIALS;
             cp.bottleneck = "output machines need workers";
         } else if (cp.output_machines == 0 && cp.mat_machines == 0 && cp.food_machines > 0) {
             cp.primary_need = ColonyProduction::Need::OPERATE_MATERIALS;

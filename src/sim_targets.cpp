@@ -234,24 +234,37 @@ void Simulation::system_find_targets() {
                 } else {
                     // Empty-handed: use production chain assessment for routing
                     const auto& cp = colony_production();
-                    ProductionChain::need_to_preferences(cp.primary_need,
-                        prefer_food, prefer_output, prefer_materials);
 
-                    // If chain is flowing, use probabilistic distribution
-                    // based on what the colony needs
-                    if (cp.primary_need == ColonyProduction::Need::NONE) {
-                        int roll = agent.id % 10;
-                        if (cp.output_machines > 0 && cp.construction_material > 0.5f) {
-                            // Output is the priority for quota
-                            if (roll < 5) prefer_output = true;
-                            else if (roll < 8) prefer_food = true;
-                            else prefer_materials = true;
-                        } else if (cp.food < cp.alive_count * 0.5f) {
-                            prefer_food = true;
-                        } else {
-                            // Default: keep materials flowing
-                            if (roll < 5) prefer_materials = true;
-                            else prefer_food = true;
+                    // Split agents between primary and secondary need
+                    // using agent ID for deterministic distribution
+                    int roll = agent.id % 10;
+
+                    if (cp.primary_need == ColonyProduction::Need::OPERATE_OUTPUT
+                        && cp.secondary_need == ColonyProduction::Need::OPERATE_MATERIALS) {
+                        // Empty-handed agents go to Materials FIRST to pick up c_mat.
+                        // They'll carry it to Output on next evaluation.
+                        // Agents carrying c_mat already get prefer_output from inventory check.
+                        if (roll < 7) prefer_materials = true;
+                        else prefer_food = true;
+                    } else if (cp.primary_need == ColonyProduction::Need::OPERATE_MATERIALS
+                               && cp.secondary_need == ColonyProduction::Need::OPERATE_OUTPUT) {
+                        if (roll < 7) prefer_materials = true;
+                        else prefer_food = true;
+                    } else {
+                        ProductionChain::need_to_preferences(cp.primary_need,
+                            prefer_food, prefer_output, prefer_materials);
+
+                        if (cp.primary_need == ColonyProduction::Need::NONE) {
+                            if (cp.output_machines > 0 && cp.construction_material > 0.5f) {
+                                if (roll < 5) prefer_output = true;
+                                else if (roll < 8) prefer_food = true;
+                                else prefer_materials = true;
+                            } else if (cp.food < cp.alive_count * 0.5f) {
+                                prefer_food = true;
+                            } else {
+                                if (roll < 5) prefer_materials = true;
+                                else prefer_food = true;
+                            }
                         }
                     }
                 }
