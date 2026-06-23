@@ -2,12 +2,31 @@
 #include "pathfinding.h"
 #include <algorithm>
 #include <cstdlib>
+#include <unordered_map>
 
 // ============================================================
 // SYSTEM: Move to Targets (with cached A* pathfinding)
 // ============================================================
 
+// Max agents per tile. EatingZone allows more (congregation point).
+static constexpr int MAX_PER_TILE = 3;
+static constexpr int MAX_PER_EATINGZONE = 8;
+
+// Count agents at each position (computed once per tick)
+static std::unordered_map<int, int> compute_occupancy(Simulation& sim) {
+    std::unordered_map<int, int> occ;
+    auto view = sim.registry().view<PositionComponent, const AgentComponent>();
+    for (auto e : view) {
+        if (!sim.registry().get<AgentComponent>(e).alive) continue;
+        auto& pos = sim.registry().get<PositionComponent>(e);
+        occ[pos.y * 1000 + pos.x]++;
+    }
+    return occ;
+}
+
 void Simulation::system_move_to_targets() {
+    auto occupancy = compute_occupancy(*this);
+
     auto view = registry_.view<ActionComponent, PositionComponent,
                                const AgentComponent>();
     for (auto e : view) {
@@ -31,8 +50,20 @@ void Simulation::system_move_to_targets() {
                                           tick_);
 
         if (nx != pos.x || ny != pos.y) {
-            pos.x = nx;
-            pos.y = ny;
+            // Check occupancy limit before moving
+            auto& grid = grid_;
+            int tile_key = ny * 1000 + nx;
+            int current_count = occupancy[tile_key];
+            int limit = (grid.at(nx, ny) == TileType::EatingZone) ? MAX_PER_EATINGZONE : MAX_PER_TILE;
+
+            if (current_count < limit) {
+                // Free old tile, occupy new
+                occupancy[pos.y * 1000 + pos.x]--;
+                occupancy[tile_key]++;
+                pos.x = nx;
+                pos.y = ny;
+            }
+            // else: tile full, wait next tick
         }
 
         if (pos.x == action.target_x && pos.y == action.target_y) {
