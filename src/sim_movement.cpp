@@ -9,8 +9,8 @@
 // ============================================================
 
 // Max agents per tile. EatingZone allows more (congregation point).
-static constexpr int MAX_PER_TILE = 3;
-static constexpr int MAX_PER_EATINGZONE = 8;
+static constexpr int MAX_PER_TILE = 6;
+static constexpr int MAX_PER_EATINGZONE = 12;
 
 // Count agents at each position (computed once per tick)
 static std::unordered_map<int, int> compute_occupancy(Simulation& sim) {
