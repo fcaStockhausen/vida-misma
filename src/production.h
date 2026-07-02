@@ -54,10 +54,15 @@ class ProductionChain {
 public:
     // Assess the colony's production state by scanning the grid.
     // Call once per tick (before utility/routing decisions).
-    static ColonyProduction assess(const Grid& grid, int alive, float quota_fill) {
+    static ColonyProduction assess(const Grid& grid, int alive, float quota_fill,
+                                   float agent_c_mat = 0.0f) {
         ColonyProduction cp;
         cp.alive_count = alive;
         cp.quota_fill = quota_fill;
+        // c_mat carried by agents is real supply for Output machines — count it.
+        // Without this, the planner always sees c_mat==0 (Materials deposit into
+        // inventory, not Storage) and routes workers to Materials forever.
+        cp.construction_material += agent_c_mat;
 
         // Count machines and sum storage
         for (int y = 0; y < grid.height(); y++)

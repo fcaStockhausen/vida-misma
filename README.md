@@ -4,9 +4,10 @@ A factory simulation where agents inhabit a factory they did not build, do not
 control, and do not understand. The factory demands output. The agents want to
 live. Every mechanic exists to sharpen that tension.
 
-This is not Dwarf Fortress (agents building a home) and not RimWorld (agents
-surviving a crash). This is a company town, an institution, a closed system
-where the inhabitants did not choose to be there but must make life within it.
+A company town, an institution, a closed system where the inhabitants did not
+choose to be there but must make life within it. Unlike Dwarf Fortress (agents
+building a home) or RimWorld (agents surviving a crash), there is no founding
+act -- the factory preexists them and they wake inside it.
 
 The factory is a metaphor for arbitrary design — any system that imposes
 structure on the people inside it. The simulation explores what happens when

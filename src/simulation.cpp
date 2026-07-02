@@ -58,7 +58,17 @@ void Simulation::advance() {
     system_ship_out_food();
 
     // Assess production chain state (post-tick for next tick's decisions)
-    colony_prod_ = ProductionChain::assess(grid_, alive_count(), last_quota_fill_);
+    // Sum c_mat carried by agents — the planner needs to see it to route workers
+    // to Output machines instead of perpetually sending them to Materials.
+    float agent_c_mat = 0.0f;
+    {
+        auto v = registry_.view<InventoryComponent, const AgentComponent>();
+        for (auto e : v) {
+            if (!registry_.get<AgentComponent>(e).alive) continue;
+            agent_c_mat += registry_.get<InventoryComponent>(e).construction_material;
+        }
+    }
+    colony_prod_ = ProductionChain::assess(grid_, alive_count(), last_quota_fill_, agent_c_mat);
 
     // Pressure systems — disabled in CALM mode.
     // The factory doesn't deteriorate, restructure, or seal spaces.

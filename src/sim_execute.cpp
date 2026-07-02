@@ -64,6 +64,29 @@ void Simulation::system_execute_actions() {
                 }
         }
 
+        // Passive output pickup: if near an Output machine with stuck stored_output,
+        // pick it up for hauling to Exit-adjacent Storage. This unblocks output that
+        // couldn't be deposited to conveyor/Storage during WORK and got trapped in
+        // the machine itself (Priority 4 fallback in the Output WORK case).
+        if (inv.output < 0.01f) {
+            for (int pdy = -1; pdy <= 1; pdy++)
+                for (int pdx = -1; pdx <= 1; pdx++) {
+                    int psx = pos.x + pdx, psy = pos.y + pdy;
+                    if (psx < 0 || psx >= grid_.width() || psy < 0 || psy >= grid_.height()) continue;
+                    if (grid_.at(psx, psy) != TileType::Machine) continue;
+                    auto& mtd = grid_.data_at(psx, psy);
+                    if (mtd.machine_type != MachineType::Output) continue;
+                    if (mtd.stored_output > 0.01f) {
+                        float carry = std::min(mtd.stored_output,
+                            InventoryComponent::CAPACITY - inv.total());
+                        if (carry > 0.01f) {
+                            mtd.stored_output -= carry;
+                            inv.output += carry;
+                        }
+                    }
+                }
+        }
+
         // Only execute if at target (or action doesn't need movement)
         if (!action.at_target) continue;
 
@@ -521,8 +544,6 @@ void Simulation::system_execute_actions() {
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
                             // 100% to agent inventory — agent carries c_mat to Output machines.
-                            // Storage near Materials machines doesn't exist in most layouts,
-                            // so splitting was losing 60% to failed deposits.
                             inv.construction_material += mat_produced;
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)

@@ -81,6 +81,25 @@ void Simulation::system_compute_utility() {
     float external_amp     = 1.0f + (1.0f - factory_health_);  // 1 at full, 2 at zero health
     float community_pressure = std::min(1.5f, storage_pressure * external_amp);
 
+    // Raw material supply: Storage + agent inventory + machine buffers.
+    // Used by the raw_gap gate to suppress GATHER when the colony already has
+    // plenty of raw material. Mirrors the infra_gap pattern that killed BUILD spam.
+    // colony_prod_ already sums Storage raw_material; add agent-carried too.
+    // Use a generous threshold — raw material is needed for both construction
+    // AND machine operation, so we only suppress when truly excessive.
+    float raw_banked = colony_prod_.raw_material;
+    {
+        auto rm_view = registry_.view<InventoryComponent, const AgentComponent>();
+        for (auto re : rm_view) {
+            if (registry_.get<AgentComponent>(re).alive)
+                raw_banked += registry_.get<InventoryComponent>(re).raw_material;
+        }
+    }
+    // Allow up to 5x the per-agent baseline before suppressing hard.
+    // At 0 raw: gap=1 (full gather). At 5x need: gap=0.2. At 10x need: gap=0.1.
+    float raw_need = std::max(2.0f, (float)alive_n * 0.3f);
+    float raw_gap = std::min(1.0f, raw_need / std::max(0.5f, raw_banked * 0.2f));
+
     auto view = registry_.view<NeedsComponent, PersonalityComponent,
                                InventoryComponent, ActionComponent,
                                const AgentComponent, StressComponent>();
@@ -257,7 +276,10 @@ void Simulation::system_compute_utility() {
 
             // Base drive: compliance × infrastructure gap × material scarcity
             // infra_gap from grid-level signal — no redundant per-agent loop
+            // raw_gap: when colony has plenty banked, GATHER collapses (like infra_gap
+            // for BUILD). Never fully zero — survival retains a floor.
             float gather_base = effective_compliance * infra_gap * low_mat * 1.5f;
+            gather_base *= (0.2f + 0.8f * raw_gap);
 
             // Food urgency boost: when food is low and no food machines exist,
             // gathering is the only path to food (gather→build FOOD machine→work it)
@@ -324,6 +346,8 @@ void Simulation::system_compute_utility() {
                     raw_material_drive = effective_compliance * u_purpose * mat_deficit * 2.0f;
                     // Stronger when there are many unbuilt resource tiles
                     raw_material_drive += infra_gap * mat_deficit * 1.5f;
+                    // Colony-level gate: don't hoard raw when there's plenty banked
+                    raw_material_drive *= (0.2f + 0.8f * raw_gap);
                 }
             }
 

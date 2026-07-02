@@ -8,9 +8,29 @@ live. Every mechanic exists to sharpen that tension.
 
 ## Current State
 
-**~9,800 LOC** across 24 source files. Compiles clean (Clang, C++20, CMake).
+**~11,000 LOC** across 24 source files. Compiles clean (Clang, C++20, CMake).
 Two targets: `vida_batch` (headless), `vida_gui` (SDL2 2.5D isometric).
 48 agents. Director system (CALM / NORMAL). Narrative journals.
+
+### Production Chain Fixes (Phase 1 — implemented)
+
+```
+c_mat visibility: assess() now sums agent-carried construction_material
+  → planner routes Output workers correctly (was blind to inventory c_mat)
+Passive output pickup: agents passing Output machines pick up stuck output
+  → unblocks output trapped in machines (Priority 4 fallback)
+  → machines now drain to 0.00 instead of hoarding 0.33-0.38
+raw_gap gate: GATHER utility scales with colony raw material supply
+  → when banked > 5x per-agent need, GATHER collapses to 20% floor
+  → frees agent time from GATHER into WORK (was 24-53%, now 5-15%)
+
+Result (NORMAL mode, 1500 ticks):
+  Phase 1 (c_mat + pickup):    quota 25% → 29%
+  Phase 2 (+ raw_gap gate):    quota 29% → 42% avg (seed 42)
+  WORK @ 1500 ticks            13 → 22
+  GATHER stabilized            10-33 → 5-15
+  7-seed sweep (1000 ticks):   3/7 ≥ 94%, 5/7 ≥ 52% (was 0% all)
+```
 
 ### Architecture of Desire (implemented)
 
@@ -171,9 +191,14 @@ Per-archetype spawn phrases:
 ## In Progress / Needs Work
 
 ### Balance Tuning
-- [ ] **GATHER dominates** (24-53% of agent time) — next `infra_gap`-like to reform
+- [ ] **GATHER dominates** (24-53% of agent time) — raw inflow (0.8/tick) outpaces
+      conversion (0.16/tick) 5:1. Needs `raw_gap` gate like the `infra_gap` reform
+      that killed BUILD spam. **Phase 2 target.**
+- [ ] **Output logistics**: output produced but trapped in machines until agents pass by.
+      Passive pickup helps (Phase 1) but throughput still caps quota at ~29% avg.
+- [ ] **c_mat transit visibility**: agents with c_mat in inventory trigger `prefer_output`
+      routing. Depositing c_mat to Storage breaks this — needs a hauling action instead.
 - [ ] **SOCIALIZE correlation variable** (r=0.08 to 0.42 across seeds) — layout-dependent
-- [ ] **Logistics throughput** caps quota at ~33% avg in NORMAL mode
 - [ ] **Seed variance**: layout-dependent outcomes (food/machine placement)
 - [ ] **Narrative arc spam**: REDEMPTION/SABOTAGE still repeat in narrative summary
 
@@ -298,13 +323,14 @@ Estimated: ~400-600 LOC across `sim_utility.cpp`, `sim_execute.cpp`, `grid.h`
 
 Agent time distribution (calm mode):
 - BUILD: 5-14% (was 40-55% before infra_gap reform)
-- GATHER: 24-53% (next target for reform)
+- GATHER: 5-15% (was 24-53% before raw_gap reform)
 - CREATE: 4-12%
 - SOCIALIZE: 2-7%
 - EXPLORE: 1-8%
 - REST: 15-19%
 
 **Main bottlenecks**:
-1. GATHER dominance — agents compulsively gather raw materials
-2. SOCIALIZE correlation variable — needs more consistent congregation
-3. Logistics throughput in NORMAL mode — conveyor chain reliability
+1. ~~GATHER dominance~~ — fixed by raw_gap gate (Phase 2)
+2. Output logistics — output trapped in machines, not reaching Exit-adjacent Storage
+3. Seed variance in NORMAL mode — some layouts produce few Output machines
+4. SOCIALIZE correlation variable — needs more consistent congregation

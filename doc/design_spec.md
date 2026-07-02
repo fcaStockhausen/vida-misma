@@ -6,7 +6,7 @@
 
 A community simulation where agents inhabit a factory they did not build, do not control, and do not understand. The factory produces something meaningless -- the output is determined by an external agent (the player). The agents' primary constraint is survival: if the factory stops, they die. But survival is not their only drive. They have internal impulses, preferences, and talents that have nothing to do with factory output. The tension between *what the factory requires* and *what the agents want* is the engine of the simulation.
 
-This is not Dwarf Fortress (agents building a home) and not RimWorld (agents surviving a crash). This is closer to a company town, a prison, an institution -- a closed system where the inhabitants did not choose to be there but must make life within it.
+Closer to a company town, a prison, an institution: a closed system where the inhabitants did not choose to be there but must make life within it. Unlike Dwarf Fortress (agents building a home) or RimWorld (agents surviving a crash), there is no founding act -- the factory preexists them and they wake inside it.
 
 ## 2. The Factory Metaphor as a Formal System
 
