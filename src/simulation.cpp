@@ -169,6 +169,24 @@ float Simulation::total_storage_constr_mat() const {
     return total;
 }
 
+float Simulation::total_inventory_constr_mat() const {
+    float total = 0.0f;
+    auto view = registry_.view<InventoryComponent, const AgentComponent>();
+    for (auto e : view)
+        if (registry_.get<AgentComponent>(e).alive)
+            total += registry_.get<InventoryComponent>(e).construction_material;
+    return total;
+}
+
+float Simulation::total_inventory_raw_material() const {
+    float total = 0.0f;
+    auto view = registry_.view<InventoryComponent, const AgentComponent>();
+    for (auto e : view)
+        if (registry_.get<AgentComponent>(e).alive)
+            total += registry_.get<InventoryComponent>(e).raw_material;
+    return total;
+}
+
 std::vector<entt::entity> Simulation::alive_agents() const {
     std::vector<entt::entity> result;
     auto view = registry_.view<const AgentComponent>();

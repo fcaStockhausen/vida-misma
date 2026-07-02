@@ -36,7 +36,7 @@ struct Config {
     float disease_hunger_mult   = 2.0f;    // hunger decay multiplier at disease=1.0
     float portion_size          = 1.0f;    // one "vianda" = this much food units
     float rest_recovery         = 0.015f;
-    float social_satisfaction   = 0.05f;  // was 0.012 — higher to compensate social_decay=0.003
+    float social_satisfaction   = 0.05f;  // header fallback; config/default.toml overrides to 0.012
     float create_satisfaction   = 0.012f;
     float explore_satisfaction  = 0.008f;
     float work_purpose_gain     = 0.004f;
@@ -58,7 +58,7 @@ struct Config {
 
     // Stress
     float stress_high_need      = 0.008f;
-    float stress_decay          = 0.001f;  // Minimal natural decay — mostly needs expression
+    float stress_decay          = 0.001f;  // header fallback; config/default.toml overrides to 0.005
     float breakdown_threshold   = 0.95f;
 
     // Stress trauma system

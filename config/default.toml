@@ -59,6 +59,20 @@ machine_output = 0.40
 machine_mat_output = 0.30
 machine_out_output = 0.30
 machine_input  = 0.15
+portion_size   = 1.0      # one "vianda" = this much food units
+
+# Conveyor belts — condition decays, agents MAINTAIN them. Belts carry one
+# resource type at a time and deposit into Storage or (future) downstream machines.
+[conveyor]
+build_cost    = 1.5      # raw_material per segment
+decay_rate    = 0.0005   # condition loss per tick
+throughput    = 0.5      # max resource movement per tick
+maintain_rate = 0.08     # condition restored per MAINTAIN tick
+
+# Dismantle — agents can tear down structures; partial material refund.
+[dismantle]
+return           = 0.5   # fraction of build_cost returned on DISMANTLE
+rebuild_window   = 200   # ticks before social penalty for not rebuilding
 
 [urgency]
 alpha = 2.0
@@ -67,10 +81,24 @@ alpha = 2.0
 starvation_ticks = 180
 exhaustion_ticks = 200
 
+[disease]
+raw_food_chance = 0.08    # chance of disease per raw meal (no machine processing)
+severity        = 0.15    # disease increase per contraction
+recovery        = 0.002   # disease decay per tick (immune system)
+hunger_mult     = 2.0     # hunger decay multiplier at disease=1.0
+
 [stress]
-high_need = 0.008
-decay = 0.005
-breakdown_threshold = 0.92
+high_need                = 0.008
+decay                    = 0.005
+breakdown_threshold      = 0.92
+sabotage_threshold       = 0.6     # stress >= this opens SABOTAGE utility
+noncompliance_stress     = 0.002   # stress per tick per noncompliance level
+trauma_accumulation_rate = 0.001   # per tick while stress > 0.5
+trauma_resilience_impact = 0.5     # effective_resilience *= (1 - trauma * this)
+trauma_social_impact     = 0.3     # effective_gregariousness *= (1 - trauma * this)
+redemption_chance        = 0.08    # per sabotage tick, chance of epiphany
+suicide_chance           = 0.03    # per sabotage tick, chance of self-destruction
+selection_temperature    = 0.4     # Boltzmann action selection (0=greedy, higher=more random)
 
 [personality]
 compliance_range     = [0.1, 0.95]
@@ -86,12 +114,15 @@ noise = 0.05  # chance of random step instead of toward target
 # External pressure — the factory must ship output product through Exit tiles or the
 # supply chain contracts (factory_health drops; built machines may break).
 [external]
-quota_per_tick          = 0.10    # food units demanded out per tick
-health_decay_per_miss   = 0.0015  # factory_health drop when quota not met
-health_recovery_per_hit = 0.0008  # factory_health rise when quota met
-machine_break_threshold = 0.40    # below this, built machines may revert to unbuilt
-machine_break_prob      = 0.0008  # per-tick probability per built machine when health low
-initial_food_per_agent  = 5.0     # bootstrap so agents survive while building infrastructure
+quota_per_tick          = 0.10      # output units demanded out per tick
+quota_growth_rate       = 0.00002   # quota increase per tick (factory demands more)
+health_decay_per_miss   = 0.0015    # factory_health drop when quota not met
+health_recovery_per_hit = 0.0008    # factory_health rise when quota met
+machine_break_threshold = 0.40      # below this, built machines may revert to unbuilt
+machine_break_prob      = 0.0008    # per-tick probability per built machine when health low
+initial_food_per_agent  = 5.0       # bootstrap so agents survive while building infrastructure
+restructure_interval    = 800       # ticks between restructure checks
+restructure_probability = 0.2       # chance per check
 
 # Eating zones — agents build designated eating spaces, must stay away from the
 # work zone, and pay a social cost if they eat next to a Machine.

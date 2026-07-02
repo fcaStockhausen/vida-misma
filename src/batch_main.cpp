@@ -672,10 +672,11 @@ int main(int argc, char* argv[]) {
                     sim.total_storage_output());
             }
         }
-        std::printf("\nDone. alive=%d  quota=%.0f%%  food=%.1f  output=%.1f  c_mat=%.1f\n",
+        std::printf("\nDone. alive=%d  quota=%.0f%%  food=%.1f  output=%.1f  c_mat=%.1f (inv=%.1f)\n",
             sim.alive_count(), sim.last_quota_fill() * 100,
             sim.total_storage_food(), sim.total_storage_output(),
-            sim.total_storage_constr_mat());
+            sim.total_storage_constr_mat(),
+            sim.total_inventory_constr_mat());
         auto& g = sim.grid();
         int nf=0, no=0, nm=0;
         for (int y = 0; y < g.height(); y++)

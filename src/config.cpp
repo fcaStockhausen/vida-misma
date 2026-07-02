@@ -48,6 +48,21 @@ Config load_config(const std::string& path) {
         cfg.machine_mat_output = p->get_as<double>("machine_mat_output")->value_or(cfg.machine_mat_output);
         cfg.machine_out_output = p->get_as<double>("machine_out_output")->value_or(cfg.machine_out_output);
         cfg.machine_input  = p->get_as<double>("machine_input")->value_or(cfg.machine_input);
+        cfg.portion_size   = p->get_as<double>("portion_size")->value_or(cfg.portion_size);
+    }
+
+    // Conveyor
+    if (auto c = config["conveyor"].as_table()) {
+        cfg.conveyor_build_cost = c->get_as<double>("build_cost")->value_or(cfg.conveyor_build_cost);
+        cfg.conveyor_decay_rate = c->get_as<double>("decay_rate")->value_or(cfg.conveyor_decay_rate);
+        cfg.conveyor_throughput = c->get_as<double>("throughput")->value_or(cfg.conveyor_throughput);
+        cfg.maintain_rate       = c->get_as<double>("maintain_rate")->value_or(cfg.maintain_rate);
+    }
+
+    // Dismantle
+    if (auto dm = config["dismantle"].as_table()) {
+        cfg.dismantle_return          = dm->get_as<double>("return")->value_or(cfg.dismantle_return);
+        cfg.dismantle_rebuild_window  = dm->get_as<int64_t>("rebuild_window")->value_or(cfg.dismantle_rebuild_window);
     }
 
     // Urgency
@@ -66,6 +81,22 @@ Config load_config(const std::string& path) {
         cfg.stress_high_need    = st->get_as<double>("high_need")->value_or(cfg.stress_high_need);
         cfg.stress_decay        = st->get_as<double>("decay")->value_or(cfg.stress_decay);
         cfg.breakdown_threshold = st->get_as<double>("breakdown_threshold")->value_or(cfg.breakdown_threshold);
+        cfg.sabotage_stress_threshold = st->get_as<double>("sabotage_threshold")->value_or(cfg.sabotage_stress_threshold);
+        cfg.noncompliance_stress      = st->get_as<double>("noncompliance_stress")->value_or(cfg.noncompliance_stress);
+        cfg.trauma_accumulation_rate  = st->get_as<double>("trauma_accumulation_rate")->value_or(cfg.trauma_accumulation_rate);
+        cfg.trauma_resilience_impact  = st->get_as<double>("trauma_resilience_impact")->value_or(cfg.trauma_resilience_impact);
+        cfg.trauma_social_impact      = st->get_as<double>("trauma_social_impact")->value_or(cfg.trauma_social_impact);
+        cfg.redemption_chance         = st->get_as<double>("redemption_chance")->value_or(cfg.redemption_chance);
+        cfg.suicide_chance            = st->get_as<double>("suicide_chance")->value_or(cfg.suicide_chance);
+        cfg.selection_temperature     = st->get_as<double>("selection_temperature")->value_or(cfg.selection_temperature);
+    }
+
+    // Disease
+    if (auto di = config["disease"].as_table()) {
+        cfg.raw_food_disease_chance = di->get_as<double>("raw_food_chance")->value_or(cfg.raw_food_disease_chance);
+        cfg.disease_severity        = di->get_as<double>("severity")->value_or(cfg.disease_severity);
+        cfg.disease_recovery        = di->get_as<double>("recovery")->value_or(cfg.disease_recovery);
+        cfg.disease_hunger_mult     = di->get_as<double>("hunger_mult")->value_or(cfg.disease_hunger_mult);
     }
 
     // Personality
@@ -94,11 +125,14 @@ Config load_config(const std::string& path) {
     // External pressure
     if (auto ex = config["external"].as_table()) {
         cfg.quota_per_tick          = ex->get_as<double>("quota_per_tick")->value_or(cfg.quota_per_tick);
+        cfg.quota_growth_rate       = ex->get_as<double>("quota_growth_rate")->value_or(cfg.quota_growth_rate);
         cfg.health_decay_per_miss   = ex->get_as<double>("health_decay_per_miss")->value_or(cfg.health_decay_per_miss);
         cfg.health_recovery_per_hit = ex->get_as<double>("health_recovery_per_hit")->value_or(cfg.health_recovery_per_hit);
         cfg.machine_break_threshold = ex->get_as<double>("machine_break_threshold")->value_or(cfg.machine_break_threshold);
         cfg.machine_break_prob      = ex->get_as<double>("machine_break_prob")->value_or(cfg.machine_break_prob);
         cfg.initial_food_per_agent  = ex->get_as<double>("initial_food_per_agent")->value_or(cfg.initial_food_per_agent);
+        cfg.restructure_interval    = ex->get_as<int64_t>("restructure_interval")->value_or(cfg.restructure_interval);
+        cfg.restructure_probability = ex->get_as<double>("restructure_probability")->value_or(cfg.restructure_probability);
     }
 
     // Director

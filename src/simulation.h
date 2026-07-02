@@ -72,6 +72,8 @@ public:
     float total_storage_food() const;
     float total_storage_output() const;
     float total_storage_constr_mat() const;
+    float total_inventory_constr_mat() const;  // c_mat carried by alive agents
+    float total_inventory_raw_material() const;
     std::vector<entt::entity> alive_agents() const;
 
     void advance();
