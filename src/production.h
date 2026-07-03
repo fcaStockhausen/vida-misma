@@ -13,6 +13,7 @@
 
 #include "grid.h"
 #include <algorithm>
+#include <vector>
 
 struct ColonyProduction {
     // Machine counts
@@ -39,6 +40,16 @@ struct ColonyProduction {
 
     Need primary_need = Need::NONE;
     Need secondary_need = Need::NONE;
+
+    // Colony blueprint — what the colony should build next, computed each tick
+    // in assess(). Drives BUILD target selection in sim_targets.cpp: agents read
+    // build_plan and converge on the highest-urgency step.
+    struct BuildStep {
+        MachineType type;   // Food, Materials, or Output
+        int x, y;           // target tile (-1,-1 = "find a site yourself")
+        float urgency;      // 0..1 — higher = stronger bonus in target race
+    };
+    std::vector<BuildStep> build_plan;
 
     // Chain health: 0 = broken, 1 = perfect flow
     float chain_health = 0.0f;
@@ -128,6 +139,33 @@ public:
         float stage4 = std::min(1.0f, cp.construction_material / 5.0f);
         float stage5 = std::min(1.0f, cp.output / 5.0f);
         cp.chain_health = stage1 * stage2 * stage3 * stage4 * stage5;
+
+        // Colony blueprint: materialize "what to build next" as concrete steps.
+        // sim_targets.cpp reads build_plan to steer BUILD target selection,
+        // activating the BUILD_OUTPUT need that was previously dead.
+        // Target tile (-1,-1) means "find a site yourself" — the agent's
+        // find_output_machine_site / find_nearest_free_* handles placement.
+        cp.build_plan.clear();
+        if (cp.food_machines == 0) {
+            cp.build_plan.push_back({MachineType::Food, -1, -1, 1.0f});
+        }
+        if (cp.mat_machines == 0) {
+            cp.build_plan.push_back({MachineType::Materials, -1, -1, 0.9f});
+        }
+        // Output machines are the seed-1 failure mode. Push a step whenever the
+        // colony lacks BUILT Output capacity, escalating urgency when c_mat is ready.
+        // The frame-counting that prevents over-construction lives in sim_execute
+        // (it counts built+unbuilt frames before placing a new one); the blueprint
+        // keeps the Output step active until Output machines are actually built,
+        // so agents converge to COMPLETE placed frames instead of abandoning them.
+        if (cp.output_machines == 0) {
+            // Highest urgency if c_mat is already banked — we can build now.
+            float urg = (cp.construction_material > 0.5f) ? 1.0f : 0.6f;
+            cp.build_plan.push_back({MachineType::Output, -1, -1, urg});
+        } else if (cp.output_machines < 2 && quota_fill < 0.5f) {
+            // Below quota with <2 Output machines built — build another.
+            cp.build_plan.push_back({MachineType::Output, -1, -1, 0.7f});
+        }
 
         return cp;
     }

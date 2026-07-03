@@ -80,6 +80,16 @@ void Simulation::system_find_targets() {
                 auto sp_t      = grid_.find_nearest_free_scrappile(pos.x, pos.y, agent.id);
                 bool any_built_ez = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
 
+                // NOTE: find_output_machine_site exists (grid.h) and the colony
+                // blueprint (build_plan) is computed each tick (production.h), but
+                // they are NOT yet wired into the BUILD target race. Activating them
+                // naively causes a c_mat conflict: c_mat is used both to BUILD new
+                // Output machines and to FEED existing ones (WORK), so a build bonus
+                // steals c_mat carriers away from operating Output machines. See
+                // doc/plans/2026-07-02-conveyor-recipes-design.md (Part B.2) for the
+                // resolution path (gate build by compliance, or route empty-handed
+                // agents to build sites). Infrastructure is in place; wiring is TODO.
+
                 // Compute distances
                 int mach_dist = (machine_t.first >= 0)
                     ? std::abs(machine_t.first - pos.x) + std::abs(machine_t.second - pos.y) : 999999;
@@ -117,6 +127,10 @@ void Simulation::system_find_targets() {
 
                 // When carrying construction_material, prioritize OutputMachine construction sites
                 // (Floor tiles near existing infrastructure)
+                // NOTE: output_build_bonus remains intentionally NOT applied to the target
+                // race — see the comment above the candidate finders. Activating it causes
+                // a c_mat build-vs-feed conflict. The blueprint infrastructure is in place
+                // (production.h build_plan, grid.h find_output_machine_site) but unwired.
                 int output_build_bonus = 0;
                 if (inv.construction_material > 0.05f) {
                     int n_out = count_built_machines(MachineType::Output);

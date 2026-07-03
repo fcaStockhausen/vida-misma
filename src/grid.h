@@ -310,6 +310,76 @@ public:
         return n;
     }
 
+    // Manhattan distance from (x,y) to the nearest built Materials machine.
+    // Returns a large sentinel if none exist.
+    int dist_to_nearest_materials_machine(int x, int y) const {
+        int best = 999999;
+        for (int yy = 0; yy < height_; yy++)
+            for (int xx = 0; xx < width_; xx++) {
+                if (at(xx, yy) != TileType::Machine || !data_at(xx, yy).built) continue;
+                if (data_at(xx, yy).machine_type != MachineType::Materials) continue;
+                int d = std::abs(xx - x) + std::abs(yy - y);
+                if (d < best) best = d;
+            }
+        return best;
+    }
+
+    // Find a strategic Floor tile for a new Output machine, closest to (fx, fy).
+    // Placement strategy: minimize (dist to nearest Materials machine + dist to
+    // nearest Exit). This puts the Output between its c_mat source (Materials)
+    // and its output destination (Exit) — short hauling legs on both sides.
+    // Filters: Floor tile, not already adjacent to a built Output machine
+    // (avoid clustering), and a Materials machine or Exit must exist.
+    // Returns {-1,-1} if no valid site.
+    std::pair<int,int> find_output_machine_site(int fx, int fy) const {
+        auto exits = find_all(TileType::Exit);
+        bool has_materials = false;
+        for (int yy = 0; yy < height_ && !has_materials; yy++)
+            for (int xx = 0; xx < width_ && !has_materials; xx++)
+                if (at(xx, yy) == TileType::Machine && data_at(xx, yy).built &&
+                    data_at(xx, yy).machine_type == MachineType::Materials)
+                    has_materials = true;
+        if (exits.empty() && !has_materials) return {-1, -1};
+
+        int best_score = 999999;
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 1; y < height_ - 1; y++)
+            for (int x = 1; x < width_ - 1; x++) {
+                if (at(x, y) != TileType::Floor) continue;
+                // Skip if adjacent to an existing built Output machine (no clustering)
+                bool adj_output = false;
+                for (int dy = -1; dy <= 1 && !adj_output; dy++)
+                    for (int dx = -1; dx <= 1 && !adj_output; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+                        if (at(nx, ny) == TileType::Machine && data_at(nx, ny).built &&
+                            data_at(nx, ny).machine_type == MachineType::Output)
+                            adj_output = true;
+                    }
+                if (adj_output) continue;
+
+                int d_mat = has_materials ? dist_to_nearest_materials_machine(x, y) : 0;
+                int d_exit = 999999;
+                for (auto& [ex, ey] : exits) {
+                    int d = std::abs(x - ex) + std::abs(y - ey);
+                    if (d < d_exit) d_exit = d;
+                }
+                if (!exits.empty() && d_exit >= 999999) continue;  // safety
+                // score: sum of both legs. If one side is missing, weight the other.
+                int score = d_mat + (exits.empty() ? 0 : d_exit);
+                int agent_dist = std::abs(x - fx) + std::abs(y - fy);
+                // Tiebreak: prefer tiles closer to the agent (so agents spread out)
+                if (score < best_score || (score == best_score && agent_dist < best_dist)) {
+                    best_score = score;
+                    best_dist = agent_dist;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
     // Find a Floor tile adjacent to a built machine that lacks nearby storage.
     // Returns the best Floor tile to build storage on, closest to (fx, fy).
     std::pair<int,int> find_storage_build_site(int fx, int fy) const {
@@ -578,6 +648,32 @@ public:
                 visited[ty][tx] = true;
                 q.push({tx, ty});
             }
+        }
+        return false;
+    }
+
+    // Trace a conveyor chain forward from (start_x, start_y) following each belt's
+    // conveyor_dir. Returns true if the chain reaches a built Output machine — i.e.
+    // c_mat placed on this belt will actually feed tier 2. Used by the Materials WORK
+    // case to decide whether to load c_mat onto a belt (vs keeping it in inventory).
+    // Cycle-safe via a visited grid; bounded by grid area.
+    bool conveyor_reaches_output(int start_x, int start_y) const {
+        std::vector<std::vector<bool>> visited(height_, std::vector<bool>(width_, false));
+        int cx = start_x, cy = start_y;
+        // Walk the chain: each belt flows to exactly one neighbor via conveyor_dir.
+        for (int steps = 0; steps < width_ * height_; steps++) {
+            if (cx < 0 || cx >= width_ || cy < 0 || cy >= height_) return false;
+            if (at(cx, cy) != TileType::Conveyor || !data_at(cx, cy).built) return false;
+            if (visited[cy][cx]) return false;  // cycle — stop
+            visited[cy][cx] = true;
+            auto [tx, ty] = conveyor_target(cx, cy);
+            if (tx < 0 || tx >= width_ || ty < 0 || ty >= height_) return false;
+            TileType tt = at(tx, ty);
+            if (tt == TileType::Machine && data_at(tx, ty).built &&
+                data_at(tx, ty).machine_type == MachineType::Output) return true;
+            // Continue only if the target is another built conveyor
+            if (tt != TileType::Conveyor || !data_at(tx, ty).built) return false;
+            cx = tx; cy = ty;
         }
         return false;
     }

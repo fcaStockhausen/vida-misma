@@ -243,9 +243,15 @@ void Simulation::system_execute_actions() {
                     // and no Output machines exist yet (or too few).
                     // OutputMachine is tier 2 of the production chain — converts
                     // construction_material into output product (quota).
+                    //
+                    // NOTE: find_output_machine_site (grid.h) and the colony blueprint
+                    // (production.h build_plan) exist as infrastructure but are NOT
+                    // wired here — see sim_targets.cpp for why. The agent builds at
+                    // its current position; strategic placement is a future enhancement
+                    // pending resolution of the c_mat build-vs-feed conflict.
                     if (inv.construction_material > 0.05f) {
                         int n_out = count_built_machines(MachineType::Output);
-                        // Build Output if we don't have enough (target: ~3-4)
+                        // Build Output if we don't have enough (target: ~2)
                         if (n_out < 2) {
                             // Place an unbuilt OutputMachine frame here
                             grid_.set(pos.x, pos.y, TileType::Machine);
@@ -543,8 +549,29 @@ void Simulation::system_execute_actions() {
                             }
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
-                            // 100% to agent inventory — agent carries c_mat to Output machines.
-                            inv.construction_material += mat_produced;
+                            // Deposit to adjacent conveyors whose chain reaches a built
+                            // Output machine — those belts actually feed tier 2. Conveyors
+                            // that dead-end or flow to Storage/Exit are skipped, so c_mat
+                            // stays with the agent for self-delivery instead of getting
+                            // stranded on a useless belt. This is the Machine→Machine leg.
+                            float cmat_to_belt = 0.0f;
+                            for (int dy = -3; dy <= 3 && cmat_to_belt < mat_produced - 0.01f; dy++)
+                                for (int dx = -3; dx <= 3 && cmat_to_belt < mat_produced - 0.01f; dx++) {
+                                    if (dx == 0 && dy == 0) continue;
+                                    int nx = pos.x + dx, ny = pos.y + dy;
+                                    if (nx < 0 || nx >= grid_.width() || ny < 0 || ny >= grid_.height()) continue;
+                                    if (grid_.at(nx, ny) != TileType::Conveyor) continue;
+                                    auto& cd = grid_.data_at(nx, ny);
+                                    if (!cd.built || cd.conveyor_condition < 0.2f) continue;
+                                    if (!grid_.conveyor_reaches_output(nx, ny)) continue;
+                                    float space = config_.conveyor_throughput - cd.conveyor_contents;
+                                    if (space <= 0.01f) continue;
+                                    float deposit = std::min(mat_produced - cmat_to_belt, space);
+                                    cd.conveyor_contents += deposit;
+                                    cd.conveyor_contents_type = ResourceType::CONSTRUCTION_MATERIAL;
+                                    cmat_to_belt += deposit;
+                                }
+                            inv.construction_material += (mat_produced - cmat_to_belt);
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
                             float scrap = config_.machine_mat_output * 0.3f * efficiency * collab;
@@ -568,31 +595,44 @@ void Simulation::system_execute_actions() {
                         case MachineType::Output: {
                             // OutputMachine: converts construction_material → output product.
                             // This is tier 2 of the production chain.
-                            // Source 1: construction_material from nearby Storage (radius 3)
-                            // Source 2: construction_material from agent inventory
-                            // Source 3: construction_material from ANY Storage (simulates hauling)
+                            // Source 1: construction_material from this machine's own buffer
+                            //           (deposited by a conveyor belt — the Machine→Machine leg)
+                            // Source 2: construction_material from nearby Storage (radius 3)
+                            // Source 3: construction_material from agent inventory
+                            // Source 4: construction_material from ANY Storage (simulates hauling)
                             // NO auto-gather — OutputMachine does not sit on resource tiles.
                             float health_eff = 0.5f + 0.5f * factory_health_;
 
                             float want = config_.machine_out_output;
                             float total_consumed = 0.0f;
 
-                            // Source 1: construction_material from adjacent Storage
-                            float from_storage = pull_construction_material_from_adjacent_storage(
-                                pos.x, pos.y, want);
-                            total_consumed += from_storage;
+                            // Source 1: own buffer (fed by conveyor from Materials machines)
+                            float remaining = want;
+                            if (td.stored_construction_material > 0.01f) {
+                                float from_self = std::min(remaining, td.stored_construction_material);
+                                td.stored_construction_material -= from_self;
+                                total_consumed += from_self;
+                                remaining = want - total_consumed;
+                            }
 
-                            // Source 2: construction_material from agent inventory
-                            float remaining = want - total_consumed;
+                            // Source 2: construction_material from adjacent Storage
+                            if (remaining > 0.01f) {
+                                float from_storage = pull_construction_material_from_adjacent_storage(
+                                    pos.x, pos.y, remaining);
+                                total_consumed += from_storage;
+                                remaining = want - total_consumed;
+                            }
+
+                            // Source 3: construction_material from agent inventory
                             if (remaining > 0.01f) {
                                 float from_inv = std::min(remaining, inv.construction_material);
                                 inv.construction_material -= from_inv;
                                 total_consumed += from_inv;
+                                remaining = want - total_consumed;
                             }
 
-                            // Source 3: global pull (simulates hauling from distant Storage)
+                            // Source 4: global pull (simulates hauling from distant Storage)
                             // Only if local sources are empty — represents agents hauling material.
-                            remaining = want - total_consumed;
                             if (remaining > 0.01f) {
                                 auto all_storage = grid_.find_all(TileType::Storage);
                                 for (auto [sx, sy] : all_storage) {

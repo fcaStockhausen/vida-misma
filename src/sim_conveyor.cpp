@@ -141,7 +141,43 @@ void Simulation::system_conveyor_transport() {
                 nd.conveyor_contents_type = d.conveyor_contents_type;
                 d.conveyor_contents -= transfer;
             }
+        } else if (target == TileType::Machine) {
+            // Feed a downstream machine directly from the belt.
+            // Only transfer if the resource matches the machine's diet, so a belt
+            // pointing at the wrong machine backs up (preserves current behavior).
+            auto& md = grid_.data_at(tx, ty);
+            if (!md.built) { /* belt backs up */ }
+            else if (d.conveyor_contents_type == ResourceType::CONSTRUCTION_MATERIAL
+                     && md.machine_type == MachineType::Output) {
+                // c_mat → Output machine input buffer (capped to avoid overfill)
+                float cap = config_.machine_input * 5.0f;
+                float room = std::max(0.0f, cap - md.stored_construction_material);
+                float transfer = std::min(amount, room);
+                if (transfer > 0.0f) {
+                    md.stored_construction_material += transfer;
+                    d.conveyor_contents -= transfer;
+                }
+            } else if (d.conveyor_contents_type == ResourceType::RAW_FOOD
+                       && md.machine_type == MachineType::Food) {
+                float cap = config_.machine_input * 5.0f;
+                float room = std::max(0.0f, cap - md.stored_raw_food);
+                float transfer = std::min(amount, room);
+                if (transfer > 0.0f) {
+                    md.stored_raw_food += transfer;
+                    d.conveyor_contents -= transfer;
+                }
+            } else if (d.conveyor_contents_type == ResourceType::RAW_MATERIAL
+                       && md.machine_type == MachineType::Materials) {
+                float cap = config_.machine_input * 5.0f;
+                float room = std::max(0.0f, cap - md.stored_raw_material);
+                float transfer = std::min(amount, room);
+                if (transfer > 0.0f) {
+                    md.stored_raw_material += transfer;
+                    d.conveyor_contents -= transfer;
+                }
+            }
+            // else: resource/machine mismatch → belt backs up
         }
-        // Floor/Wall/Machine: contents stay, belt backs up
+        // Floor/Wall: contents stay, belt backs up
     }
 }
