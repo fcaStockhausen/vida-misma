@@ -42,7 +42,6 @@ COMMON_FLAGS=(
   --number-sections
   --toc
   -M cref=true
-  -M autoSectionLabels=true
 )
 
 echo "=== Compiling document with pandoc + crossref ==="
