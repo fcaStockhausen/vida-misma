@@ -598,7 +598,7 @@ public:
         auto evs = by_agent(agent_id);
         if (evs.empty()) return "(no events)";
 
-        int built = 0, gathered = 0, worked = 0, shared = 0, sabotaged = 0;
+        int built = 0, worked = 0, shared = 0, sabotaged = 0;
         int artifacts = 0, explored = 0;
         int first_tick = evs.front()->tick;
         int last_tick = evs.back()->tick;
@@ -611,7 +611,7 @@ public:
                 case EventType::BUILT_CONVEYOR:
                 case EventType::BUILT_EATING_ZONE:
                     built++; break;
-                case EventType::GATHERED:      gathered++; break;
+                case EventType::GATHERED:      break;  // counted for completeness, not surfaced in arcs
                 case EventType::WORK_COMPLETED: worked++; break;
                 case EventType::FOOD_SHARED:   shared++; break;
                 case EventType::SABOTAGE:      sabotaged++; break;

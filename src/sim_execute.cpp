@@ -394,7 +394,6 @@ void Simulation::system_execute_actions() {
                     // Check if other agents are building the same tile or adjacent tiles
                     {
                         auto builders = alive_agents();
-                        int co_builders = 0;
                         for (auto ob : builders) {
                             if (ob == e) continue;
                             auto& oact = registry_.get<ActionComponent>(ob);
@@ -407,7 +406,6 @@ void Simulation::system_execute_actions() {
                                 const auto& rel = social_.get_rel(agent.id, oag.id);
                                 // Trust amplifies collaboration
                                 float trust_mod = 0.5f + 0.5f * std::max(0.0f, rel.trust);
-                                co_builders++;
                                 collab_rate += config_.build_rate * 0.3f * trust_mod;
                             }
                         }
@@ -440,7 +438,6 @@ void Simulation::system_execute_actions() {
 
             case ActionType::WORK: {
                 auto& td = grid_.data_at(pos.x, pos.y);
-                TileType tile = grid_.at(pos.x, pos.y);
                 if (td.built) {
                     auto alive_list = alive_agents();
                     float collab = social_.collaboration_bonus(
@@ -456,7 +453,6 @@ void Simulation::system_execute_actions() {
                     skills.xp_factory += 1.0f;
                     skills.factory_work = SkillsComponent::xp_to_level(skills.xp_factory);
 
-                    float deposited = 0.0f;
                     std::string log_detail;
 
                     switch (td.machine_type) {
@@ -505,7 +501,6 @@ void Simulation::system_execute_actions() {
                                 food_dep += deposit_to_adjacent_conveyor(pos.x, pos.y,
                                     ResourceType::FOOD, food_left);
                             }
-                            deposited = food_dep;
                             total_food_produced_ += food_produced;
                             // FoodMachine work also recovers factory health (productive labor)
                             factory_health_ = std::min(1.0f, factory_health_ + food_dep * 0.02f);
@@ -588,7 +583,6 @@ void Simulation::system_execute_actions() {
                                     if (scrap < 0.001f) break;
                                 }
 
-                            deposited = mat_produced;
                             log_detail = "+" + ff2(mat_produced) + " constr_mat (ate " + ff2(total_consumed) + " scrap)";
                             break;
                         }
@@ -674,7 +668,6 @@ void Simulation::system_execute_actions() {
                                     md.stored_output += out_left;
                                     out_dep += out_left;
                                 }
-                                deposited = out_dep;
                                 total_output_produced_ += out_dep;
                                 factory_health_ = std::min(1.0f, factory_health_ + out_dep * 0.03f);
 

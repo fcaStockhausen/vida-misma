@@ -838,7 +838,6 @@ public:
             path.push_back({px, py});
             auto [ppx, ppy] = parent[py][px];
             if (ppx < 0) break;  // safety
-            px = px; py = py;
             // use parent directly
             int opx = px, opy = py;
             px = parent[opy][opx].first;

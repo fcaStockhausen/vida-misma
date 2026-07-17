@@ -18,6 +18,8 @@ std::mt19937* ChronicleEvent::s_rng = nullptr;
 Simulation::Simulation(const Config& cfg)
     : config_(cfg)
     , grid_(cfg.grid_width, cfg.grid_height)
+    , social_(cfg.max_population)
+    , textgen_(make_narrative_grammar())
     , rng_(cfg.seed)
     , tick_(0)
     , factory_health_(1.0f)
@@ -25,8 +27,6 @@ Simulation::Simulation(const Config& cfg)
     , total_output_produced_(0.0f)
     , total_raw_gathered_(0.0f)
     , total_machines_built_(0)
-    , social_(cfg.max_population)
-    , textgen_(make_narrative_grammar())
     , current_quota_per_tick_(cfg.quota_per_tick)
 {
     grid_.generate_wfc(cfg.seed);
@@ -584,7 +584,6 @@ void Simulation::system_check_deaths() {
         auto& needs  = registry_.get<NeedsComponent>(e);
         auto& agent  = registry_.get<AgentComponent>(e);
         auto& stress = registry_.get<StressComponent>(e);
-        auto& personality = registry_.get<PersonalityComponent>(e);
 
         // Starvation
         if (needs.hunger >= 1.0f) {

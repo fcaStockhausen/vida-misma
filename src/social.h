@@ -108,10 +108,11 @@ public:
                 float stress_diff = infos[i].stress - infos[j].stress;
                 // susceptibility = 1 - resilience (low resilience = high susceptibility)
                 float sus_j = 1.0f - infos[j].resilience;
-                float sus_i = 1.0f - infos[i].resilience;
 
+                // Stress flows from the more-stressed agent to the less-stressed one,
+                // scaled by the receiver's susceptibility. The single transfer_ij term
+                // models the bidirectional exchange (i sheds what j absorbs).
                 float transfer_ij = gamma * edge_strength * stress_diff * sus_j;
-                float transfer_ji = gamma * edge_strength * (-stress_diff) * sus_i;
 
                 deltas[i] -= transfer_ij;
                 deltas[j] += transfer_ij;

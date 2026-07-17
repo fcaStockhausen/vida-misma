@@ -30,11 +30,6 @@ void Simulation::system_find_targets() {
                 // (food chain priority). Otherwise prefer ScrapPile (for building).
                 auto food_src = grid_.find_nearest(TileType::FoodSource, pos.x, pos.y);
                 auto scrap_target = grid_.find_nearest(TileType::ScrapPile, pos.x, pos.y);
-                
-                int food_dist = (food_src.first >= 0)
-                    ? std::abs(food_src.first - pos.x) + std::abs(food_src.second - pos.y) : 999999;
-                int scrap_dist = (scrap_target.first >= 0)
-                    ? std::abs(scrap_target.first - pos.x) + std::abs(scrap_target.second - pos.y) : 999999;
 
                 // Priority logic:
                 // - Bootstrapping: if no machines built yet, prefer ScrapPile (need to BUILD first)
@@ -127,15 +122,11 @@ void Simulation::system_find_targets() {
 
                 // When carrying construction_material, prioritize OutputMachine construction sites
                 // (Floor tiles near existing infrastructure)
-                // NOTE: output_build_bonus remains intentionally NOT applied to the target
-                // race — see the comment above the candidate finders. Activating it causes
-                // a c_mat build-vs-feed conflict. The blueprint infrastructure is in place
-                // (production.h build_plan, grid.h find_output_machine_site) but unwired.
-                int output_build_bonus = 0;
-                if (inv.construction_material > 0.05f) {
-                    int n_out = count_built_machines(MachineType::Output);
-                    if (n_out < 3) output_build_bonus = -15;  // urgently need Output capacity
-                }
+                // NOTE: an output_build_bonus (-15 when c_mat is carried and <3 Output
+                // machines exist) was prototyped here but is intentionally NOT applied to
+                // the target race — activating it causes a c_mat build-vs-feed conflict.
+                // The blueprint infrastructure is in place (production.h build_plan,
+                // grid.h find_output_machine_site) but unwired. Re-add here when wiring it.
 
                 // Ensure food production before output: FoodMachine must come first
                 if (built_food_m == 0) {

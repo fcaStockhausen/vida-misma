@@ -25,12 +25,6 @@ static Config make_config(int argc, char* argv[], int arg_base, bool force_calm 
     return cfg;
 }
 
-static Simulation run_sim(Config& cfg, int ticks) {
-    Simulation sim(cfg);
-    for (int t = 0; t < ticks; t++) sim.advance();
-    return sim;
-}
-
 // Collect archetype name for an agent_id (may be dead, search all entities)
 static const char* find_archetype_name(Simulation& sim, int agent_id) {
     auto view = sim.registry().view<const AgentComponent, const PersonalityComponent>();
@@ -78,7 +72,6 @@ static int cmd_run(int argc, char* argv[]) {
             for (auto e : av) {
                 auto& a = sim.registry().get<ActionComponent>(e);
                 auto& iv = sim.registry().get<InventoryComponent>(e);
-                auto& p = sim.registry().get<PositionComponent>(e);
                 act_counts[(int)a.current]++;
                 inv_rf += iv.raw_food;
                 inv_rm += iv.raw_material;

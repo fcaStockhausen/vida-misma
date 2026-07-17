@@ -96,10 +96,6 @@ public:
                 }
             }
 
-        // Machine-to-agent ratios
-        float food_ratio = (alive > 0) ? (float)cp.food_machines / alive : 0;
-        float mat_ratio = (alive > 0) ? (float)cp.mat_machines / alive : 0;
-
         // Determine primary and secondary needs
         float c_mat_threshold = std::max(2.0f, alive * 0.3f);  // need buffer proportional to pop
         if (cp.food_machines == 0) {
