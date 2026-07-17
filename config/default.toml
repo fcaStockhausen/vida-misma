@@ -124,6 +124,25 @@ initial_food_per_agent  = 5.0       # bootstrap so agents survive while building
 restructure_interval    = 800       # ticks between restructure checks
 restructure_probability = 0.2       # chance per check
 
+# Adversarial factory — the factory evaluates candidate targets by strategic
+# value (throughput, output stock, Exit connectivity) and by proximity to the
+# largest faction, then softmax-selects. With adversary_intensity=0 this
+# collapses to the original uniform-random behavior (baseline).
+adversary_intensity      = 0.7     # α∈[0,1]: 0=random baseline, 1=best-response, mid=edge-of-chaos
+restructure_temperature  = 0.3     # τ for softmax over candidate scores (higher=more random)
+strategic_weight         = 1.0     # weight of strategic score vs uniform in the blend
+faction_target_bonus     = 1.5     # score bonus when target is near the largest faction
+
+# The Watcher — loyal high-influence, high-compliance agents ("foremen") report
+# noncompliant neighbors, eroding the reporter's trust toward the dissident.
+# This is Task A3 of the factory-as-antagonist plan: the factory acts THROUGH
+# loyal agents, not just as ambient damage.
+watcher_influence_threshold    = 0.3   # SocialComponent.influence required to report
+watcher_compliance_threshold   = 0.7   # PersonalityComponent.compliance required to report
+watcher_radius                 = 4     # Manhattan radius a reporter scans
+noncompliance_report_threshold = 0.5   # AgentComponent.noncompliance above which reported
+report_severity                = 0.02  # trust penalty on reporter→dissident edge per report
+
 # Eating zones — agents build designated eating spaces, must stay away from the
 # work zone, and pay a social cost if they eat next to a Machine.
 [eating]

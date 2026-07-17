@@ -133,6 +133,17 @@ Config load_config(const std::string& path) {
         cfg.initial_food_per_agent  = ex->get_as<double>("initial_food_per_agent")->value_or(cfg.initial_food_per_agent);
         cfg.restructure_interval    = ex->get_as<int64_t>("restructure_interval")->value_or(cfg.restructure_interval);
         cfg.restructure_probability = ex->get_as<double>("restructure_probability")->value_or(cfg.restructure_probability);
+
+        // Adversarial factory policy (Evaluator) + The Watcher
+        cfg.adversary_intensity             = ex->get_as<double>("adversary_intensity")->value_or(cfg.adversary_intensity);
+        cfg.restructure_temperature         = ex->get_as<double>("restructure_temperature")->value_or(cfg.restructure_temperature);
+        cfg.strategic_weight                = ex->get_as<double>("strategic_weight")->value_or(cfg.strategic_weight);
+        cfg.faction_target_bonus            = ex->get_as<double>("faction_target_bonus")->value_or(cfg.faction_target_bonus);
+        cfg.watcher_influence_threshold     = ex->get_as<double>("watcher_influence_threshold")->value_or(cfg.watcher_influence_threshold);
+        cfg.watcher_compliance_threshold    = ex->get_as<double>("watcher_compliance_threshold")->value_or(cfg.watcher_compliance_threshold);
+        cfg.watcher_radius                  = ex->get_as<int64_t>("watcher_radius")->value_or(cfg.watcher_radius);
+        cfg.noncompliance_report_threshold  = ex->get_as<double>("noncompliance_report_threshold")->value_or(cfg.noncompliance_report_threshold);
+        cfg.report_severity                 = ex->get_as<double>("report_severity")->value_or(cfg.report_severity);
     }
 
     // Director

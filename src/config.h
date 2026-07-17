@@ -101,6 +101,24 @@ struct Config {
     float restructure_probability  = 0.2f;   // chance per check
     float noncompliance_stress     = 0.002f; // stress per tick per noncompliance level
 
+    // Adversarial factory policy — makes the factory an Evaluator (best-response)
+    // rather than uniform-random noise. See doc/adversarial_utility_agents.md and
+    // doc/plans/2026-05-30-factory-as-antagonist.md.
+    // α=0 reproduces the old random baseline; α=1 is pure best-response; intermediate
+    // values sit at the "edge of chaos" the design doc targets.
+    float adversary_intensity            = 0.7f;  // α: blend strategic vs uniform restructure targeting
+    float restructure_temperature        = 0.3f;  // τ for softmax over restructure candidate scores
+    float strategic_weight               = 1.0f;  // weight of strategic score vs uniform random in the blend
+    float faction_target_bonus           = 1.5f;  // bonus added to a restructure target near the largest faction
+    // The Watcher — loyal high-influence agents ("foremen") report noncompliant
+    // neighbors to the factory, reducing trust on the reporter→dissident edge.
+    // Fulfills Task A3 of the factory-as-antagonist plan (never previously implemented).
+    float watcher_influence_threshold   = 0.3f;  // influence required to act as a reporter
+    float watcher_compliance_threshold  = 0.7f;  // compliance required to act as a reporter
+    int   watcher_radius                = 4;     // Manhattan radius a reporter scans
+    float noncompliance_report_threshold = 0.5f; // noncompliance above which an agent gets reported
+    float report_severity               = 0.02f; // trust penalty applied per report
+
     // Director
     DirectorMode director_mode = DirectorMode::NORMAL;
 
