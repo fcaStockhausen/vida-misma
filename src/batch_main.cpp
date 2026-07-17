@@ -667,7 +667,7 @@ int main(int argc, char* argv[]) {
             sim.advance();
             if (sim.alive_count() == 0) break;
             if (t % sample_interval == 0 || t == ticks - 1) {
-                int act_counts[12] = {};
+                int act_counts[(int)ActionType::COUNT] = {};
                 auto view = sim.registry().view<const ActionComponent, const AgentComponent>();
                 for (auto e : view) {
                     if (!sim.registry().get<AgentComponent>(e).alive) continue;
@@ -733,7 +733,7 @@ int main(int argc, char* argv[]) {
                 break;
             }
             if (t % sample_interval == 0 || t == ticks - 1) {
-                int act_counts[12] = {};
+                int act_counts[(int)ActionType::COUNT] = {};
                 auto view = sim.registry().view<const ActionComponent, const AgentComponent>();
                 for (auto e : view) {
                     if (!sim.registry().get<AgentComponent>(e).alive) continue;

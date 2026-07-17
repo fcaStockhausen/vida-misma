@@ -1,0 +1,110 @@
+[
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/main_gui.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/main_gui.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/main_gui.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/main_gui.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/graphical_view.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/graphical_view.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/graphical_view.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/graphical_view.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/font_cache.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/font_cache.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/font_cache.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/font_cache.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/config.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/config.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/config.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/config.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/simulation.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/simulation.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/simulation.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/simulation.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/sim_utility.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_utility.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_utility.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/sim_utility.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/sim_targets.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_targets.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_targets.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/sim_targets.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/sim_movement.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_movement.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_movement.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/sim_movement.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/sim_execute.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_execute.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_execute.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/sim_execute.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/opt/homebrew/include/SDL2/.. -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_gui.dir/src/sim_conveyor.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_conveyor.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_conveyor.cpp",
+  "output": "CMakeFiles/vida_gui.dir/src/sim_conveyor.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/batch_main.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/batch_main.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/batch_main.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/batch_main.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/config.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/config.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/config.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/config.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/simulation.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/simulation.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/simulation.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/simulation.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/sim_utility.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_utility.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_utility.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/sim_utility.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/sim_targets.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_targets.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_targets.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/sim_targets.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/sim_movement.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_movement.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_movement.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/sim_movement.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/sim_execute.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_execute.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_execute.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/sim_execute.cpp.o"
+},
+{
+  "directory": "/Users/fcaraneda/projects/game_projects/vida_misma/build_debug",
+  "command": "/usr/bin/c++  -I/Users/fcaraneda/projects/game_projects/vida_misma/src -I/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-src/src -isystem /Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-src/include -g -std=gnu++20 -arch arm64 -Wall -Wextra -Wpedantic -Wno-unused-parameter -Wno-missing-field-initializers -o CMakeFiles/vida_batch.dir/src/sim_conveyor.cpp.o -c /Users/fcaraneda/projects/game_projects/vida_misma/src/sim_conveyor.cpp",
+  "file": "/Users/fcaraneda/projects/game_projects/vida_misma/src/sim_conveyor.cpp",
+  "output": "CMakeFiles/vida_batch.dir/src/sim_conveyor.cpp.o"
+}
+]
