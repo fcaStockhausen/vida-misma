@@ -236,3 +236,49 @@ The fixed $60 \times 40$ layout is designed to produce spatial asymmetries that 
 - The conveyor layout is procedurally generated as a central horizontal line that agents must build and maintain. The line divides the map into north and south zones, creating a spatial tension: conveyors must be built to enable logistics, but poorly placed conveyors block agent movement and may need to be dismantled and rebuilt.
 
 The distance between resource sources, machines, and storage affects task utility via the distance penalty (Eq. @eq:task-distance), which creates natural industrial organization: agents prefer nearby tasks, so clusters of complementary tiles receive more consistent service than isolated ones.
+
+## The Factory as Strategic Adversary {#sec:factory-adversary}
+
+The preceding subsections describe the factory's *mechanics* (substrate, production chain, spatial layout). This subsection specifies its *role in the game*: the factory is one of two players in a two-player stochastic game, opposed to the agent population.
+
+### Resolving the Ontological Status
+
+Earlier drafts and the design plan described the factory inconsistently as a *substrate*, an *antagonist with a will*, and a *passive evaluator*. These are not three competing models but three levels of description of a single object:
+
+- **Substrate** is the factory's *implementation*: a grid of tiles, a production DAG, a health counter. This is what the simulation code manipulates.
+- **Strategic adversary** is the factory's *role in the game*: it holds the column of the payoff matrix and selects moves (restructure events, quota escalation, hidden-space sealing) that reduce agent welfare.
+- **Evaluator** is the factory's *function in the decision loop*: it returns the consequences (health decay, machine breakage, confiscation) that condition the agents' next utility computation.
+
+The substrate framing (Section @sec:factory above) describes what the factory *is made of*. The game-theoretic framing below describes what the factory *does*. No contradiction: a chess board is a substrate (64 squares) and the black pieces are an adversary, simultaneously.
+
+### Formal Model: Two-Player Stochastic Game
+
+The interaction between agents and factory is modeled as a **two-player zero-sum stochastic game** in the sense of Shapley (1953).
+
+**Players.** Player 1 (Row) is the agent population, collectively selecting an action profile $a \in A$ each tick, where $A$ is the joint action space (each agent picks one of 12 `ActionType` values, targeting one of $60 \times 40$ tiles; see Section @sec:inhabitants). Player 2 (Column) is the factory, selecting a restructuring move $m \in M$ each tick, where $M$ is the set of candidate targets (conveyors, machines, storages on the grid) plus a null move.
+
+**State.** The game state $s \in S$ is the full simulation snapshot: tile configuration, per-agent needs/stress/inventory, social graph, factory health. $S$ is finite and discrete.
+
+**Payoff.** Define the stage payoff to Player 1 (agents) as the aggregate welfare gained in a tick:
+
+$$r(s, a, m) = \sum_{i \in \text{alive}} \big( -\Delta \text{stress}_i - \mathbb{1}[\text{agent } i \text{ died}] \cdot C_{\text{death}} \big) + \beta \cdot \Delta h_{\text{factory}}$$
+
+where the factory's payoff is $-r$ (zero-sum): every unit of welfare the agents gain is a unit the factory loses, and vice versa. The factory's restructuring move $m$ enters negatively into $r$ via machine breakage, confiscation, and induced stress.
+
+**Transition.** $P(s' \mid s, a, m)$ is deterministic except for the factory's stochastic restructuring (probability gates in `system_factory_restructure`) and per-agent Boltzmann action noise.
+
+**Why stochastic game, not one-shot matrix game.** The state carries over between ticks, and moves have delayed consequences (a confiscated storage affects quota fulfillment many ticks later). Shapley's framework is the minimal one that captures both the adversarial structure and the temporal extension.
+
+### Equilibrium Without Continuity
+
+The original design document (`adversarial_utility_agents.md`) invoked the von Neumann (1928) minimax theorem, which requires utility functions *continuous in the action space*. **This hypothesis does not hold in our implementation**: the agent utility functions in `sim_utility.cpp` are piecewise-defined with dozens of hard threshold gates (e.g. `if needs.hunger > 0.85`, `if needs.expression > 0.25`, the Maslow boost at `needs.hunger < 0.3`), making them step-discontinuous, not continuous.
+
+The compactness hypothesis *does* hold: both action spaces ($A$ and $M$) are finite discrete sets (Section @sec:inhabitants enumerates the 12 agent actions; the factory's candidate set is bounded by the $60 \times 40$ grid). But compactness alone is insufficient for von Neumann's saddle-point theorem.
+
+**The correct result for our setting is Shapley's theorem (1953):** every two-player zero-sum stochastic game with finitely many states and actions has a value, and both players have optimal stationary strategies. Crucially, Shapley's theorem requires **no continuity** — only finiteness of the state and action sets, which our discrete grid + discrete action types satisfy. Where the von Neumann framework breaks down (discontinuous utilities), Shapley's discrete stochastic-game framework applies directly.
+
+This means: the "equilibrium" the simulation approaches is not a continuous saddle point but a **stationary equilibrium of a discounted stochastic game**. The discount factor $\gamma$ corresponds, in our setting, to the agent death rate: dead agents stop accruing payoff, which is operationally equivalent to future-discounting. The system does not converge to a fixed point; it reaches a **stationary distribution** over states, which is the game-theoretic analogue of Wolfram's Class IV (edge of chaos) operating regime.
+
+### The Adversary Is Software, Not the Director
+
+A final disambiguation: the factory-as-adversary is an *autonomous software system* (`system_factory_restructure`, `system_factory_deterioration`, `system_hidden_space_exposure`, the Watcher logic in `system_execute_actions`). It runs every tick with its own scoring policy. This is distinct from the **Director** (Section @sec:director), who is the human player and intervenes only through environmental editing (placing/removing tiles, setting quotas). The Director is not the adversary; the Director is an editor who can *make the adversary stronger or weaker* by tuning knobs (`adversary_intensity`, `quota_growth_rate`) and reconfiguring the board. Conflating the two produced the earlier inconsistency where the docs called the Director both "not a meta-agent" and "a meta-agent like the Storyteller." The resolution: the Storyteller analogy applies to the *factory's autonomous restructure policy*, not to the human Director.

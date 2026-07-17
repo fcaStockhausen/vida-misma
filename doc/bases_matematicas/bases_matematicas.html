@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="generator" content="pandoc" />
+  <meta name="generator" content="pandoc 3.10" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
   <meta name="author" content="Project Vida Misma" />
   <meta name="dcterms.date" content="2026-05-29" />
@@ -158,8 +158,12 @@
       text-decoration: none;
     }
     span.smallcaps{font-variant: small-caps;}
-    div.columns{display: flex; gap: min(4vw, 1.5em);}
-    div.column{flex: auto; overflow-x: auto;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
     div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
     /* The extra [class] is a hack that increases specificity enough to
        override a similar rule in reveal.js */
@@ -198,7 +202,7 @@
   
   
   <script defer=""
-  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
+  src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js"
   type="text/javascript"></script>
 </head>
 <body>
@@ -539,6 +543,28 @@ Provision)</a></li>
 id="toc-sec:spatial-layout-and-emergent-organization"><span
 class="toc-section-number">12.5</span> Spatial Layout and Emergent
 Organization</a></li>
+<li><a href="#sec:factory-adversary"
+id="toc-sec:factory-adversary"><span
+class="toc-section-number">12.6</span> The Factory as Strategic
+Adversary</a>
+<ul>
+<li><a href="#sec:resolving-the-ontological-status"
+id="toc-sec:resolving-the-ontological-status"><span
+class="toc-section-number">12.6.1</span> Resolving the Ontological
+Status</a></li>
+<li><a href="#sec:formal-model-two-player-stochastic-game"
+id="toc-sec:formal-model-two-player-stochastic-game"><span
+class="toc-section-number">12.6.2</span> Formal Model: Two-Player
+Stochastic Game</a></li>
+<li><a href="#sec:equilibrium-without-continuity"
+id="toc-sec:equilibrium-without-continuity"><span
+class="toc-section-number">12.6.3</span> Equilibrium Without
+Continuity</a></li>
+<li><a href="#sec:the-adversary-is-software-not-the-director"
+id="toc-sec:the-adversary-is-software-not-the-director"><span
+class="toc-section-number">12.6.4</span> The Adversary Is Software, Not
+the Director</a></li>
+</ul></li>
 </ul></li>
 <li><a href="#sec:director" id="toc-sec:director"><span
 class="toc-section-number">13</span> The Director: Player as Environment
@@ -562,6 +588,10 @@ class="toc-section-number">13.4</span> Observational Tools</a></li>
 id="toc-sec:current-implementation-status"><span
 class="toc-section-number">13.5</span> Current Implementation
 Status</a></li>
+<li><a href="#sec:director-vs-factory"
+id="toc-sec:director-vs-factory"><span
+class="toc-section-number">13.6</span> Disambiguation: Director
+vs. Factory Adversary</a></li>
 </ul></li>
 <li><a href="#sec:inhabitants" id="toc-sec:inhabitants"><span
 class="toc-section-number">14</span> The Inhabitants: Agent
@@ -3688,6 +3718,138 @@ task utility via the distance penalty (Eq. equation 24), which creates
 natural industrial organization: agents prefer nearby tasks, so clusters
 of complementary tiles receive more consistent service than isolated
 ones.</p>
+<h2 data-number="12.6" id="sec:factory-adversary"><span
+class="header-section-number">12.6</span> The Factory as Strategic
+Adversary</h2>
+<p>The preceding subsections describe the factory’s <em>mechanics</em>
+(substrate, production chain, spatial layout). This subsection specifies
+its <em>role in the game</em>: the factory is one of two players in a
+two-player stochastic game, opposed to the agent population.</p>
+<h3 data-number="12.6.1" id="sec:resolving-the-ontological-status"><span
+class="header-section-number">12.6.1</span> Resolving the Ontological
+Status</h3>
+<p>Earlier drafts and the design plan described the factory
+inconsistently as a <em>substrate</em>, an <em>antagonist with a
+will</em>, and a <em>passive evaluator</em>. These are not three
+competing models but three levels of description of a single object:</p>
+<ul>
+<li><strong>Substrate</strong> is the factory’s <em>implementation</em>:
+a grid of tiles, a production DAG, a health counter. This is what the
+simulation code manipulates.</li>
+<li><strong>Strategic adversary</strong> is the factory’s <em>role in
+the game</em>: it holds the column of the payoff matrix and selects
+moves (restructure events, quota escalation, hidden-space sealing) that
+reduce agent welfare.</li>
+<li><strong>Evaluator</strong> is the factory’s <em>function in the
+decision loop</em>: it returns the consequences (health decay, machine
+breakage, confiscation) that condition the agents’ next utility
+computation.</li>
+</ul>
+<p>The substrate framing (Section section 12 above) describes what the
+factory <em>is made of</em>. The game-theoretic framing below describes
+what the factory <em>does</em>. No contradiction: a chess board is a
+substrate (64 squares) and the black pieces are an adversary,
+simultaneously.</p>
+<h3 data-number="12.6.2"
+id="sec:formal-model-two-player-stochastic-game"><span
+class="header-section-number">12.6.2</span> Formal Model: Two-Player
+Stochastic Game</h3>
+<p>The interaction between agents and factory is modeled as a
+<strong>two-player zero-sum stochastic game</strong> in the sense of
+Shapley (1953).</p>
+<p><strong>Players.</strong> Player 1 (Row) is the agent population,
+collectively selecting an action profile <span class="math inline">\(a
+\in A\)</span> each tick, where <span class="math inline">\(A\)</span>
+is the joint action space (each agent picks one of 12
+<code>ActionType</code> values, targeting one of <span
+class="math inline">\(60 \times 40\)</span> tiles; see Section
+section 14). Player 2 (Column) is the factory, selecting a restructuring
+move <span class="math inline">\(m \in M\)</span> each tick, where <span
+class="math inline">\(M\)</span> is the set of candidate targets
+(conveyors, machines, storages on the grid) plus a null move.</p>
+<p><strong>State.</strong> The game state <span class="math inline">\(s
+\in S\)</span> is the full simulation snapshot: tile configuration,
+per-agent needs/stress/inventory, social graph, factory health. <span
+class="math inline">\(S\)</span> is finite and discrete.</p>
+<p><strong>Payoff.</strong> Define the stage payoff to Player 1 (agents)
+as the aggregate welfare gained in a tick:</p>
+<p><span class="math display">\[r(s, a, m) = \sum_{i \in \text{alive}}
+\big( -\Delta \text{stress}_i - \mathbb{1}[\text{agent } i \text{ died}]
+\cdot C_{\text{death}} \big) + \beta \cdot \Delta
+h_{\text{factory}}\]</span></p>
+<p>where the factory’s payoff is <span class="math inline">\(-r\)</span>
+(zero-sum): every unit of welfare the agents gain is a unit the factory
+loses, and vice versa. The factory’s restructuring move <span
+class="math inline">\(m\)</span> enters negatively into <span
+class="math inline">\(r\)</span> via machine breakage, confiscation, and
+induced stress.</p>
+<p><strong>Transition.</strong> <span class="math inline">\(P(s&#39;
+\mid s, a, m)\)</span> is deterministic except for the factory’s
+stochastic restructuring (probability gates in
+<code>system_factory_restructure</code>) and per-agent Boltzmann action
+noise.</p>
+<p><strong>Why stochastic game, not one-shot matrix game.</strong> The
+state carries over between ticks, and moves have delayed consequences (a
+confiscated storage affects quota fulfillment many ticks later).
+Shapley’s framework is the minimal one that captures both the
+adversarial structure and the temporal extension.</p>
+<h3 data-number="12.6.3" id="sec:equilibrium-without-continuity"><span
+class="header-section-number">12.6.3</span> Equilibrium Without
+Continuity</h3>
+<p>The original design document
+(<code>adversarial_utility_agents.md</code>) invoked the von Neumann
+(1928) minimax theorem, which requires utility functions <em>continuous
+in the action space</em>. <strong>This hypothesis does not hold in our
+implementation</strong>: the agent utility functions in
+<code>sim_utility.cpp</code> are piecewise-defined with dozens of hard
+threshold gates (e.g. <code>if needs.hunger &gt; 0.85</code>,
+<code>if needs.expression &gt; 0.25</code>, the Maslow boost at
+<code>needs.hunger &lt; 0.3</code>), making them step-discontinuous, not
+continuous.</p>
+<p>The compactness hypothesis <em>does</em> hold: both action spaces
+(<span class="math inline">\(A\)</span> and <span
+class="math inline">\(M\)</span>) are finite discrete sets (Section
+section 14 enumerates the 12 agent actions; the factory’s candidate set
+is bounded by the <span class="math inline">\(60 \times 40\)</span>
+grid). But compactness alone is insufficient for von Neumann’s
+saddle-point theorem.</p>
+<p><strong>The correct result for our setting is Shapley’s theorem
+(1953):</strong> every two-player zero-sum stochastic game with finitely
+many states and actions has a value, and both players have optimal
+stationary strategies. Crucially, Shapley’s theorem requires <strong>no
+continuity</strong> — only finiteness of the state and action sets,
+which our discrete grid + discrete action types satisfy. Where the von
+Neumann framework breaks down (discontinuous utilities), Shapley’s
+discrete stochastic-game framework applies directly.</p>
+<p>This means: the “equilibrium” the simulation approaches is not a
+continuous saddle point but a <strong>stationary equilibrium of a
+discounted stochastic game</strong>. The discount factor <span
+class="math inline">\(\gamma\)</span> corresponds, in our setting, to
+the agent death rate: dead agents stop accruing payoff, which is
+operationally equivalent to future-discounting. The system does not
+converge to a fixed point; it reaches a <strong>stationary
+distribution</strong> over states, which is the game-theoretic analogue
+of Wolfram’s Class IV (edge of chaos) operating regime.</p>
+<h3 data-number="12.6.4"
+id="sec:the-adversary-is-software-not-the-director"><span
+class="header-section-number">12.6.4</span> The Adversary Is Software,
+Not the Director</h3>
+<p>A final disambiguation: the factory-as-adversary is an <em>autonomous
+software system</em> (<code>system_factory_restructure</code>,
+<code>system_factory_deterioration</code>,
+<code>system_hidden_space_exposure</code>, the Watcher logic in
+<code>system_execute_actions</code>). It runs every tick with its own
+scoring policy. This is distinct from the <strong>Director</strong>
+(Section section 13), who is the human player and intervenes only
+through environmental editing (placing/removing tiles, setting quotas).
+The Director is not the adversary; the Director is an editor who can
+<em>make the adversary stronger or weaker</em> by tuning knobs
+(<code>adversary_intensity</code>, <code>quota_growth_rate</code>) and
+reconfiguring the board. Conflating the two produced the earlier
+inconsistency where the docs called the Director both “not a meta-agent”
+and “a meta-agent like the Storyteller.” The resolution: the Storyteller
+analogy applies to the <em>factory’s autonomous restructure policy</em>,
+not to the human Director.</p>
 <h1 data-number="13" id="sec:director"><span
 class="header-section-number">13</span> The Director: Player as
 Environment Architect</h1>
@@ -3847,6 +4009,34 @@ implemented, but the player-facing interface for performing Director
 actions—the construction overlay, quota management panel, agent
 inspector, and narrative log viewer—remains a future development
 objective.</p>
+<h2 data-number="13.6" id="sec:director-vs-factory"><span
+class="header-section-number">13.6</span> Disambiguation: Director
+vs. Factory Adversary</h2>
+<p>Earlier drafts created an apparent contradiction by calling the
+Director “a meta-agent like the Storyteller” in one place (the index)
+while rejecting that framing here. The contradiction dissolves once two
+distinct objects are separated:</p>
+<ul>
+<li><strong>The Director</strong> is the <em>human player</em>. It is
+not governed by a utility function, it intervenes through environmental
+editing (placing/removing tiles, setting quotas, tuning knobs), and it
+is correctly <em>not</em> a meta-agent. This section’s opening paragraph
+stands.</li>
+<li><strong>The factory</strong> is the <em>autonomous software
+system</em> that runs every tick
+(<code>system_factory_restructure</code>,
+<code>system_factory_deterioration</code>, the Watcher). It selects
+moves from a scoring policy and acts as Player 2 in the two-player
+stochastic game formalized in Section section 12.6. The RimWorld
+Storyteller analogy applies to <strong>the factory’s restructure
+policy</strong>, not to the human Director.</li>
+</ul>
+<p>In RimWorld terms: the Storyteller is software; our equivalent is the
+factory adversary. The Director is closer to RimWorld’s <em>player</em>
+(who designates zones, sets bills, drafts colonists under pressure) than
+to its Storyteller. The Director <em>tunes</em> the adversary (via
+<code>adversary_intensity</code>, <code>quota_growth_rate</code>) but is
+not itself the adversary.</p>
 <h1 data-number="14" id="sec:inhabitants"><span
 class="header-section-number">14</span> The Inhabitants: Agent
 Architecture</h1>

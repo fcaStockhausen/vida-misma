@@ -45,3 +45,12 @@ These observational tools are the Director's only window into the agents' intern
 ## Current Implementation Status
 
 The Director role described in this section is a design specification. No implementation exists in the current codebase. The production graph, task-generation system, and agent utility evaluation pipeline described in Sections @sec:factory and @sec:inhabitants are partially implemented, but the player-facing interface for performing Director actions---the construction overlay, quota management panel, agent inspector, and narrative log viewer---remains a future development objective.
+
+## Disambiguation: Director vs. Factory Adversary {#sec:director-vs-factory}
+
+Earlier drafts created an apparent contradiction by calling the Director "a meta-agent like the Storyteller" in one place (the index) while rejecting that framing here. The contradiction dissolves once two distinct objects are separated:
+
+- **The Director** is the *human player*. It is not governed by a utility function, it intervenes through environmental editing (placing/removing tiles, setting quotas, tuning knobs), and it is correctly *not* a meta-agent. This section's opening paragraph stands.
+- **The factory** is the *autonomous software system* that runs every tick (`system_factory_restructure`, `system_factory_deterioration`, the Watcher). It selects moves from a scoring policy and acts as Player 2 in the two-player stochastic game formalized in Section @sec:factory-adversary. The RimWorld Storyteller analogy applies to **the factory's restructure policy**, not to the human Director.
+
+In RimWorld terms: the Storyteller is software; our equivalent is the factory adversary. The Director is closer to RimWorld's *player* (who designates zones, sets bills, drafts colonists under pressure) than to its Storyteller. The Director *tunes* the adversary (via `adversary_intensity`, `quota_growth_rate`) but is not itself the adversary.

@@ -125,6 +125,8 @@ This is a minimax formulation. By the Minimax theorem (von Neumann, 1928), if th
 2. $\Theta$ is bounded (finite model families, bounded parameter ranges).
 3. The proposal step uses best-response (greedy maximization given the other's last move).
 
+**Important caveat for discrete implementations.** The continuity hypothesis (condition 1) is essential for von Neumann's theorem and is frequently violated in practice: any utility function built from threshold gates (`if need > τ`) is piecewise-discontinuous, not continuous. The community-simulation implementation of *La Vida Misma* is exactly such a case — its agent utilities in `sim_utility.cpp` contain dozens of hard `if`-threshold gates, so the von Neumann saddle point is *not* guaranteed. For discrete settings like this, the correct framework is **Shapley's stochastic game** (Shapley, 1953): every two-player zero-sum stochastic game with *finite* state and action sets has a value and optimal stationary strategies, with **no continuity requirement**. Finiteness — which the discrete-action, grid-based setting satisfies — is sufficient. See Section @sec:factory-adversary for the full formal model applied to *La Vida Misma*.
+
 The structural equivalences across domains:
 
 | Field | Name | Proposer role | Evaluator role |
@@ -213,7 +215,7 @@ Model Selector:
 
 ### Convergence
 
-For two-player zero-sum games with compact action spaces, the Minimax theorem (von Neumann, 1928) guarantees the existence of a Nash equilibrium. In practice, convergence requires:
+For two-player zero-sum games with compact action spaces, the Minimax theorem (von Neumann, 1928) guarantees the existence of a Nash equilibrium — **provided the utility functions are continuous**. In practice, von Neumann convergence requires:
 
 1. Both utility functions are continuous in the action space.
 2. The action space is bounded (finite model families, bounded parameter ranges).
@@ -221,11 +223,14 @@ For two-player zero-sum games with compact action spaces, the Minimax theorem (v
 
 This is the same convergence criterion as the DeGroot model with a strongly connected, aperiodic influence graph: the system converges when no agent is isolated from the influence of the others and the influence structure does not produce periodic oscillation.
 
+**Discrete / discontinuous regime.** When condition 1 fails — as it does in any implementation whose utility functions contain threshold gates — the von Neumann result does not apply and the system should not be described as "converging to a saddle point." The correct replacement is **Shapley's theorem (1953)** for two-player zero-sum stochastic games: if the state set $S$ and the action sets are *finite*, the game has a value $V(s)$ and both players have optimal stationary (Markov) strategies. The discount factor $\gamma \in [0,1)$ replaces the role of compactness+continuity; it corresponds, in a simulation, to the rate at which agents leave the game (death). Under Shapley, the long-run behavior is not convergence to a fixed point but approach to a **stationary distribution** over states — the game-theoretic form of Wolfram's Class IV (edge of chaos). The *La Vida Misma* implementation lives in this discrete regime: see Section @sec:factory-adversary.
+
 ### When the System Does NOT Converge
 
 - **Non-convex utility landscapes** (multiple local equilibria). The system may cycle between proposals. This is analogous to Wolfram's Class III (chaotic) regime: the rules produce perpetual change without stabilization.
-- **Unbounded action spaces** (the Fitter can always propose a more complex model). This violates the compactness requirement of the Minimax theorem.
+- **Unbounded action spaces** (the Fitter can always propose a more complex model). This violates the compactness/ finiteness requirement of both von Neumann and Shapley.
 - **Non-stationary data** (the equilibrium shifts before convergence). This is the online learning setting: the target moves faster than the system can adapt.
+- **Discontinuous utilities under the von Neumann framing.** Threshold-gated utilities break the continuity hypothesis of the 1928 theorem. This is *not* a failure of the adversarial system per se — it is a signal to switch to the Shapley discrete-game framework, which dispenses with continuity. Many simulation/agent-based implementations fall here by construction.
 
 Mitigations: limit iteration count (truncated best-response), add a "referee" agent that detects cycling and forces a decision, or use simulated annealing on the proposal step (occasionally accept worse proposals to escape local equilibria, analogous to introducing noise at the edge of chaos).
 
