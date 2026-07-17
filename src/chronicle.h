@@ -48,6 +48,7 @@ enum class EventType : uint8_t {
     FACTION_FORMED,
     FACTION_JOINED,
     FACTION_LEFT,
+    FOREMAN_REPORT,        // Watcher: loyal agent reports a noncompliant neighbor
 
     // Production
     BUILT_MACHINE,
@@ -64,6 +65,7 @@ enum class EventType : uint8_t {
     FACTORY_RESTRUCTURE,
     FACTORY_CONFISCATED,
     FACTORY_SEALED_SPACE,
+    FACTORY_TARGETED_FACTION,  // Adversarial restructure deliberately hit a faction's area
     ARTIFACT_CREATED,
     HIDDEN_SPACE_FOUND,
     QUOTA_MILESTONE,
@@ -99,6 +101,7 @@ inline const char* event_type_name(EventType t) {
         case EventType::FACTION_FORMED:    return "FACTION_FORMED";
         case EventType::FACTION_JOINED:    return "FACTION_JOINED";
         case EventType::FACTION_LEFT:      return "FACTION_LEFT";
+        case EventType::FOREMAN_REPORT:    return "FOREMAN_REPORT";
         case EventType::BUILT_MACHINE:     return "BUILT_MACHINE";
         case EventType::BUILT_CONVEYOR:    return "BUILT_CONVEYOR";
         case EventType::BUILT_EATING_ZONE: return "BUILT_EATING_ZONE";
@@ -111,6 +114,7 @@ inline const char* event_type_name(EventType t) {
         case EventType::FACTORY_RESTRUCTURE: return "RESTRUCTURE";
         case EventType::FACTORY_CONFISCATED: return "CONFISCATED";
         case EventType::FACTORY_SEALED_SPACE: return "SEALED_SPACE";
+        case EventType::FACTORY_TARGETED_FACTION: return "TARGETED_FACTION";
         case EventType::ARTIFACT_CREATED:  return "ARTIFACT";
         case EventType::HIDDEN_SPACE_FOUND: return "HIDDEN_SPACE";
         case EventType::QUOTA_MILESTONE:   return "QUOTA_MILESTONE";
@@ -159,6 +163,7 @@ inline EventCategory category_of(EventType t) {
         case EventType::FACTION_FORMED:
         case EventType::FACTION_JOINED:
         case EventType::FACTION_LEFT:
+        case EventType::FOREMAN_REPORT:
             return EventCategory::SOCIAL;
 
         case EventType::BUILT_MACHINE:
@@ -175,6 +180,7 @@ inline EventCategory category_of(EventType t) {
         case EventType::FACTORY_RESTRUCTURE:
         case EventType::FACTORY_CONFISCATED:
         case EventType::FACTORY_SEALED_SPACE:
+        case EventType::FACTORY_TARGETED_FACTION:
         case EventType::ARTIFACT_CREATED:
         case EventType::HIDDEN_SPACE_FOUND:
         case EventType::QUOTA_MILESTONE:

@@ -53,6 +53,8 @@ public:
     const ColonyProduction& colony_production() const { return colony_prod_; }
     float current_quota() const { return current_quota_per_tick_; }
     int   total_restructures() const { return total_restructures_; }
+    int   restructures_targeting_factions() const { return restructures_targeting_factions_; }
+    int   foreman_reports() const { return foreman_reports_; }
     int   artifacts_created() const { return artifacts_created_; }
     int   artifacts_active() const { return artifacts_active_; }
     int   hidden_spaces_found() const { return hidden_spaces_found_; }
@@ -113,6 +115,8 @@ private:
     float last_quota_fill_       = 0.0f;
     float current_quota_per_tick_ = 0.0f;
     int   total_restructures_     = 0;
+    int   restructures_targeting_factions_ = 0;
+    int   foreman_reports_        = 0;
     int   artifacts_created_      = 0;
     int   artifacts_active_       = 0;
     int   hidden_spaces_found_    = 0;
@@ -149,6 +153,7 @@ private:
         if (text.find("REDEEMED") != std::string::npos)            return EventType::REDEMPTION;
         if (text.find("SABOTAGED") != std::string::npos)           return EventType::SABOTAGE;
         if (text.find("shared") != std::string::npos)              return EventType::FOOD_SHARED;
+        if (text.find("foreman reported") != std::string::npos)    return EventType::FOREMAN_REPORT;
         if (text.find("BUILT a machine") != std::string::npos)     return EventType::BUILT_MACHINE;
         if (text.find("BUILT a conveyor") != std::string::npos)    return EventType::BUILT_CONVEYOR;
         if (text.find("BUILT an eating") != std::string::npos)     return EventType::BUILT_EATING_ZONE;
@@ -159,6 +164,7 @@ private:
         if (text.find("DISMANTLED") != std::string::npos)          return EventType::DISMANTLED;
         if (text.find("MACHINE") != std::string::npos)             return EventType::MACHINE_ACTIVATED;
         if (text.find("restructured") != std::string::npos)        return EventType::FACTORY_RESTRUCTURE;
+        if (text.find("targeted faction") != std::string::npos)    return EventType::FACTORY_TARGETED_FACTION;
         if (text.find("confiscated") != std::string::npos)         return EventType::FACTORY_CONFISCATED;
         if (text.find("sealed") != std::string::npos)              return EventType::FACTORY_SEALED_SPACE;
         if (text.find("hidden space") != std::string::npos)        return EventType::HIDDEN_SPACE_FOUND;

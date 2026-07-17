@@ -137,7 +137,8 @@ faction_target_bonus     = 1.5     # score bonus when target is near the largest
 # noncompliant neighbors, eroding the reporter's trust toward the dissident.
 # This is Task A3 of the factory-as-antagonist plan: the factory acts THROUGH
 # loyal agents, not just as ambient damage.
-watcher_influence_threshold    = 0.3   # SocialComponent.influence required to report
+watcher_influence_threshold    = 0.15  # SocialComponent.influence required to report
+                                        # (influence rarely exceeds ~0.15 under factory pressure)
 watcher_compliance_threshold   = 0.7   # PersonalityComponent.compliance required to report
 watcher_radius                 = 4     # Manhattan radius a reporter scans
 noncompliance_report_threshold = 0.5   # AgentComponent.noncompliance above which reported

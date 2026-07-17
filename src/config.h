@@ -113,7 +113,10 @@ struct Config {
     // The Watcher — loyal high-influence agents ("foremen") report noncompliant
     // neighbors to the factory, reducing trust on the reporter→dissident edge.
     // Fulfills Task A3 of the factory-as-antagonist plan (never previously implemented).
-    float watcher_influence_threshold   = 0.3f;  // influence required to act as a reporter
+    // NOTE: influence = compliance*(1-stress)*(0.3+0.7*fam)*(0.5+0.5*trust) rarely
+    // exceeds ~0.15 under factory pressure, so the default threshold is calibrated
+    // to the realistic range, not the theoretical maximum.
+    float watcher_influence_threshold   = 0.15f;  // influence required to act as a reporter
     float watcher_compliance_threshold  = 0.7f;  // compliance required to act as a reporter
     int   watcher_radius                = 4;     // Manhattan radius a reporter scans
     float noncompliance_report_threshold = 0.5f; // noncompliance above which an agent gets reported

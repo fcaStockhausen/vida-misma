@@ -1224,6 +1224,58 @@ void Simulation::system_execute_actions() {
                 }
             }
         }
+
+        // ============================================================
+        // A3: THE WATCHER — loyal agents report noncompliant neighbors.
+        // Fulfills Task A3 of doc/plans/2026-05-30-factory-as-antagonist.md
+        // (promised in the design but never previously implemented).
+        //
+        // A high-influence, high-compliance agent ("foreman") acts as the
+        // factory's eyes: when it sees a neighbor with high noncompliance, its
+        // trust toward that dissident drops. The factory thus acts THROUGH
+        // loyal agents, eroding the dissident's social network — not as ambient
+        // damage. Direction: negative_interaction(victim, offender) lowers
+        // trust on victim→offender; here the reporter is the (informed) victim.
+        // ============================================================
+        if (agent.noncompliance < config_.noncompliance_report_threshold) {
+            // Only loyal, influential agents report. Stress and trauma erode
+            // willingness to enforce (broken/redeemed agents don't police).
+            auto& soc = registry_.get<SocialComponent>(e);
+            bool willing = soc.influence >= config_.watcher_influence_threshold
+                        && personality.compliance >= config_.watcher_compliance_threshold
+                        && stress.state != StressState::BROKEN
+                        && stress.state != StressState::REDEEMED;
+            if (willing) {
+                auto nearby = registry_.view<PositionComponent, const AgentComponent>();
+                for (auto ne : nearby) {
+                    if (ne == e) continue;
+                    auto& na = registry_.get<AgentComponent>(ne);
+                    if (!na.alive) continue;
+                    if (na.noncompliance < config_.noncompliance_report_threshold) continue;
+                    // Don't report members of your own faction — solidarity first.
+                    if (agent.faction_id >= 0 && na.faction_id == agent.faction_id) continue;
+
+                    auto& np = registry_.get<PositionComponent>(ne);
+                    int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
+                    if (d > config_.watcher_radius) continue;
+
+                    // Severity scales with how noncompliant the target is and
+                    // how close (proximity = certainty of the report).
+                    float intensity = (na.noncompliance - config_.noncompliance_report_threshold)
+                                    / std::max(0.001f, 1.0f - config_.noncompliance_report_threshold);
+                    float prox = 1.0f - (float)d / (float)config_.watcher_radius;
+                    float severity = config_.report_severity * (0.5f + 0.5f * intensity) * (0.5f + 0.5f * prox);
+                    social_.negative_interaction(agent.id, na.id, tick_, severity);
+                    foreman_reports_++;
+
+                    char buf[96];
+                    std::snprintf(buf, sizeof(buf),
+                        "foreman reported by A%d — noncompliance %.2f", na.id, na.noncompliance);
+                    chronicle(na.id, EventType::FOREMAN_REPORT, buf,
+                        pos.x, pos.y, na.noncompliance, agent.id);
+                }
+            }
+        }
     }
 }
 
