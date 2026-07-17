@@ -1,6 +1,6 @@
 # Complementary Algorithms {#sec:complementarios}
 
-The core systems covered in previous sections (CA, procedural generation, agents, pathfinding, physics, social simulation) form the primary architecture of a community simulation. Several additional algorithms are used to fill specific gaps: organic region boundaries, vegetation modeling, group behavior, pattern generation, and opinion dynamics.
+The core systems covered in previous sections (CA, procedural generation, agents, pathfinding, physics, social simulation) form the primary architecture of a community simulation. Several additional algorithms are used to fill specific gaps: organic region boundaries, vegetation modeling, group behavior, pattern generation, opinion dynamics, and---connecting several of the above under one algebraic roof---tropical geometry.
 
 ## Voronoi Diagrams for Region Boundaries
 
@@ -87,3 +87,87 @@ $$x_i^{(t+1)} = \frac{1}{|N_i(\epsilon)|} \sum_{j : |x_j - x_i| < \epsilon} x_j^
 This small modification fundamentally changes the dynamics. Instead of convergence to a single consensus, the population fragments into clusters separated by at least $\epsilon$. The number and size of clusters depend on $\epsilon$ and the initial opinion distribution. For small $\epsilon$, many small clusters form (extreme polarization); for large $\epsilon$, the population converges (broad consensus).
 
 For community simulation, opinion dynamics can model the spread of cultural traits, political beliefs, social norms, or technological preferences through a population. The computational cost is $O(V + E)$ per tick (each edge contributes to one update), which is negligible compared to pathfinding or fluid simulation. The emergent phenomena---consensus, polarization, echo chambers, cultural fragmentation---are produced by simple averaging operations without any scripted narrative.
+
+## Tropical Geometry: The Algebraic Shape of Decision, Search, and Utility {#sec:tropical}
+
+The preceding subsections present heterogeneous algorithms (spatial tessellation, generative grammars, flocking, reaction-diffusion, opinion averaging) that appear mathematically unrelated. A surprising unifying fact is that **three of the load-bearing computations in *La Vida Misma*** — action selection, pathfinding, and the utility functions themselves — **are computations over the tropical semiring**, whether or not they were designed with that framing in mind. This subsection makes the connection explicit, because doing so clarifies what each system is *actually* computing and yields formal tools (tropical convexity, tropical equilibration) that apply to all three at once.
+
+### The Tropical Semiring
+
+The **tropical semiring** (also called the min-plus or max-plus semiring) is the set $\mathbb{R} \cup \{\infty\}$ equipped with two operations:
+
+$$a \oplus b = \min(a, b), \qquad a \otimes b = a + b$$
+
+where the tropical "addition" $\oplus$ is ordinary minimum and the tropical "multiplication" $\otimes$ is ordinary addition. The additive identity is $\infty$ (the annihilator of $\min$) and the multiplicative identity is $0$. The dual **max-plus** convention takes $\oplus = \max$ instead. Either convention yields a semiring; crucially, $\oplus$ is **idempotent** ($a \oplus a = a$), which is the property that makes tropical geometry behave differently from classical linear algebra.
+
+### Application 1: A* Pathfinding Is Min-Plus Linear Algebra
+
+The shortest-path problem is the canonical computation of the min-plus semiring [@mohri2002]. Pathfinding via A* (Section @sec:pathfinding) is a concrete instance: the total path cost is the tropical product (ordinary sum) of edge weights, and the optimal path is the tropical sum (ordinary minimum) over alternative paths.
+
+The implementation in `pathfinding.h` makes this literal. The `f`-score is the tropical product of the accumulated cost and the heuristic:
+
+```
+struct Node { int g; int f; /* g + heuristic */ };
+```
+
+Path relaxation accumulates cost via ordinary `+` (tropical $\otimes$) and selects via strict `<` (tropical $\oplus = \min$):
+
+```
+int ng = cur.g + 1;                  // tropical product
+if (ng < g_score[ni]) {              // tropical sum (min)
+    g_score[ni] = ng;                // write the new minimum
+    int nf = ng + |dx| + |dy|;       // tropical product with heuristic
+}
+```
+
+The initial `g_score` seed of `999999` is the additive identity $\infty$ of the min-plus semiring. The min-heap keyed on `f` repeatedly extracts the $\min$ of the open set. This is a textbook fixpoint computation over $(\mathbb{R} \cup \{\infty\}, \min, +)$.
+
+### Application 2: Boltzmann Action Selection Is a Deformed Max-Plus Semiring
+
+The agent decision system (Section @sec:agentes) selects the highest-utility action each tick. The naive rule $a^* = \arg\max_{a} U(a)$ is exactly the $\oplus = \max$ operation of the max-plus semiring. The implementation in `sim_utility.cpp` replaces this hard argmax with a **Boltzmann softmax** controlled by a temperature $\tau$:
+
+```
+float tau = config_.selection_temperature;     // config.h: tau=0.4, "0=greedy"
+weights[i] = std::exp((u - max_u) / tau);      // sim_utility.cpp
+```
+
+This is not an arbitrary smoothing. The softmax is the standard **LogSumExp** function, which is the unique optimal smooth approximation to the max function in a precise sense: every overestimating smoothing of $\max$ differs from it by at least as much as LogSumExp does. Formally:
+
+$$\mathrm{LSE}_{1/\tau}(\mathbf{u}) = \tau \log \sum_i e^{u_i / \tau} \xrightarrow{\tau \to 0^+} \max_i u_i$$
+
+In the zero-temperature limit, the softmax degenerates to the one-hot argmax, recovering the undeformed max-plus semiring exactly. The parameter `selection_temperature` is therefore a **deformation parameter** that interpolates between the tropical semiring ($\tau = 0$, greedy/deterministic) and the standard real semiring ($\tau \to \infty$, uniform/random). The same pattern governs the factory adversary's target selection (`simulation.cpp`, `restructure_temperature`), which is structurally identical: `std::exp((scores[i] - max_score) / tau)`. Both selection sites in the codebase are tropical deformations.
+
+### Application 3: Utility Functions Are Tropical Rational Functions
+
+The composite utility $U(a) = \sum_i w_i f_i(\text{need}_i)$ (Eq. @eq:utility-composite) is piecewise-linear in the need variables once the threshold gates are accounted for. Three representative structures in `sim_utility.cpp` make this precise:
+
+1. **Thresholded multiplicative gates** (the "Maslow boost"):
+   ```
+   if (needs.hunger < 0.3 && needs.rest < 0.3) u_socialize *= 4.0;
+   ```
+   These produce kinks in the utility surface at each threshold.
+
+2. **Piecewise-quadratic spike** (`critical_spike`):
+   ```
+   if (need < 0.75) return 0.0;
+   return ((need - 0.75)/0.25) * ((need - 0.75)/0.25) * 5.0;
+   ```
+   Identically zero below $0.75$, polynomial above.
+
+3. **Bonabeau response threshold** (`bonabeau`, Bonabeau et al. 1996):
+   ```
+   return s2 / (s2 + t2 + 0.001f);
+   ```
+   Applied multiplicatively to every action utility (lines 868--875).
+
+A function built from finitely many affine pieces joined at thresholds is a **tropical polynomial**; a difference of two such functions is a **tropical rational function**. Zhang, Naitzat, and Lim (2018) [@zhang2018tropical] showed that the decision boundaries of piecewise-linear classifiers (such as ReLU neural networks) are exactly tropical hypersurfaces, and that the number of linear regions controls the classifier's expressiveness. The agent utilities in *La Vida Misma* inhabit the same class: the "number of behavioral regimes" an agent can express is bounded by the number of linear regions of its utility surface, which is a tropical-geometric quantity.
+
+### Why This Unification Matters
+
+Treating action selection, search, and utility under one algebraic roof has three payoffs:
+
+- **Consistency.** The deformation parameter `selection_temperature` and the pathfinding cost are not ad hoc: both live in the same semiring-theoretic framework, so results about one (e.g., convergence of tropical fixpoint iterations) transfer to the other.
+- **Equilibration.** Noel et al. (2013) [@noel2013] define *tropical equilibration* as the regime where two opposing monomials have equal magnitude — a rigorous version of Wolfram's "edge of chaos." The adversary-intensity dial that blends the factory's strategic score with uniform randomness (`adversary_intensity` in `config.h`) is operationally a tropical-equilibration knob: at $\alpha = 0$ the system is in the uniform (max-entropy) regime; at $\alpha = 1$ it is in the pure-best-response (zero-temperature tropical) regime; the interesting dynamics live between.
+- **Auditability.** Tropical geometry provides tools (Newton polytopes, tropical convexity) to count decision regions and measure robustness. A future diagnostic could report the number of linear regions an agent's utility surface exhibits, giving a formal measure of that agent's "behavioral complexity."
+
+This subsection is descriptive rather than prescriptive: it does not change the implementation. It documents that three systems already in the codebase are instances of one mathematical structure, and it names the structure so that future analysis can use its tools.

@@ -391,6 +391,32 @@ class="toc-section-number">8.4</span> Turing Patterns</a></li>
 id="toc-opinion-dynamics-modeling-belief-propagation"><span
 class="toc-section-number">8.5</span> Opinion Dynamics: Modeling Belief
 Propagation</a></li>
+<li><a href="#sec:tropical" id="toc-sec:tropical"><span
+class="toc-section-number">8.6</span> Tropical Geometry: The Algebraic
+Shape of Decision, Search, and Utility</a>
+<ul>
+<li><a href="#the-tropical-semiring"
+id="toc-the-tropical-semiring"><span
+class="toc-section-number">8.6.1</span> The Tropical Semiring</a></li>
+<li><a href="#application-1-a-pathfinding-is-min-plus-linear-algebra"
+id="toc-application-1-a-pathfinding-is-min-plus-linear-algebra"><span
+class="toc-section-number">8.6.2</span> Application 1: A* Pathfinding Is
+Min-Plus Linear Algebra</a></li>
+<li><a
+href="#application-2-boltzmann-action-selection-is-a-deformed-max-plus-semiring"
+id="toc-application-2-boltzmann-action-selection-is-a-deformed-max-plus-semiring"><span
+class="toc-section-number">8.6.3</span> Application 2: Boltzmann Action
+Selection Is a Deformed Max-Plus Semiring</a></li>
+<li><a
+href="#application-3-utility-functions-are-tropical-rational-functions"
+id="toc-application-3-utility-functions-are-tropical-rational-functions"><span
+class="toc-section-number">8.6.4</span> Application 3: Utility Functions
+Are Tropical Rational Functions</a></li>
+<li><a href="#why-this-unification-matters"
+id="toc-why-this-unification-matters"><span
+class="toc-section-number">8.6.5</span> Why This Unification
+Matters</a></li>
+</ul></li>
 </ul></li>
 <li><a href="#sec:stack" id="toc-sec:stack"><span
 class="toc-section-number">9</span> Implementation Roadmap</a>
@@ -2266,8 +2292,9 @@ class="header-section-number">8</span> Complementary Algorithms</h1>
 generation, agents, pathfinding, physics, social simulation) form the
 primary architecture of a community simulation. Several additional
 algorithms are used to fill specific gaps: organic region boundaries,
-vegetation modeling, group behavior, pattern generation, and opinion
-dynamics.</p>
+vegetation modeling, group behavior, pattern generation, opinion
+dynamics, and—connecting several of the above under one algebraic
+roof—tropical geometry.</p>
 <h2 data-number="8.1" id="voronoi-diagrams-for-region-boundaries"><span
 class="header-section-number">8.1</span> Voronoi Diagrams for Region
 Boundaries</h2>
@@ -2465,6 +2492,177 @@ to one update), which is negligible compared to pathfinding or fluid
 simulation. The emergent phenomena—consensus, polarization, echo
 chambers, cultural fragmentation—are produced by simple averaging
 operations without any scripted narrative.</p>
+<h2 data-number="8.6" id="sec:tropical"><span
+class="header-section-number">8.6</span> Tropical Geometry: The
+Algebraic Shape of Decision, Search, and Utility</h2>
+<p>The preceding subsections present heterogeneous algorithms (spatial
+tessellation, generative grammars, flocking, reaction-diffusion, opinion
+averaging) that appear mathematically unrelated. A surprising unifying
+fact is that <strong>three of the load-bearing computations in <em>La
+Vida Misma</em></strong> — action selection, pathfinding, and the
+utility functions themselves — <strong>are computations over the
+tropical semiring</strong>, whether or not they were designed with that
+framing in mind. This subsection makes the connection explicit, because
+doing so clarifies what each system is <em>actually</em> computing and
+yields formal tools (tropical convexity, tropical equilibration) that
+apply to all three at once.</p>
+<h3 data-number="8.6.1" id="the-tropical-semiring"><span
+class="header-section-number">8.6.1</span> The Tropical Semiring</h3>
+<p>The <strong>tropical semiring</strong> (also called the min-plus or
+max-plus semiring) is the set <span class="math inline">\(\mathbb{R}
+\cup \{\infty\}\)</span> equipped with two operations:</p>
+<p><span class="math display">\[a \oplus b = \min(a, b), \qquad a
+\otimes b = a + b\]</span></p>
+<p>where the tropical “addition” <span
+class="math inline">\(\oplus\)</span> is ordinary minimum and the
+tropical “multiplication” <span class="math inline">\(\otimes\)</span>
+is ordinary addition. The additive identity is <span
+class="math inline">\(\infty\)</span> (the annihilator of <span
+class="math inline">\(\min\)</span>) and the multiplicative identity is
+<span class="math inline">\(0\)</span>. The dual
+<strong>max-plus</strong> convention takes <span
+class="math inline">\(\oplus = \max\)</span> instead. Either convention
+yields a semiring; crucially, <span
+class="math inline">\(\oplus\)</span> is <strong>idempotent</strong>
+(<span class="math inline">\(a \oplus a = a\)</span>), which is the
+property that makes tropical geometry behave differently from classical
+linear algebra.</p>
+<h3 data-number="8.6.2"
+id="application-1-a-pathfinding-is-min-plus-linear-algebra"><span
+class="header-section-number">8.6.2</span> Application 1: A* Pathfinding
+Is Min-Plus Linear Algebra</h3>
+<p>The shortest-path problem is the canonical computation of the
+min-plus semiring <span class="citation" data-cites="mohri2002">(Mohri
+2002)</span>. Pathfinding via A* (Section section 4) is a concrete
+instance: the total path cost is the tropical product (ordinary sum) of
+edge weights, and the optimal path is the tropical sum (ordinary
+minimum) over alternative paths.</p>
+<p>The implementation in <code>pathfinding.h</code> makes this literal.
+The <code>f</code>-score is the tropical product of the accumulated cost
+and the heuristic:</p>
+<pre><code>struct Node { int g; int f; /* g + heuristic */ };</code></pre>
+<p>Path relaxation accumulates cost via ordinary <code>+</code>
+(tropical <span class="math inline">\(\otimes\)</span>) and selects via
+strict <code>&lt;</code> (tropical <span class="math inline">\(\oplus =
+\min\)</span>):</p>
+<pre><code>int ng = cur.g + 1;                  // tropical product
+if (ng &lt; g_score[ni]) {              // tropical sum (min)
+    g_score[ni] = ng;                // write the new minimum
+    int nf = ng + |dx| + |dy|;       // tropical product with heuristic
+}</code></pre>
+<p>The initial <code>g_score</code> seed of <code>999999</code> is the
+additive identity <span class="math inline">\(\infty\)</span> of the
+min-plus semiring. The min-heap keyed on <code>f</code> repeatedly
+extracts the <span class="math inline">\(\min\)</span> of the open set.
+This is a textbook fixpoint computation over <span
+class="math inline">\((\mathbb{R} \cup \{\infty\}, \min,
++)\)</span>.</p>
+<h3 data-number="8.6.3"
+id="application-2-boltzmann-action-selection-is-a-deformed-max-plus-semiring"><span
+class="header-section-number">8.6.3</span> Application 2: Boltzmann
+Action Selection Is a Deformed Max-Plus Semiring</h3>
+<p>The agent decision system (Section section 3) selects the
+highest-utility action each tick. The naive rule <span
+class="math inline">\(a^* = \arg\max_{a} U(a)\)</span> is exactly the
+<span class="math inline">\(\oplus = \max\)</span> operation of the
+max-plus semiring. The implementation in <code>sim_utility.cpp</code>
+replaces this hard argmax with a <strong>Boltzmann softmax</strong>
+controlled by a temperature <span
+class="math inline">\(\tau\)</span>:</p>
+<pre><code>float tau = config_.selection_temperature;     // config.h: tau=0.4, &quot;0=greedy&quot;
+weights[i] = std::exp((u - max_u) / tau);      // sim_utility.cpp</code></pre>
+<p>This is not an arbitrary smoothing. The softmax is the standard
+<strong>LogSumExp</strong> function, which is the unique optimal smooth
+approximation to the max function in a precise sense: every
+overestimating smoothing of <span class="math inline">\(\max\)</span>
+differs from it by at least as much as LogSumExp does. Formally:</p>
+<p><span class="math display">\[\mathrm{LSE}_{1/\tau}(\mathbf{u}) = \tau
+\log \sum_i e^{u_i / \tau} \xrightarrow{\tau \to 0^+} \max_i
+u_i\]</span></p>
+<p>In the zero-temperature limit, the softmax degenerates to the one-hot
+argmax, recovering the undeformed max-plus semiring exactly. The
+parameter <code>selection_temperature</code> is therefore a
+<strong>deformation parameter</strong> that interpolates between the
+tropical semiring (<span class="math inline">\(\tau = 0\)</span>,
+greedy/deterministic) and the standard real semiring (<span
+class="math inline">\(\tau \to \infty\)</span>, uniform/random). The
+same pattern governs the factory adversary’s target selection
+(<code>simulation.cpp</code>, <code>restructure_temperature</code>),
+which is structurally identical:
+<code>std::exp((scores[i] - max_score) / tau)</code>. Both selection
+sites in the codebase are tropical deformations.</p>
+<h3 data-number="8.6.4"
+id="application-3-utility-functions-are-tropical-rational-functions"><span
+class="header-section-number">8.6.4</span> Application 3: Utility
+Functions Are Tropical Rational Functions</h3>
+<p>The composite utility <span class="math inline">\(U(a) = \sum_i w_i
+f_i(\text{need}_i)\)</span> (Eq. equation 15) is piecewise-linear in the
+need variables once the threshold gates are accounted for. Three
+representative structures in <code>sim_utility.cpp</code> make this
+precise:</p>
+<ol type="1">
+<li><p><strong>Thresholded multiplicative gates</strong> (the “Maslow
+boost”):</p>
+<pre><code>if (needs.hunger &lt; 0.3 &amp;&amp; needs.rest &lt; 0.3) u_socialize *= 4.0;</code></pre>
+<p>These produce kinks in the utility surface at each
+threshold.</p></li>
+<li><p><strong>Piecewise-quadratic spike</strong>
+(<code>critical_spike</code>):</p>
+<pre><code>if (need &lt; 0.75) return 0.0;
+return ((need - 0.75)/0.25) * ((need - 0.75)/0.25) * 5.0;</code></pre>
+<p>Identically zero below <span class="math inline">\(0.75\)</span>,
+polynomial above.</p></li>
+<li><p><strong>Bonabeau response threshold</strong>
+(<code>bonabeau</code>, Bonabeau et al. 1996):</p>
+<pre><code>return s2 / (s2 + t2 + 0.001f);</code></pre>
+<p>Applied multiplicatively to every action utility (lines
+868–875).</p></li>
+</ol>
+<p>A function built from finitely many affine pieces joined at
+thresholds is a <strong>tropical polynomial</strong>; a difference of
+two such functions is a <strong>tropical rational function</strong>.
+Zhang, Naitzat, and Lim (2018) <span class="citation"
+data-cites="zhang2018tropical">(Zhang et al. 2018)</span> showed that
+the decision boundaries of piecewise-linear classifiers (such as ReLU
+neural networks) are exactly tropical hypersurfaces, and that the number
+of linear regions controls the classifier’s expressiveness. The agent
+utilities in <em>La Vida Misma</em> inhabit the same class: the “number
+of behavioral regimes” an agent can express is bounded by the number of
+linear regions of its utility surface, which is a tropical-geometric
+quantity.</p>
+<h3 data-number="8.6.5" id="why-this-unification-matters"><span
+class="header-section-number">8.6.5</span> Why This Unification
+Matters</h3>
+<p>Treating action selection, search, and utility under one algebraic
+roof has three payoffs:</p>
+<ul>
+<li><strong>Consistency.</strong> The deformation parameter
+<code>selection_temperature</code> and the pathfinding cost are not ad
+hoc: both live in the same semiring-theoretic framework, so results
+about one (e.g., convergence of tropical fixpoint iterations) transfer
+to the other.</li>
+<li><strong>Equilibration.</strong> Noel et al. (2013) <span
+class="citation" data-cites="noel2013">(Noel et al. 2013)</span> define
+<em>tropical equilibration</em> as the regime where two opposing
+monomials have equal magnitude — a rigorous version of Wolfram’s “edge
+of chaos.” The adversary-intensity dial that blends the factory’s
+strategic score with uniform randomness
+(<code>adversary_intensity</code> in <code>config.h</code>) is
+operationally a tropical-equilibration knob: at <span
+class="math inline">\(\alpha = 0\)</span> the system is in the uniform
+(max-entropy) regime; at <span class="math inline">\(\alpha = 1\)</span>
+it is in the pure-best-response (zero-temperature tropical) regime; the
+interesting dynamics live between.</li>
+<li><strong>Auditability.</strong> Tropical geometry provides tools
+(Newton polytopes, tropical convexity) to count decision regions and
+measure robustness. A future diagnostic could report the number of
+linear regions an agent’s utility surface exhibits, giving a formal
+measure of that agent’s “behavioral complexity.”</li>
+</ul>
+<p>This subsection is descriptive rather than prescriptive: it does not
+change the implementation. It documents that three systems already in
+the codebase are instances of one mathematical structure, and it names
+the structure so that future analysis can use its tools.</p>
 <h1 data-number="9" id="sec:stack"><span
 class="header-section-number">9</span> Implementation Roadmap</h1>
 <p>This section provides a concrete, phased approach to building a
@@ -6590,6 +6788,16 @@ Interactions in Development.”</span> In <em>Journal of Theoretical
 Biology</em>, vol. 18. no. 3. <a
 href="https://doi.org/10.1016/0022-5193(68)90079-9">https://doi.org/10.1016/0022-5193(68)90079-9</a>.
 </div>
+<div id="ref-mohri2002" class="csl-entry" role="listitem">
+Mohri, Mehryar. 2002. <span>“Semiring Frameworks and Algorithms for
+Shortest-Distance Problems.”</span> In <em>Journal of Automata,
+Languages and Combinatorics</em>, vol. 7. no. 4.
+</div>
+<div id="ref-noel2013" class="csl-entry" role="listitem">
+Noel, Vincent, Dima Grigoriev, Sergei Vakulenko, and Ovidiu Radulescu.
+2013. <span>“Tropicalization and Tropical Equilibration of Chemical
+Reaction Networks.”</span> In <em>arXiv Preprint arXiv:1303.3963</em>.
+</div>
 <div id="ref-nowak1992" class="csl-entry" role="listitem">
 Nowak, Martin A., and Robert M. May. 1992. <span>“Evolutionary Games and
 Spatial Chaos.”</span> In <em>Nature</em>, vol. 359. <a
@@ -6631,6 +6839,11 @@ Wolfram, Stephen. 1984. <span>“Universality and Complexity in Cellular
 Automata.”</span> In <em>Physica D: Nonlinear Phenomena</em>, vol. 10.
 nos. 1-2. <a
 href="https://doi.org/10.1016/0167-2789(84)90245-8">https://doi.org/10.1016/0167-2789(84)90245-8</a>.
+</div>
+<div id="ref-zhang2018tropical" class="csl-entry" role="listitem">
+Zhang, Liwen, Gregory Naitzat, and Lek-Heng Lim. 2018. <span>“Tropical
+Geometry of Deep Neural Networks.”</span> In <em>Proceedings of the 35th
+International Conference on Machine Learning (ICML)</em>.
 </div>
 </div>
 </body>

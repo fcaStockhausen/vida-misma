@@ -405,6 +405,64 @@ references:
     issued:
       year: 1968
 
+  - id: mohri2002
+    author:
+      - family: Mohri
+        given: Mehryar
+    title: "Semiring frameworks and algorithms for shortest-distance problems"
+    container-title: "Journal of Automata, Languages and Combinatorics"
+    volume: 7
+    issue: 4
+    page: "341-353"
+    issued:
+      year: 2002
+
+  - id: zhang2018tropical
+    author:
+      - family: Zhang
+        given: Liwen
+      - family: Naitzat
+        given: Gregory
+      - family: Lim
+        given: Lek-Heng
+    title: "Tropical geometry of deep neural networks"
+    container-title: "Proceedings of the 35th International Conference on Machine Learning (ICML)"
+    page: "5824-5832"
+    issued:
+      year: 2018
+
+  - id: noel2013
+    author:
+      - family: Noel
+        given: Vincent
+      - family: Grigoriev
+        given: Dima
+      - family: Vakulenko
+        given: Sergei
+      - family: Radulescu
+        given: Ovidiu
+    title: "Tropicalization and tropical equilibration of chemical reaction networks"
+    container-title: "arXiv preprint arXiv:1303.3963"
+    issued:
+      year: 2013
+
+  - id: bonabeau1996
+    author:
+      - family: Bonabeau
+        given: Eric
+      - family: Theraulaz
+        given: Guy
+      - family: Deneubourg
+        given: Jean-Louis
+    title: "Quantitative study of the fixed threshold model for the regulation of division of insect labour"
+    container-title: "Proceedings of the Royal Society of London B"
+    volume: 263
+    issue: 1376
+    page: "1565-1569"
+    DOI: "10.1098/rspb.1996.0229"
+    issued:
+      year: 1996
+
   # === Section 17: Social Fabric ===
   - id: granovetter1978
     author:
