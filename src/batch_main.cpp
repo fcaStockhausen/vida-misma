@@ -350,6 +350,20 @@ static int cmd_analysis(int argc, char* argv[]) {
     std::printf("  Factions:          %d\n", sim.factions_formed());
     std::printf("  Artifacts:         %d\n", sim.artifacts_created());
 
+    // Adversarial factory audit — distinguishes best-response targeting from
+    // uniform-random noise (doc/adversarial_utility_agents.md heuristic #5).
+    int total_restr = sim.total_restructures();
+    int fac_restr = sim.restructures_targeting_factions();
+    std::printf("\n--- Adversarial Audit ---\n");
+    std::printf("  Restructures total:       %d\n", total_restr);
+    if (total_restr > 0) {
+        std::printf("  Restructures vs factions: %d  (%.0f%% of total)\n",
+            fac_restr, 100.0f * (float)fac_restr / (float)total_restr);
+    } else {
+        std::printf("  Restructures vs factions: %d  (n/a)\n", fac_restr);
+    }
+    std::printf("  Foreman reports:          %d\n", sim.foreman_reports());
+
     return 0;
 }
 
