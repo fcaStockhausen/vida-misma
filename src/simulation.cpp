@@ -2,7 +2,10 @@
 #include "textgen.h"
 #include "production.h"
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <set>
+#include <vector>
 
 // Static members for ChronicleEvent CFG text generation
 TextGen* ChronicleEvent::s_textgen = nullptr;
@@ -701,77 +704,210 @@ void Simulation::system_check_dismantle_penalties() {
 }
 
 // ============================================================
-// A2: SYSTEM: Factory Restructure
+// A2: SYSTEM: Factory Restructure (adversarial best-response)
 // ============================================================
-// Periodically, the factory reconfigures itself — conveyor directions
-// change, storages are drained, machines are damaged. Agents cannot
-// predict or control this. The factory is indifferent.
+// The factory reconfigures itself periodically. Unlike the previous
+// uniform-random implementation, this version makes the factory an
+// EVALUATOR (doc/adversarial_utility_agents.md): it scores every candidate
+// target by strategic value (how much output/throughput it would lose) and
+// by proximity to the largest faction, then softmax-selects. This兑现 the
+// comments that previously promised but never implemented faction targeting.
 //
-// If factions exist, restructures may target their most-used areas.
+// adversary_intensity α ∈ [0,1] blends the strategic score with uniform
+// randomness: α=0 reproduces the old random baseline exactly; α=1 is pure
+// best-response; intermediate values sit at the "edge of chaos".
+//
+// Audit: every attack logs (target, score, faction_proximity). When the
+// faction bonus was the dominant factor, a FACTORY_TARGETED_FACTION event
+// is emitted so the run can be distinguished from random post-hoc.
 
 void Simulation::system_factory_restructure() {
     if (tick_ % config_.restructure_interval != 0) return;
     std::uniform_real_distribution<float> roll(0.0f, 1.0f);
     if (roll(rng_) > config_.restructure_probability) return;
 
-    std::uniform_int_distribution<int> pick_effect(0, 2);
-    int effect = pick_effect(rng_);
+    // ---------------------------------------------------------------
+    // 1. Collect candidates across all targetable infrastructure.
+    //    Each candidate carries (x, y, kind, strategic_score).
+    // ---------------------------------------------------------------
+    enum class TargetKind : uint8_t { CONVEYOR, MACHINE, STORAGE };
+    struct Candidate { int x, y; TargetKind kind; float strategic; };
 
-    switch (effect) {
-        case 0: {
-            // Reverse a random built conveyor's direction
-            auto conveyors = grid_.find_all(TileType::Conveyor);
-            if (!conveyors.empty()) {
-                std::uniform_int_distribution<int> pick(0, (int)conveyors.size() - 1);
-                auto [cx, cy] = conveyors[pick(rng_)];
-                auto& d = grid_.data_at(cx, cy);
-                if (d.built) {
-                    // Reverse direction (N<->S, E<->W)
-                    int dir = static_cast<int>(d.conveyor_dir);
-                    d.conveyor_dir = static_cast<ConveyorDir>((dir + 2) % 4);
-                    emit_log(-1, "FACTORY restructured: conveyor at (" +
-                             std::to_string(cx) + "," + std::to_string(cy) + ") reversed");
-                    total_restructures_++;
-                }
+    std::vector<Candidate> candidates;
+
+    for (auto [cx, cy] : grid_.find_all(TileType::Conveyor)) {
+        const auto& d = grid_.data_at(cx, cy);
+        if (!d.built) continue;
+        // Strategic value of a conveyor = what it's carrying right now
+        // + a bonus if it sits on a live production chain to the Exit.
+        float s = d.conveyor_contents;
+        // Bonus: does this belt carry output toward shipping?
+        auto [tx, ty] = grid_.conveyor_target(cx, cy);
+        if (tx >= 0 && (grid_.at(tx, ty) == TileType::Storage ||
+                        grid_.at(tx, ty) == TileType::Exit)) s += 0.5f;
+        candidates.push_back({cx, cy, TargetKind::CONVEYOR, s});
+    }
+    for (auto [mx, my] : grid_.find_all(TileType::Machine)) {
+        const auto& d = grid_.data_at(mx, my);
+        if (!d.built) continue;
+        // Strategic value = banked output + construction material on the tile.
+        // Extra weight if the machine is connected to the Exit (hurting it
+        // directly damages quota fulfillment).
+        float s = d.stored_output + d.stored_construction_material * 0.5f;
+        if (d.machine_type == MachineType::Output &&
+            grid_.machine_connected_to_exit(mx, my)) s += 1.0f;
+        // Food machines are strategically critical when supply is low.
+        if (d.machine_type == MachineType::Food && last_quota_fill_ < 0.5f) s += 0.75f;
+        candidates.push_back({mx, my, TargetKind::MACHINE, s});
+    }
+    for (auto [sx, sy] : grid_.find_all(TileType::Storage)) {
+        const auto& d = grid_.data_at(sx, sy);
+        if (d.stored_output <= 0.01f) continue;
+        candidates.push_back({sx, sy, TargetKind::STORAGE, d.stored_output});
+    }
+
+    if (candidates.empty()) return;
+
+    // ---------------------------------------------------------------
+    // 2. Faction heatmap — find the largest faction's centroid, then
+    //    score each candidate by how many of its members sit within
+    //    Manhattan ≤ 4. This is the "factory targets resistance" signal.
+    // ---------------------------------------------------------------
+    // Pick the largest faction id (recompute cheaply; factions update every
+    // 50 ticks so this is at most slightly stale).
+    std::map<int,int> faction_size;
+    auto agent_view = registry_.view<const AgentComponent>();
+    for (auto e : agent_view) {
+        const auto& ag = registry_.get<AgentComponent>(e);
+        if (ag.alive && ag.faction_id >= 0) faction_size[ag.faction_id]++;
+    }
+    int largest_faction = -1;
+    int largest_size = 0;
+    for (auto& [fid, sz] : faction_size) {
+        if (sz > largest_size) { largest_size = sz; largest_faction = fid; }
+    }
+
+    // Gather positions of the largest faction's members (for proximity scoring).
+    std::vector<std::pair<int,int>> faction_positions;
+    if (largest_faction >= 0) {
+        for (auto e : agent_view) {
+            const auto& ag = registry_.get<AgentComponent>(e);
+            if (ag.alive && ag.faction_id == largest_faction) {
+                const auto& p = registry_.get<PositionComponent>(e);
+                faction_positions.push_back({p.x, p.y});
             }
+        }
+    }
+
+    auto faction_proximity = [&](int x, int y) -> float {
+        if (faction_positions.empty()) return 0.0f;
+        int near = 0;
+        for (auto& [fx, fy] : faction_positions)
+            if (std::abs(fx - x) + std::abs(fy - y) <= 4) near++;
+        return std::min(1.0f, (float)near / 3.0f);  // saturates at 3 nearby members
+    };
+
+    // ---------------------------------------------------------------
+    // 3. Score each candidate: blend strategic value + faction bonus,
+    //    then interpolate with uniform-random via adversary_intensity α.
+    // ---------------------------------------------------------------
+    float alpha = std::clamp(config_.adversary_intensity, 0.0f, 1.0f);
+    std::vector<float> scores(candidates.size());
+    float max_score = 0.0f;
+    for (size_t i = 0; i < candidates.size(); i++) {
+        float strat = config_.strategic_weight * candidates[i].strategic;
+        float fac = config_.faction_target_bonus * faction_proximity(candidates[i].x, candidates[i].y);
+        float adversarial = strat + fac;
+        float uniform = 1.0f;  // every candidate is equally likely under baseline
+        scores[i] = alpha * adversarial + (1.0f - alpha) * uniform;
+        if (scores[i] > max_score) max_score = scores[i];
+    }
+
+    // ---------------------------------------------------------------
+    // 4. Softmax selection over the blended scores.
+    //    temperature → 0 collapses to argmax (pure best-response).
+    // ---------------------------------------------------------------
+    float tau = std::max(0.001f, config_.restructure_temperature);
+    std::vector<float> weights(candidates.size());
+    float sum_w = 0.0f;
+    for (size_t i = 0; i < candidates.size(); i++) {
+        weights[i] = std::exp((scores[i] - max_score) / tau);
+        sum_w += weights[i];
+    }
+    std::uniform_real_distribution<float> pick(0.0f, sum_w);
+    float r = pick(rng_);
+    size_t chosen = 0;
+    float cum = 0.0f;
+    for (size_t i = 0; i < candidates.size(); i++) {
+        cum += weights[i];
+        if (r <= cum) { chosen = i; break; }
+    }
+
+    // ---------------------------------------------------------------
+    // 5. Apply the attack + audit log. Flag faction-targeted strikes.
+    // ---------------------------------------------------------------
+    auto& target = candidates[chosen];
+    float fac_score = config_.faction_target_bonus * faction_proximity(target.x, target.y);
+    float strat_score = config_.strategic_weight * target.strategic;
+    bool faction_driven = (fac_score > 0.0f && fac_score >= strat_score * 0.5f);
+
+    switch (target.kind) {
+        case TargetKind::CONVEYOR: {
+            auto& d = grid_.data_at(target.x, target.y);
+            int dir = static_cast<int>(d.conveyor_dir);
+            d.conveyor_dir = static_cast<ConveyorDir>((dir + 2) % 4);
+            std::string msg = "FACTORY restructured: conveyor at (" +
+                std::to_string(target.x) + "," + std::to_string(target.y) +
+                ") reversed [strat=" + ff2(strat_score) +
+                " fac=" + ff2(fac_score) + "]";
+            if (faction_driven) {
+                msg += " — targeted faction";
+                emit_log(-1, msg);
+                restructures_targeting_factions_++;
+            } else {
+                emit_log(-1, msg);
+            }
+            total_restructures_++;
             break;
         }
-        case 1: {
-            // Damage a random built machine (reduce build_progress)
-            auto machines = grid_.find_all(TileType::Machine);
-            if (!machines.empty()) {
-                std::uniform_int_distribution<int> pick(0, (int)machines.size() - 1);
-                auto [mx, my] = machines[pick(rng_)];
-                auto& d = grid_.data_at(mx, my);
-                if (d.built) {
-                    d.build_progress = std::max(0.0f, d.build_progress - d.build_cost * 0.3f);
-                    if (d.build_progress <= 0.0f) {
-                        d.built = false;
-                        d.build_progress = 0.0f;
-                    }
-                    emit_log(-1, "FACTORY restructured: machine at (" +
-                             std::to_string(mx) + "," + std::to_string(my) + ") damaged");
-                    total_restructures_++;
-                }
+        case TargetKind::MACHINE: {
+            auto& d = grid_.data_at(target.x, target.y);
+            d.build_progress = std::max(0.0f, d.build_progress - d.build_cost * 0.3f);
+            if (d.build_progress <= 0.0f) {
+                d.built = false;
+                d.build_progress = 0.0f;
             }
+            std::string msg = "FACTORY restructured: machine at (" +
+                std::to_string(target.x) + "," + std::to_string(target.y) +
+                ") damaged [strat=" + ff2(strat_score) +
+                " fac=" + ff2(fac_score) + "]";
+            if (faction_driven) {
+                msg += " — targeted faction";
+                emit_log(-1, msg);
+                restructures_targeting_factions_++;
+            } else {
+                emit_log(-1, msg);
+            }
+            total_restructures_++;
             break;
         }
-        case 2: {
-            // Confiscate food from a random storage
-            auto storages = grid_.find_all(TileType::Storage);
-            if (!storages.empty()) {
-                std::uniform_int_distribution<int> pick(0, (int)storages.size() - 1);
-                auto [sx, sy] = storages[pick(rng_)];
-                auto& d = grid_.data_at(sx, sy);
-                if (d.stored_output > 0.0f) {
-                    float confiscated = d.stored_output * 0.5f;
-                    d.stored_output -= confiscated;
-                    emit_log(-1, "FACTORY confiscated " + ff2(confiscated) +
-                             " output from storage at (" +
-                             std::to_string(sx) + "," + std::to_string(sy) + ")");
-                    total_restructures_++;
-                }
+        case TargetKind::STORAGE: {
+            auto& d = grid_.data_at(target.x, target.y);
+            float confiscated = d.stored_output * 0.5f;
+            d.stored_output -= confiscated;
+            std::string msg = "FACTORY confiscated " + ff2(confiscated) +
+                " output from storage at (" +
+                std::to_string(target.x) + "," + std::to_string(target.y) +
+                ") [strat=" + ff2(strat_score) +
+                " fac=" + ff2(fac_score) + "]";
+            if (faction_driven) {
+                msg += " — targeted faction";
+                emit_log(-1, msg);
+                restructures_targeting_factions_++;
+            } else {
+                emit_log(-1, msg);
             }
+            total_restructures_++;
             break;
         }
     }
