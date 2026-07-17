@@ -1,9 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/cmake_install.cmake",
-		"/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/entt-build/cmake_install.cmake",
-		"/Users/fcaraneda/projects/game_projects/vida_misma/build_debug/_deps/tomlplusplus-build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
