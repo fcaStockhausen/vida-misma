@@ -936,9 +936,13 @@ void Simulation::system_compute_utility() {
 
         // Niche dampening: if too many nearby agents are doing the same action,
         // reduce its utility to encourage role diversity.
-        if (worker_nearby >= 3) u_work *= 1.0f / (1.0f + (worker_nearby - 2) * 0.3f);
-        if (gatherer_nearby >= 3) u_gather *= 1.0f / (1.0f + (gatherer_nearby - 2) * 0.3f);
-        if (builder_nearby >= 3) u_build *= 1.0f / (1.0f + (builder_nearby - 2) * 0.3f);
+        // Disabled when urgency_curve_variant != 0 (Phase 2.2: testing whether the
+        // steeper survival curve + Bonabeau thresholds alone prevent convergence).
+        if (ucv == 0) {
+            if (worker_nearby >= 3) u_work *= 1.0f / (1.0f + (worker_nearby - 2) * 0.3f);
+            if (gatherer_nearby >= 3) u_gather *= 1.0f / (1.0f + (gatherer_nearby - 2) * 0.3f);
+            if (builder_nearby >= 3) u_build *= 1.0f / (1.0f + (builder_nearby - 2) * 0.3f);
+        }
 
         // === RESPONSE THRESHOLDS (Bonabeau et al. 1996) ===
         // Each agent has per-action sensitivity derived from personality.
