@@ -1,44 +1,38 @@
 # Social Fabric {#sec:social-fabric}
 
-The social fabric of *La Vida Misma* is the substrate on which collective dynamics operate. This section describes the current implementation of social interaction, the designed-but-unimplemented mechanisms that will enrich it, and the emergent phenomena the full model is intended to produce.
+The social fabric of *La Vida Misma* is the substrate on which collective dynamics operate. This section describes the implemented social mechanisms and the emergent phenomena they produce.
 
 ## Implemented Social Mechanisms {#sec:social-implemented}
 
 ### Social Need Satisfaction via Proximity
 
-The simulation currently provides a single social primitive: the `SOCIALIZE` action. When an agent selects this action and occupies a tile adjacent to at least one other agent, its social need is partially satisfied. The magnitude of satisfaction depends on the agent's **gregariousness** personality facet: agents with higher gregariousness receive a larger reduction in social need per interaction, while low-gregariousness agents derive comparatively less benefit. Formally, the social need decrement is weighted by a factor proportional to the agent's gregariousness score.
+The `SOCIALIZE` action satisfies social need when an agent occupies a tile near other agents. The satisfaction scales with the number of nearby agents (congregation bonus: 2+ agents → +50%, 3+ → +100%) and is amplified by mutual trust with those neighbors. The `SOCIALIZE` action is selected through the standard utility-based decision process (Section @sec:agentes).
 
-This mechanism is intentionally minimal. It provides the basic incentive for agents to seek proximity with one another, establishing the spatial clustering precondition upon which all higher-order social phenomena depend. The `SOCIALIZE` action is selected through the standard utility-based decision process described in Section @sec:agentes, meaning that agents will pursue social interaction only when its marginal utility exceeds that of competing actions (work, rest, artistic expression).
+### Relationship Graph {#sec:social-graph}
 
-### Limitations of the Current Model
+The social system is built on a weighted relationship graph $G = (V, E)$ where $V$ is the set of agents and each edge carries a `RelationshipEntry` with two fields: `familiarity` $\in [0,1]$ (increases with every interaction) and `trust` $\in [-1,+1]$ (where $-1$ = antagonism, $0$ = neutral, $+1$ = deep trust). The graph is stored as a flat matrix indexed by agent ID (`SocialFabric::rels_`).
 
-In the current implementation, social interactions are anonymous and stateless: an agent gains the same benefit from socializing with agent $j$ as with agent $k$, and no memory of past interactions is retained. There is no relationship formation, no stress contagion, and no persistent social structure. The social need functions as a periodic drive that draws agents together spatially, but the resulting clusters have no internal differentiation.
-
-## Designed Mechanisms (Not Yet Implemented) {#sec:social-designed}
-
-### Relationship Graph
-
-The central planned data structure is a weighted, undirected relationship graph $G = (V, E, w)$ where $V$ is the set of living agents, $E \subseteq V \times V$ is the set of established relationships, and $w: E \to [-100, 100]$ assigns an affinity weight to each edge. Positive weights indicate friendship or trust; negative weights indicate antagonism or distrust. The absence of an edge indicates that two agents have not yet formed a relationship.
-
-Edge weights evolve through interaction. When two agents $i$ and $j$ socialize while adjacent on the grid, their edge weight $w(i,j)$ is incremented by a quantity modulated by personality compatibility, shared activities, and the current stress state of both agents. High-gregariousness agents form edges faster: their proximity-based weight increment is amplified by their gregariousness score, making them high-degree vertices in $G$.
+Edge weights evolve through `process_interaction` (`social.h`): familiarity gains at rate $0.05 \cdot (1 - \text{familiarity})$ per interaction, trust at rate $0.03 \cdot (0.5 + 0.5 \cdot \text{familiarity})$, modulated by the valence of the interaction (positive collaborations raise trust; negative events like witnessed sabotage lower it via `negative_interaction`). Edges are created exclusively through spatial proximity — two agents must occupy nearby tiles and interact — coupling the social graph topology to the factory's spatial layout.
 
 ### Stress Contagion and Grief Cascades
 
-Stress propagation is designed to follow the edges of $G$. When an agent $i$ experiences a stress event, a fraction of that stress is transmitted to each neighbor $j$ in proportion to $|w(i,j)|$---strong relationships, whether positive or negative, transmit more stress. This mechanism produces **grief cascades**: when a central, high-degree agent dies, the stress signal propagates through the graph along multiple paths, potentially triggering secondary stress events in agents who were only distantly connected to the deceased.
+Stress propagation follows the edges of $G$ via `apply_contagion` (`social.h`). The transfer from agent $i$ to agent $j$ is:
 
-The formal model is given by Eq. @eq:stress-contagion. The contagion parameter governs the rate of decay with graph distance: at low values, stress remains localized; at high values, cascades can sweep through the entire population.
+$$\Delta\sigma_j = \gamma \cdot |w(i,j)| \cdot (0.3 + 0.7 \cdot \text{familiarity}_{ij}) \cdot (\sigma_i - \sigma_j) \cdot (1 - \text{resilience}_j)$$
+
+where $\gamma = 0.02$ is the global contagion coefficient and the weight $|w|$ is $|\text{trust}|$ — strong relationships, whether positive or negative, transmit stress. This produces **grief cascades**: when a high-degree agent dies, `apply_grief` injects stress into every neighbor proportional to their familiarity and positive trust, potentially triggering secondary stress events across the graph.
 
 ### Collaboration Bonuses
 
-Agents who share a strong positive relationship ($w(i,j) > 0$) receive a productivity bonus when working on adjacent tiles. This creates a direct economic incentive for relationship maintenance: agents who sustain friendships work more efficiently, reinforcing the co-location behavior initiated by the social need. The bonus is small enough that isolated agents remain viable but large enough that socially embedded agents have a systematic advantage.
+Agents who share a positive relationship receive a productivity bonus when working on nearby tiles (Manhattan distance $\leq 2$) via `collaboration_bonus` (`social.h`). The bonus is $1.0 + \min(1.0, \sum \text{trust}_{ij} \cdot g_j)$ where $g_j$ is the neighbor's gregariousness, capped at $2.0\times$ solo rate. Isolated agents remain viable at $1.0\times$; socially embedded agents gain up to double throughput.
 
-### Informal Leadership Through Network Centrality
+### Informal Leadership (Influence)
 
-No agent is explicitly designated as a leader. Instead, high-gregariousness agents naturally become high-degree vertices in $G$ because they form relationships faster. These agents acquire disproportionate influence through two channels: (1) their stress events propagate to many neighbors, making them socially salient; and (2) their presence on a tile provides a social-need satisfaction bonus to nearby agents (via the collaboration mechanism), making their location attractive. Network centrality---measured by degree, betweenness, or eigenvector metrics---emerges as a structural property of $G$ without any top-down assignment. The ODD protocol (Section @sec:agentes) would classify this as an emergent property of the model, not a designed behavior.
+No agent is explicitly designated as a leader. Instead, `SocialComponent::influence` emerges as a smoothed score updated each tick via `update_influence` (`social.h`):
 
-### Proximity-Based Relationship Formation
+$$\text{influence} \mathrel{+}= 0.05 \cdot \big(\text{target} - \text{influence}\big), \quad \text{target} = \text{compliance} \cdot (1 - \sigma) \cdot (0.3 + 0.7 \cdot \overline{\text{fam}}) \cdot (0.5 + 0.5 \cdot \overline{\text{trust}})$$
 
-Edges in $G$ are created exclusively through spatial proximity: two agents must occupy adjacent tiles and interact. This ensures that the topology of the social graph is coupled to the spatial layout of the factory. Machine placement, common-area design, and transit corridors all shape which relationships can form, giving the Director an indirect lever over social structure.
+Influence thus requires four conditions simultaneously: high compliance, low stress, high average familiarity with neighbors, and high average trustworthiness. It is a degree/familiarity-weighted metric, not a betweenness or eigenvector centrality — the formal graph-centrality framing sometimes invoked for leadership is an aspirational refinement, not the current implementation. Influence feeds back into opinion dynamics (`leader_opinion_pull`) and the utility of SOCIALIZE.
 
 ## Emergence Targets {#sec:social-emergence}
 
@@ -78,6 +72,6 @@ For *La Vida Misma*, this means that a factory with a spatially clustered compli
 
 ### Collective Slowdown and Threshold Models
 
-If the non-compliant fraction of the population exceeds a critical threshold, aggregate output falls below the quota. This triggers the $w_{\text{fear}}$ term in the utility function (Eq. @eq:vida-utility), which increases the factory-utility weight for all agents. But this response has a delay: agents must perceive the factory failing before $w_{\text{fear}}$ rises. If the decline is gradual, $w_{\text{fear}}$ may not rise fast enough to prevent a production collapse.
+If the non-compliant fraction of the population exceeds a critical threshold, aggregate output falls below the quota. The factory responds via the `factory_pressure` multiplier (`sim_utility.cpp`): production utilities (GATHER, BUILD, WORK) are amplified by $1 + (1 - h_{\text{factory}}) \cdot k$ where $k$ is action-specific (2.0 for gather/build, 3.0 for work). Additionally, when quota fill drops below 50%, WORK utility is boosted 3× and input-readiness is floor-raised. This creates a feedback loop: declining health raises the utility of productive work, recruiting more agents into the production chain.
 
-This is analogous to a threshold model of collective behavior (Granovetter, 1978): each agent's decision to increase work effort depends on the perceived state of the factory, and the threshold varies by personality (compliance, resilience). If enough agents cross the threshold simultaneously, the factory recovers. If not, it collapses. The spatial structure of $G$ mediates this process: agents embedded in strong positive relationships can coordinate their response more effectively, while isolated agents respond only to the global signal.
+This is analogous to a threshold model of collective behavior (Granovetter, 1978): each agent's decision to increase work effort depends on the perceived state of the factory, and the threshold varies by personality (compliance, resilience). If enough agents cross the threshold simultaneously, the factory recovers. If not, it collapses. The spatial structure of $G$ mediates this process: agents embedded in strong positive relationships can coordinate their response more effectively (via `collaboration_bonus` and `exchange_opinions`), while isolated agents respond only to the global signal.

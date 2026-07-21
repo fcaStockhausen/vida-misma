@@ -87,11 +87,11 @@ The `SkillsComponent` tracks four skill categories:
 
 $$\mathbf{S} = (\text{factory\_work},\; \text{domestic},\; \text{artistic},\; \text{social\_skill}), \quad s_i \in [0, 1]$$ {#eq:skills-vector}
 
-In the current implementation, all skills are initialized to $0.0$ and remain unused---no system reads or modifies them. They are retained in the architecture as a design scaffold for future extensions. The intended progression model, following Section @sec:social, is:
+In the current implementation, skills are initialized to $0.0$ and accumulate XP through execution: GATHER grants `xp_domestic`, WORK grants `xp_factory` (`sim_execute.cpp`). Levels are derived via `SkillsComponent::xp_to_level` and applied as output multipliers via `level_bonus` ($1.0 + 0.15 \cdot \text{level}$) — so a level-3 worker produces $1.45\times$ output per tick. The `artistic` and `social_skill` categories remain scaffolded but do not yet accumulate XP. The progression model is:
 
 $$\text{XP for level } N = \text{base} + \text{increment} \times N$$
 
-The feedback loop between skills and utility is designed to produce natural specialization: an agent who operates machines gains factory skill, which increases the quality of their output, which increases the utility of assigning them to machines. Artistic skills follow the same loop but produce no factory output. An agent who practices music becomes a better musician, which increases the utility of practicing music (because it satisfies the expression need more efficiently), which makes the agent less likely to perform factory work.
+The feedback loop between skills and output produces partial specialization: an agent who operates machines gains factory skill, which increases the *quantity* of their output. However, skills currently feed into **execution only** (production multipliers), not into **utility computation** — `system_compute_utility` does not read `SkillsComponent`. The intended next step (following Section @sec:social) is to close the loop by making skill level raise the utility of the practiced action, so that specialized agents are *selected* for their specialty, not merely *more productive* when they happen to perform it.
 
 This creates a genuine trade-off: skilled artists are less productive factory workers, but they could in future versions produce morale benefits for nearby agents (Section @sec:social-fabric) that may be more valuable than their direct production loss.
 
@@ -148,7 +148,7 @@ The `ActionComponent` mediates between the utility computation and the spatial s
 
 The action pipeline executes in four phases each tick:
 
-1. **Utility computation** (`system_compute_utility`): Evaluates all candidate actions and selects the one with highest utility (Section @sec:tension-engine). A $2\%$ noise probability injects a uniformly random action, preventing behavioral lock-in.
+1. **Utility computation** (`system_compute_utility`): Evaluates all 12 candidate actions, applies Bonabeau response thresholds and Maslow boosts, then selects via **Boltzmann softmax** with temperature $\tau = $ `selection_temperature` (default 0.4). This is a tropical deformation of the max-plus semiring (Section @sec:tropical): as $\tau \to 0$ the softmax degenerates to greedy argmax; at higher $\tau$ the selection is more exploratory. This replaces the earlier greedy-argmax-plus-noise scheme and prevents behavioral lock-in without uniform randomness.
 2. **Target finding** (`system_find_targets`): Maps the selected action to a spatial target on the grid using a nearest-tile heuristic. Each action type has a distinct targeting strategy (Table @tbl:target-strategies).
 3. **Movement** (`system_move_to_targets`): If not at target, the agent takes one greedy step along the Manhattan-distance gradient. A $5\%$ movement noise probability produces a random step instead, introducing stochasticity into pathfinding.
 4. **Execution** (`system_execute_actions`): If the agent is at the target tile, the action's effects are applied to needs, inventory, and grid state.

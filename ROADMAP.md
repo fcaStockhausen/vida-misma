@@ -34,8 +34,17 @@ Phase 2.2 (shipped): Niche dampening removed — role diversity now emerges
 Phase 2.3 (reverted): Compliance sigmoid caused production collapse in 1/5
                     seeds. Negative result: the meaning>0.7 kink is
                     load-bearing, NOT a patch. Documented.
-Phase 3 (deferred):  Stress FSM → continuous modifiers.
-Phase 4 (deferred):  Documentation sync (docs still describe legacy behavior).
+Phase 3   (shipped):  Stress FSM → continuous smoothstep modifiers. The 5-state
+                    FSM (NORMAL/DISSOCIATED/HOSTILE_EUPHORIA/BROKEN/REDEEMED)
+                    no longer drives behavior; the enum is now a derived display
+                    label. Key finding: Phase 2's sigmoid kept agents so healthy
+                    that the stress FSM was already inactive — the FSM was
+                    addressing symptoms of the weak survival curve, not an
+                    independent problem.
+Phase 4   (shipped):  Documentation sync — 14_inhabitants.md (softmax not argmax,
+                    skills status corrected) and 16_social_fabric.md (centrality
+                    claim corrected, w_fear removed, "Not Yet Implemented"
+                    section rewritten to reflect implemented social graph).
 ```
 
 Cascading effect of Phase 2: colony now recovers `factory_health` to 0.95+
@@ -221,16 +230,16 @@ Per-archetype spawn phrases:
 
 ## In Progress / Needs Work
 
-### Emergence Redesign (continuation — see doc/plans/2026-07-21-emergence-redesign.md)
-- [ ] **Phase 3: Stress FSM → continuous** — replace the 5 scripted qualitative states
-      (NORMAL/DISSOCIATED/HOSTILE_EUPHORIA/BROKEN/REDEEMED) with smoothstep modifiers
-      on `stress.value`. REDEEMED moves to an event flag. Honors `07_principios_diseno.md:7`.
-- [ ] **Phase 4: Documentation sync** — update `14_inhabitants.md` (argmax→softmax),
-      `16_social_fabric.md` (centrality claim vs actual influence formula), remove
-      the non-existent `w_fear` reference, add implementation-status blocks.
+### Emergence Redesign (complete — see doc/plans/2026-07-21-emergence-redesign.md)
+- [x] ~~Phase 3: Stress FSM → continuous~~ — shipped. Smoothstep modifiers replace the
+      5-state FSM; the enum is now a derived display label. Key finding: the FSM was
+      already inactive in the post-Phase-2 regime (agents too healthy to reach high
+      stress), confirming it addressed symptoms of the weak survival curve.
+- [x] ~~Phase 4: Documentation sync~~ — shipped. 14_inhabitants.md and 16_social_fabric.md
+      corrected to match the implementation.
 - [ ] **Faction emergence is weak** — even with 2.5x better survival (Phase 2), factions
-      still only form in 1-2/5 seeds. The colony survives but trust accumulation is too
-      slow. Diagnose before assuming the faction-formation thresholds are correct.
+      still only form in 0-1/5 seeds. The colony survives but trust accumulation is too
+      slow. Next diagnostic target.
 
 ### Balance Tuning
 - [x] ~~GATHER dominates~~ — further alleviated by the sigmoid survival curve (Phase 2.1):

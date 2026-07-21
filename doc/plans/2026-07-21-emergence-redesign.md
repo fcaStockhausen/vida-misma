@@ -1,6 +1,6 @@
 # Emergence Redesign — From Scripted Heuristics to Simple Rules
 
-> **Status (2026-07-21):** Phases 1 + 2 complete and shipped. Phases 3 + 4 deferred to the next session. This document is the source of truth for resuming the work.
+> **Status (2026-07-21):** Phases 1-4 complete and shipped. The emergence redesign is finished. This document is the retrospective record.
 
 ## Motivation: The Gap Between Doc and Code
 
@@ -36,8 +36,8 @@ The code did not honor this. Forensic findings:
 | **2.1 Survival urgency sigmoid** | ✅ Shipped (`c2c76a3`) | 2.5x survival, eliminates 3 patch mechanisms |
 | **2.2 Niche dampening removed** | ✅ Shipped (`14731f7`) | Diversification emerges from Bonabeau + personality |
 | **2.3 Compliance sigmoid** | ❌ Negative result (`c17e09b`) | Reverted — kink is load-bearing, not a patch |
-| **3. Stress FSM → continuous** | ⏳ Deferred | Next session |
-| **4. Documentation sync** | ⏳ Deferred | Next session |
+| **3. Stress FSM → continuous** | ✅ Shipped (this session) | Smoothstep modifiers replace 5-state FSM; enum becomes display label |
+| **4. Documentation sync** | ✅ Shipped (this session) | 14_inhabitants.md + 16_social_fabric.md corrected to match code |
 
 ---
 
