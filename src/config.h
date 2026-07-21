@@ -51,6 +51,14 @@ struct Config {
 
     // Urgency
     float urgency_alpha = 2.0f;
+    // Survival urgency curve variant for A/B testing (Phase 2.1 of redesign).
+    //   0 = legacy: x^4 + critical_spike + eat_weight boost + HARD OVERRIDE (current)
+    //   1 = steep pure: single exponential curve designed to dominate at need>0.85
+    //                   without overrides (removes critical_spike + eat_weight + override)
+    //   2 = extra-steep pure: even sharper, for cases where variant 1 still loses
+    //   3 = sigmoid pure: smooth S-curve, middle ground
+    // Variants 1-3 disable the 3 patch mechanisms; variant 0 keeps them.
+    int   urgency_curve_variant = 0;
 
     // Death
     int starvation_ticks = 120;

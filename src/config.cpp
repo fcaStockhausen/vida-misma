@@ -68,6 +68,7 @@ Config load_config(const std::string& path) {
     // Urgency
     if (auto u = config["urgency"].as_table()) {
         cfg.urgency_alpha = u->get_as<double>("alpha")->value_or(cfg.urgency_alpha);
+        cfg.urgency_curve_variant = u->get_as<int64_t>("curve_variant")->value_or(cfg.urgency_curve_variant);
     }
 
     // Death

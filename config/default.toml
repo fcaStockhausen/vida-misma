@@ -76,6 +76,12 @@ rebuild_window   = 200   # ticks before social penalty for not rebuilding
 
 [urgency]
 alpha = 2.0
+# Survival urgency curve variant (Phase 2.1 A/B test):
+#   0 = legacy (x^4 + critical_spike + eat_weight + HARD OVERRIDE) [baseline]
+#   1 = steep pure exponential (no overrides)
+#   2 = extra-steep pure (no overrides)
+#   3 = sigmoid pure (no overrides) [DEFAULT — 2.5x survival vs legacy in A/B test]
+curve_variant = 3
 
 [death]
 starvation_ticks = 180

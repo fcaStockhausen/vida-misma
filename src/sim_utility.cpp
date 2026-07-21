@@ -45,6 +45,49 @@ float maslow_boost(float hunger, float rest, float primary, float secondary) {
     return 1.0f;
 }
 
+// Survival urgency curves for A/B testing (Phase 2.1 of emergence redesign).
+// The legacy system used x^4 + a separate critical_spike + an eat_weight boost
+// + a HARD OVERRIDE zeroing 9 utilities. These variants attempt to produce the
+// same "survival dominates at need>0.85" behavior from a SINGLE well-shaped
+// curve, so the three patches become unnecessary.
+//
+// Design target (the constraint all variants must satisfy):
+//   need=0.5  → low (0.02-0.08): work/build rationally dominate
+//   need=0.7  → moderate (0.1-0.3): survival starts to compete
+//   need=0.85 → high (1.5-3.0): survival clearly dominates
+//   need=0.9  → very high (5-10): nothing else wins
+//   need=1.0  → extreme (10+): emergency
+float survival_urgency_v1(float need) {
+    // Variant 1: steep pure exponential. Flat until 0.6, then 4th-power ramp.
+    if (need < 0.6f) return need * need * 0.1f;
+    float t = (need - 0.6f) / 0.4f;  // 0..1 above 0.6
+    return t * t * t * t * 10.0f;     // up to 10.0 at need=1.0
+}
+
+float survival_urgency_v2(float need) {
+    // Variant 2: extra-steep. 6th power above 0.6, sharper knee.
+    if (need < 0.6f) return need * need * 0.1f;
+    float t = (need - 0.6f) / 0.4f;
+    float t3 = t * t * t;
+    return t3 * t3 * t3 * 15.0f;      // t^9 up to 15.0 — very sharp
+}
+
+float survival_urgency_v3(float need) {
+    // Variant 3: sigmoid. Smooth S-curve, no hard knee. Middle ground.
+    // logistic centered at 0.7 with steepness 12.
+    float s = 1.0f / (1.0f + std::exp(-12.0f * (need - 0.7f)));
+    return s * 8.0f;                   // scaled so max ~8.0
+}
+
+float survival_urgency_variant(int variant, float need) {
+    switch (variant) {
+        case 1:  return survival_urgency_v1(need);
+        case 2:  return survival_urgency_v2(need);
+        case 3:  return survival_urgency_v3(need);
+        default: return need * need * need * need;  // variant 0: legacy x^4
+    }
+}
+
 }  // namespace
 
 void Simulation::system_compute_utility() {
@@ -241,9 +284,18 @@ void Simulation::system_compute_utility() {
             return t * t * 5.0f;  // exponential: up to 5.0 at need=1.0
         };
 
-        // Per-need urgency with appropriate curves:
-        float u_hunger     = survival_urgency(needs.hunger) + critical_spike(needs.hunger);
-        float u_rest       = survival_urgency(needs.rest)   + critical_spike(needs.rest) * 0.5f;
+        // Per-need urgency with appropriate curves.
+        // Variant 0 (legacy): survival_urgency(x^4) + critical_spike (separate patch).
+        // Variants 1-3: single survival_urgency_variant curve, no spike needed.
+        int ucv = config_.urgency_curve_variant;
+        float u_hunger, u_rest;
+        if (ucv == 0) {
+            u_hunger = survival_urgency(needs.hunger) + critical_spike(needs.hunger);
+            u_rest   = survival_urgency(needs.rest)   + critical_spike(needs.rest) * 0.5f;
+        } else {
+            u_hunger = survival_urgency_variant(ucv, needs.hunger);
+            u_rest   = survival_urgency_variant(ucv, needs.rest);
+        }
         float u_social     = urgency(needs.social);       // flat power curve
         float u_expression = urgency(needs.expression);   // flat power curve
         float u_purpose    = urgency(needs.purpose);      // flat power curve
@@ -724,7 +776,9 @@ void Simulation::system_compute_utility() {
         float u_eat = 0.0f;
         if (can_eat) {
             float eat_weight = 1.3f;
-            if (food_security > 0.3f) eat_weight = 1.8f;
+            // Variant 0: the eat_weight boost was a patch to help EAT win at critical
+            // hunger. Variants 1-3 rely on the steeper curve alone, so no boost.
+            if (ucv == 0 && food_security > 0.3f) eat_weight = 1.8f;
             u_eat = u_hunger * eat_weight;
         }
 
@@ -915,13 +969,17 @@ void Simulation::system_compute_utility() {
 
         // HARD SURVIVAL OVERRIDE: when critical, zero out non-survival actions.
         // This prevents agents from building themselves to death.
-        if (needs.hunger > 0.85f) {
-            u_build = 0.0f; u_work = 0.0f; u_socialize = 0.0f;
-            u_create = 0.0f; u_explore = 0.0f; u_maintain = 0.0f;
-            u_dismantle = 0.0f; u_sabotage = 0.0f; u_get_food = 0.0f;
-        }
-        if (needs.rest > 0.9f) {
-            u_build *= 0.1f; u_work *= 0.1f; u_gather *= 0.1f;
+        // Only active in variant 0 (legacy). Variants 1-3 rely on the steeper
+        // urgency curve alone to make EAT dominate at hunger>0.85.
+        if (ucv == 0) {
+            if (needs.hunger > 0.85f) {
+                u_build = 0.0f; u_work = 0.0f; u_socialize = 0.0f;
+                u_create = 0.0f; u_explore = 0.0f; u_maintain = 0.0f;
+                u_dismantle = 0.0f; u_sabotage = 0.0f; u_get_food = 0.0f;
+            }
+            if (needs.rest > 0.9f) {
+                u_build *= 0.1f; u_work *= 0.1f; u_gather *= 0.1f;
+            }
         }
 
         // Pick best action
