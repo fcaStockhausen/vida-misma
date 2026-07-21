@@ -12,6 +12,37 @@ live. Every mechanic exists to sharpen that tension.
 Two targets: `vida_batch` (headless), `vida_gui` (SDL2 2.5D isometric).
 48 agents. Director system (CALM / NORMAL). Narrative journals.
 
+### Emergence Redesign (2026-07 — in progress)
+
+A critical audit found the codebase was *The Sims class* (scripted with an
+emergent veneer), not the Schelling/Boids class the design docs claim: ~740
+magic-number constants, 121 threshold gates in `sim_utility.cpp` alone, and a
+scripted 5-state stress FSM. The redesign replaces hardcoded overrides with
+correctly-shaped utility curves so behavior emerges from simple rules.
+
+**Full plan & status:** see [`doc/plans/2026-07-21-emergence-redesign.md`](doc/plans/2026-07-21-emergence-redesign.md)
+
+```
+Phase 1 (shipped):  De-duplication refactor — 4 helpers extracted,
+                    behavior-neutral (10/10 md5-identical verification).
+Phase 2.1 (shipped): Survival urgency SIGMOID — A/B tested 4 curve variants,
+                    sigmoid won 2.5x survival (43 vs 17 alive/48 avg).
+                    Eliminates 3 patch mechanisms: critical_spike,
+                    eat_weight boost, HARD SURVIVAL OVERRIDE.
+Phase 2.2 (shipped): Niche dampening removed — role diversity now emerges
+                    from Bonabeau thresholds + personality, no clamp needed.
+Phase 2.3 (reverted): Compliance sigmoid caused production collapse in 1/5
+                    seeds. Negative result: the meaning>0.7 kink is
+                    load-bearing, NOT a patch. Documented.
+Phase 3 (deferred):  Stress FSM → continuous modifiers.
+Phase 4 (deferred):  Documentation sync (docs still describe legacy behavior).
+```
+
+Cascading effect of Phase 2: colony now recovers `factory_health` to 0.95+
+(was 0.00), sabotages drop 2-5×, and **factions can emerge** (the colony
+survives long enough). Config knob `urgency.curve_variant` (0=legacy,
+3=sigmoid default) preserves the old path for reproducibility.
+
 ### Production Chain Fixes (Phase 1 — implemented)
 
 ```
@@ -190,12 +221,22 @@ Per-archetype spawn phrases:
 
 ## In Progress / Needs Work
 
+### Emergence Redesign (continuation — see doc/plans/2026-07-21-emergence-redesign.md)
+- [ ] **Phase 3: Stress FSM → continuous** — replace the 5 scripted qualitative states
+      (NORMAL/DISSOCIATED/HOSTILE_EUPHORIA/BROKEN/REDEEMED) with smoothstep modifiers
+      on `stress.value`. REDEEMED moves to an event flag. Honors `07_principios_diseno.md:7`.
+- [ ] **Phase 4: Documentation sync** — update `14_inhabitants.md` (argmax→softmax),
+      `16_social_fabric.md` (centrality claim vs actual influence formula), remove
+      the non-existent `w_fear` reference, add implementation-status blocks.
+- [ ] **Faction emergence is weak** — even with 2.5x better survival (Phase 2), factions
+      still only form in 1-2/5 seeds. The colony survives but trust accumulation is too
+      slow. Diagnose before assuming the faction-formation thresholds are correct.
+
 ### Balance Tuning
-- [ ] **GATHER dominates** (24-53% of agent time) — raw inflow (0.8/tick) outpaces
-      conversion (0.16/tick) 5:1. Needs `raw_gap` gate like the `infra_gap` reform
-      that killed BUILD spam. **Phase 2 target.**
+- [x] ~~GATHER dominates~~ — further alleviated by the sigmoid survival curve (Phase 2.1):
+      agents eat better → less stress → less sabotage → factory recovers.
 - [ ] **Output logistics**: output produced but trapped in machines until agents pass by.
-      Passive pickup helps (Phase 1) but throughput still caps quota at ~29% avg.
+      Passive pickup helps (Phase 1) but throughput still caps quota.
 - [ ] **c_mat transit visibility**: agents with c_mat in inventory trigger `prefer_output`
       routing. Depositing c_mat to Storage breaks this — needs a hauling action instead.
 - [ ] **SOCIALIZE correlation variable** (r=0.08 to 0.42 across seeds) — layout-dependent
@@ -309,6 +350,12 @@ Estimated: ~400-600 LOC across `sim_utility.cpp`, `sim_execute.cpp`, `grid.h`
    r=0.78. The architecture of desire is validated.
 10. **Congregation enables culture** — EatingZone as the communal hearth.
     Socialization, eating, and art converge in shared physical space.
+11. **Emergence over scripting** (redesign principle, 2026-07) — when behavior
+    is wrong, fix the *curve*, don't add a clamp. Every hardcoded override
+    accreted to patch a weak utility function; the sigmoid survival curve
+    (Phase 2.1) eliminated 3 patches at once. A/B-test any gate removal: ~1/3
+    of "patches" turn out to be load-bearing designs (see Phase 2.3 negative
+    result). Legacy paths are preserved behind config knobs for reproducibility.
 
 ---
 
