@@ -3,6 +3,50 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
+// Factory-pressure urgency multiplier: amplifies a utility as factory_health
+// falls. Same formula was inlined three times (gather_urgency k=2.0, build_urgency
+// k=2.0, health_urgency k=3.0) before this helper. Preserves both constants.
+float factory_pressure(float factory_health, float k) {
+    return 1.0f + (1.0f - factory_health) * k;
+}
+
+// CALM-mode "comfortable" dampener: when higher needs are unmet BUT the agent
+// is fed, rested, and food is abundant, productive actions are dampened so
+// cultural behavior can emerge. The 4-way conjunction was duplicated 3x
+// (GATHER/BUILD/WORK). Returns `multiplier` when the conjunction holds, else 1.0f.
+// GATHER/BUILD used 0.3f; WORK used 0.2f — the parameter preserves both.
+float calm_comfortable_dampener(bool calm_mode, float higher_unmet,
+                                float hunger, float rest, float food_ratio,
+                                float multiplier) {
+    if (!calm_mode) return 1.0f;
+    if (higher_unmet > 0.6f && hunger < 0.3f && rest < 0.3f && food_ratio > 0.8f)
+        return multiplier;
+    return 1.0f;
+}
+
+// CALM-mode focus dampener (WORK-specific): in CALM mode, unmet higher needs
+// gradually suppress work_pull. This is distinct from the comfortable dampener
+// above (which is a hard 0.3x when fully comfortable). WORK applies BOTH:
+// first the gradual focus, then the comfortable 0.2x multiplier.
+float calm_work_focus(bool calm_mode, float higher_unmet) {
+    if (!calm_mode) return 1.0f;
+    float focus = 1.0f - higher_unmet;
+    return 0.3f + 0.7f * focus;
+}
+
+// Maslow boost: higher-need actions (socialize/create/explore) are amplified
+// when survival needs are well-satisfied. Two tiers. Was duplicated 3x with
+// inconsistent secondary tiers (EXPLORE was missing its secondary).
+float maslow_boost(float hunger, float rest, float primary, float secondary) {
+    if (hunger < 0.3f && rest < 0.3f) return primary;
+    if (hunger < 0.5f && rest < 0.5f) return secondary;
+    return 1.0f;
+}
+
+}  // namespace
+
 void Simulation::system_compute_utility() {
     // ================================================================
     // GRID-LEVEL SUPPLY-CHAIN SIGNALS (computed once, used by all agents)
@@ -272,7 +316,7 @@ void Simulation::system_compute_utility() {
             float low_mat = std::max(0.0f, 1.0f - inv.raw_material / 2.0f);
 
             // Factory health crisis amplifies
-            float gather_urgency = 1.0f + (1.0f - factory_health_) * 2.0f;
+            float gather_urgency = factory_pressure(factory_health_, 2.0f);
 
             // Base drive: compliance × infrastructure gap × material scarcity
             // infra_gap from grid-level signal — no redundant per-agent loop
@@ -356,11 +400,11 @@ void Simulation::system_compute_utility() {
         }
 
         // Focus dampener for GATHER — only in CALM mode.
-        if (config_.director_mode == DirectorMode::CALM) {
+        {
             float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
-            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                && food_supply_ratio > 0.8f)
-                u_gather *= 0.3f;
+            u_gather *= calm_comfortable_dampener(
+                config_.director_mode == DirectorMode::CALM,
+                hu, needs.hunger, needs.rest, food_supply_ratio, 0.3f);
         }
 
         // ================================================================
@@ -374,7 +418,7 @@ void Simulation::system_compute_utility() {
         bool unbuilt_conveyor  = grid_.find_nearest_conveyor_to_build(pos.x, pos.y).first >= 0;
 
         // Factory health crisis amplifies BUILD urgency: infrastructure = survival.
-        float build_urgency = 1.0f + (1.0f - factory_health_) * 2.0f; // 1x at full, 3x at zero (was 5x)
+        float build_urgency = factory_pressure(factory_health_, 2.0f);
 
         // Material availability boost: having material should STRONGLY push toward BUILD
         float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
@@ -566,11 +610,11 @@ void Simulation::system_compute_utility() {
         u_build *= std::min(1.0f, infra_gap * 1.5f + 0.05f);
 
         // Focus dampener for BUILD — only when not under factory pressure.
-        if (config_.director_mode == DirectorMode::CALM) {
+        {
             float hu = (needs.social + needs.expression + needs.purpose) / 3.0f;
-            if (hu > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                && food_supply_ratio > 0.8f)
-                u_build *= 0.3f;
+            u_build *= calm_comfortable_dampener(
+                config_.director_mode == DirectorMode::CALM,
+                hu, needs.hunger, needs.rest, food_supply_ratio, 0.3f);
         }
 
         // ================================================================
@@ -586,7 +630,7 @@ void Simulation::system_compute_utility() {
         float u_work = 0.0f;
         if (stress.state != StressState::BROKEN) {
         if (built_exists) {
-            float health_urgency = 1.0f + (1.0f - factory_health_) * 3.0f;
+            float health_urgency = factory_pressure(factory_health_, 3.0f);
 
             // Input readiness: how prepared the agent is to WORK.
             // TWO components:
@@ -625,15 +669,12 @@ void Simulation::system_compute_utility() {
             // FOCUS SYSTEM (Dwarf Fortress pattern):
             // Only in CALM mode do higher needs suppress WORK.
             // In NORMAL and PRODUCTION_TEST, agents work regardless.
-            if (config_.director_mode == DirectorMode::CALM) {
+            bool calm = (config_.director_mode == DirectorMode::CALM);
+            if (calm) {
                 float higher_unmet = (needs.social + needs.expression + needs.purpose) / 3.0f;
-                float focus = 1.0f - higher_unmet;
-                work_pull *= (0.3f + 0.7f * focus);
-
-                if (higher_unmet > 0.6f && needs.hunger < 0.3f && needs.rest < 0.3f
-                    && food_supply_ratio > 0.8f) {
-                    work_pull *= 0.2f;
-                }
+                work_pull *= calm_work_focus(true, higher_unmet);
+                work_pull *= calm_comfortable_dampener(
+                    true, higher_unmet, needs.hunger, needs.rest, food_supply_ratio, 0.2f);
             } else if (config_.director_mode == DirectorMode::NORMAL
                        && last_quota_fill_ < 0.5f) {
                 // Factory pressure boosts WORK
@@ -709,8 +750,7 @@ void Simulation::system_compute_utility() {
             u_socialize *= (0.5f + 0.5f * nearby_trust);
             u_socialize += soc.influence * 0.1f;
             // Maslow boost — stronger when fed and rested
-            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_socialize *= 4.0f;
-            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_socialize *= 2.0f;
+            u_socialize *= maslow_boost(needs.hunger, needs.rest, 4.0f, 2.0f);
         }
 
         // CREATE: THRESHOLD GATE (The Sims pattern)
@@ -727,8 +767,7 @@ void Simulation::system_compute_utility() {
                 u_create += personality.artistry * needs.meaning * 0.8f;
             if (stress.state == StressState::DISSOCIATED) u_create *= 1.3f;
             // Maslow boost
-            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_create *= 2.5f;
-            else if (needs.hunger < 0.5f && needs.rest < 0.5f) u_create *= 1.5f;
+            u_create *= maslow_boost(needs.hunger, needs.rest, 2.5f, 1.5f);
         }
 
         // EXPLORE: THRESHOLD GATE — curiosity fires above 0.25 purpose
@@ -739,7 +778,7 @@ void Simulation::system_compute_utility() {
             if (needs.meaning > 0.4f)
                 u_explore += personality.curiosity * needs.meaning * 0.5f;
             if (stress.state == StressState::DISSOCIATED) u_explore *= 1.3f;
-            if (needs.hunger < 0.3f && needs.rest < 0.3f) u_explore *= 2.0f;
+            u_explore *= maslow_boost(needs.hunger, needs.rest, 2.0f, 1.0f);
         }
 
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
