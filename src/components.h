@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <algorithm>  // std::clamp (for stress smoothstep helpers)
 #include "path_cache.h"
 
 // --- Tile Types ---
@@ -226,6 +227,64 @@ inline const char* stress_state_name(StressState s) {
         case StressState::REDEEMED:        return "Redeemed";
         default:                           return "?";
     }
+}
+
+// ============================================================
+// CONTINUOUS STRESS MODIFIERS (Phase 3 of emergence redesign)
+//
+// These replace the discrete 'if state == DISSOCIATED then mult = 0.7'
+// branches with smoothstep functions of stress.value. The StressState enum
+// becomes a derived label for display/GUI only; behavior is driven by the
+// continuous curves below.
+//
+// Mapping (legacy FSM -> continuous equivalent):
+//   NORMAL          (0.0-0.4):  all modifiers ~ 1.0 (no effect)
+//   DISSOCIATED     (0.4-0.7):  gregariousness_mult 0.7, create/explore +30%
+//   HOSTILE_EUPHORIA(0.7-0.9):  noncomp_mult 0.0, mood boost
+//   BROKEN          (0.9+):     gregariousness_mult 0.3, work blocked
+//
+// smoothstep(edge0, edge1, x) ramps 0->1 as x goes edge0->edge1.
+// ============================================================
+inline float smoothstep(float edge0, float edge1, float x) {
+    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Gregariousness multiplier: 1.0 at low stress, ramps to 0.3 at BROKEN.
+// Legacy: DISSOCIATED=0.7, BROKEN=0.3. Continuous: smoothstep(0.4, 0.9).
+inline float stress_gregariousness_mult(float stress_value) {
+    // At stress=0.4: ~0.93, at 0.7: ~0.65, at 0.9: 0.3
+    return 1.0f - smoothstep(0.4f, 0.9f, stress_value) * 0.7f;
+}
+
+// Create/Explore boost multiplier: 1.0 at low stress, up to 1.3 at DISSOCIATED.
+// Legacy: DISSOCIATED *= 1.3. Continuous: smoothstep ramp centered at 0.55.
+inline float stress_creativity_mult(float stress_value) {
+    // Peaks around 0.55 (mid-DISSOCIATED), fades at BROKEN
+    float ramp_up = smoothstep(0.3f, 0.55f, stress_value);
+    float ramp_down = 1.0f - smoothstep(0.7f, 0.95f, stress_value);
+    return 1.0f + 0.3f * ramp_up * ramp_down;
+}
+
+// Noncompliance stress multiplier: 1.0 at low stress, drops to 0 at EUPHORIC.
+// Legacy: DISSOCIATED=0.5, HOSTILE_EUPHORIA=0.0. Continuous: smoothstep(0.4, 0.7).
+inline float stress_noncomp_mult(float stress_value) {
+    return 1.0f - smoothstep(0.4f, 0.7f, stress_value);
+}
+
+// Work suppression: 1.0 (work allowed) at low stress, drops to 0 at BROKEN.
+// Legacy: BROKEN blocks WORK entirely. Continuous: smoothstep(0.85, 1.0).
+inline float stress_work_mult(float stress_value) {
+    return 1.0f - smoothstep(0.85f, 1.0f, stress_value);
+}
+
+// Derive the display label from stress.value (for GUI/chronicle).
+// REDEEMED is handled separately (it's an event flag, not stress-derived).
+inline StressState stress_state_from_value(float stress_value) {
+    if (stress_value < 0.4f) return StressState::NORMAL;
+    if (stress_value < 0.7f) return StressState::DISSOCIATED;
+    if (stress_value < 0.9f) return StressState::HOSTILE_EUPHORIA;
+    return StressState::BROKEN;
 }
 
 struct StressComponent {

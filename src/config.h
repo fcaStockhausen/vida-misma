@@ -60,6 +60,14 @@ struct Config {
     // Variants 1-3 disable the 3 patch mechanisms; variant 0 keeps them.
     int   urgency_curve_variant = 0;
 
+    // Stress model variant for A/B testing (Phase 3 of emergence redesign).
+    //   0 = legacy FSM: stress.state drives behavior via discrete if-branches
+    //                   (NORMAL/DISSOCIATED/HOSTILE_EUPHORIA/BROKEN transitions)
+    //   1 = continuous: behavioral modifiers derived from stress.value via
+    //                   smoothstep; the StressState enum becomes a derived label
+    //                   for display only, not a behavioral driver.
+    int   stress_model_variant = 0;
+
     // Death
     int starvation_ticks = 120;
     int exhaustion_ticks = 160;

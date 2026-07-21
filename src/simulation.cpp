@@ -508,9 +508,11 @@ void Simulation::system_update_stress() {
 
         // A3: Noncompliance stress — the factory's gaze weighs on you
         // DISSOCIATED agents feel this less; HOSTILE_EUPHORIA agents ignore it
-        float noncomp_mult = 1.0f;
-        if (stress.state == StressState::DISSOCIATED) noncomp_mult = 0.5f;
-        if (stress.state == StressState::HOSTILE_EUPHORIA) noncomp_mult = 0.0f;
+        // Phase 3: continuous modifier (was: discrete FSM branches)
+        float noncomp_mult = (config_.stress_model_variant == 1)
+            ? stress_noncomp_mult(stress.value)
+            : (stress.state == StressState::DISSOCIATED ? 0.5f
+               : stress.state == StressState::HOSTILE_EUPHORIA ? 0.0f : 1.0f);
         stress_input += config_.noncompliance_stress * agent.noncompliance * noncomp_mult;
 
         // Trauma reduces effective resilience — the more damaged you are, the faster stress builds
@@ -538,13 +540,12 @@ void Simulation::system_update_stress() {
         }
 
         // === STRESS STATE TRANSITIONS ===
+        // Phase 3: in continuous mode, the state is a derived display label
+        // (computed from stress.value), not a behavioral driver. The chronicle
+        // still logs transitions for narrative continuity.
         if (stress.state != StressState::REDEEMED) {
             StressState old_state = stress.state;
-            StressState new_state;
-            if (stress.value < 0.4f)       new_state = StressState::NORMAL;
-            else if (stress.value < 0.7f)  new_state = StressState::DISSOCIATED;
-            else if (stress.value < 0.9f)  new_state = StressState::HOSTILE_EUPHORIA;
-            else                           new_state = StressState::BROKEN;
+            StressState new_state = stress_state_from_value(stress.value);
             if (new_state != old_state) {
                 stress.state = new_state;
                 char buf[80];
@@ -556,15 +557,32 @@ void Simulation::system_update_stress() {
         }
 
         // === HOSTILE EUPHORIA: artificial mood boost ===
-        // The agent appears happy but is disconnected from reality
-        if (stress.state == StressState::HOSTILE_EUPHORIA) {
+        // The agent appears happy but is disconnected from reality.
+        // Phase 3: continuous — mood boost scales with stress in the EUPHORIC band.
+        // Legacy: flat +0.005 if state==HOSTILE_EUPHORIA.
+        if (config_.stress_model_variant == 1) {
+            // Boost peaks in the 0.7-0.9 band, fades at BROKEN
+            float euphoric_band = smoothstep(0.6f, 0.75f, stress.value)
+                                * (1.0f - smoothstep(0.85f, 1.0f, stress.value));
+            if (euphoric_band > 0.001f) {
+                auto& soc = registry_.get<SocialComponent>(e);
+                soc.mood = std::min(1.0f, soc.mood + 0.005f * euphoric_band);
+            }
+        } else if (stress.state == StressState::HOSTILE_EUPHORIA) {
             auto& soc = registry_.get<SocialComponent>(e);
             soc.mood = std::min(1.0f, soc.mood + 0.005f); // fake happiness
         }
 
         // === SOCIAL CONTAGION: stressed agents repel others ===
-        // DISSOCIATED agents lose social connections; others avoid them
-        if (stress.state == StressState::DISSOCIATED || stress.state == StressState::BROKEN) {
+        // DISSOCIATED/BROKEN agents lose social connections; others avoid them.
+        // Phase 3: continuous — mood drain scales with stress above 0.4.
+        if (config_.stress_model_variant == 1) {
+            float drain = smoothstep(0.4f, 0.9f, stress.value) * 0.003f;
+            if (drain > 0.0001f) {
+                auto& soc = registry_.get<SocialComponent>(e);
+                soc.mood = std::max(0.0f, soc.mood - drain);
+            }
+        } else if (stress.state == StressState::DISSOCIATED || stress.state == StressState::BROKEN) {
             auto& soc = registry_.get<SocialComponent>(e);
             soc.mood = std::max(0.0f, soc.mood - 0.003f); // internal drain
         }
@@ -616,10 +634,20 @@ void Simulation::system_check_deaths() {
         // Breakdown: stress kills, but not instantly.
         // BROKEN agents survive longer — they have time to sabotage or redeem.
         // Normal agents at breakdown threshold die slowly.
+        // Phase 3: continuous death_chance scales down as stress approaches 1.0
+        // (BROKEN agents linger more). Legacy uses discrete state branches.
         if (stress.value >= config_.breakdown_threshold) {
-            float death_chance = 0.005f; // 0.5% per tick (was 2% — too lethal)
-            if (stress.state == StressState::BROKEN) death_chance = 0.003f; // BROKEN agents linger
-            if (stress.state == StressState::REDEEMED) death_chance = 0.0f;  // Redeemed are immune
+            float death_chance;
+            if (stress.state == StressState::REDEEMED) {
+                death_chance = 0.0f;  // Redeemed are immune (both variants)
+            } else if (config_.stress_model_variant == 1) {
+                // Continuous: 0.005 at threshold, ramps to 0.003 at stress=1.0
+                float broken_ramp = smoothstep(config_.breakdown_threshold, 1.0f, stress.value);
+                death_chance = 0.005f - broken_ramp * 0.002f;
+            } else {
+                death_chance = 0.005f;
+                if (stress.state == StressState::BROKEN) death_chance = 0.003f;
+            }
             std::uniform_real_distribution<float> roll(0.0f, 1.0f);
             if (roll(rng_) < death_chance) {
                 agent.alive = false;

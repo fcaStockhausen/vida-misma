@@ -82,6 +82,10 @@ alpha = 2.0
 #   2 = extra-steep pure (no overrides)
 #   3 = sigmoid pure (no overrides) [DEFAULT — 2.5x survival vs legacy in A/B test]
 curve_variant = 3
+# Stress model (Phase 3 A/B test):
+#   0 = legacy FSM (stress.state drives behavior via discrete if-branches) [baseline]
+#   1 = continuous (smoothstep modifiers from stress.value; enum is display-only) [DEFAULT]
+stress_model_variant = 1
 
 [death]
 starvation_ticks = 180

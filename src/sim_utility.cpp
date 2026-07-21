@@ -685,7 +685,12 @@ void Simulation::system_compute_utility() {
         //   - At built_ratio > 0.5 with food stress, WORK dominates
         // ================================================================
         float u_work = 0.0f;
-        if (stress.state != StressState::BROKEN) {
+        // Phase 3: WORK gate. Legacy hard-blocks BROKEN. Continuous variant
+        // scales u_work by stress_work_mult (ramps 1->0 across stress 0.85-1.0).
+        bool work_allowed = (config_.stress_model_variant == 1)
+            ? (stress_work_mult(stress.value) > 0.01f)
+            : (stress.state != StressState::BROKEN);
+        if (work_allowed) {
         if (built_exists) {
             float health_urgency = factory_pressure(factory_health_, 3.0f);
 
@@ -768,8 +773,12 @@ void Simulation::system_compute_utility() {
             u_work = (work_pull * food_work_urgency * input_readiness
                       + personal_hunger + purpose_drive + community)
                      * mood_factor * health_urgency;
+            // Phase 3: continuous WORK suppression near BROKEN (was: hard gate)
+            if (config_.stress_model_variant == 1) {
+                u_work *= stress_work_mult(stress.value);
+            }
         }
-        } // end BROKEN gate
+        } // end work_allowed gate
 
         // EAT: survival-critical action. Uses urgency curve directly.
         // The ONI/Sims pattern: eating at low hunger is a preference,
@@ -796,9 +805,11 @@ void Simulation::system_compute_utility() {
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
         // THRESHOLD GATE — lower threshold so social fires more readily.
-        float gregariousness_mult = 1.0f;
-        if (stress.state == StressState::DISSOCIATED) gregariousness_mult = 0.7f;
-        if (stress.state == StressState::BROKEN) gregariousness_mult = 0.3f;
+        // Phase 3: continuous stress modifier replaces discrete FSM branches.
+        float gregariousness_mult = (config_.stress_model_variant == 1)
+            ? stress_gregariousness_mult(stress.value)
+            : (stress.state == StressState::DISSOCIATED ? 0.7f
+               : stress.state == StressState::BROKEN ? 0.3f : 1.0f);
         float effective_gregariousness = personality.gregariousness * gregariousness_mult
                                        * (1.0f - stress.trauma * config_.trauma_social_impact);
         float u_socialize = 0.0f;
@@ -824,7 +835,10 @@ void Simulation::system_compute_utility() {
             u_create = personality.artistry * u_expression * (1.0f + expr_gate);
             if (needs.meaning > 0.4f)
                 u_create += personality.artistry * needs.meaning * 0.8f;
-            if (stress.state == StressState::DISSOCIATED) u_create *= 1.3f;
+            // Phase 3: continuous creativity boost (was: if DISSOCIATED *= 1.3f)
+            u_create *= (config_.stress_model_variant == 1)
+                ? stress_creativity_mult(stress.value)
+                : (stress.state == StressState::DISSOCIATED ? 1.3f : 1.0f);
             // Maslow boost
             u_create *= maslow_boost(needs.hunger, needs.rest, 2.5f, 1.5f);
         }
@@ -836,7 +850,10 @@ void Simulation::system_compute_utility() {
             u_explore = personality.curiosity * u_purpose * (0.5f + explore_gate);
             if (needs.meaning > 0.4f)
                 u_explore += personality.curiosity * needs.meaning * 0.5f;
-            if (stress.state == StressState::DISSOCIATED) u_explore *= 1.3f;
+            // Phase 3: continuous creativity boost (was: if DISSOCIATED *= 1.3f)
+            u_explore *= (config_.stress_model_variant == 1)
+                ? stress_creativity_mult(stress.value)
+                : (stress.state == StressState::DISSOCIATED ? 1.3f : 1.0f);
             u_explore *= maslow_boost(needs.hunger, needs.rest, 2.0f, 1.0f);
         }
 
@@ -878,11 +895,21 @@ void Simulation::system_compute_utility() {
         float u_sabotage = 0.0f;
         if (stress.value >= config_.sabotage_stress_threshold
             && stress.state != StressState::REDEEMED) {
-            float stress_drive = 0.0f;
-            if (stress.state == StressState::HOSTILE_EUPHORIA) stress_drive = 1.2f;
-            if (stress.state == StressState::BROKEN) stress_drive = 3.0f;
-            if (stress.state == StressState::DISSOCIATED && stress.trauma > 0.3f)
-                stress_drive = stress.trauma * 0.5f;
+            float stress_drive;
+            if (config_.stress_model_variant == 1) {
+                // Phase 3: continuous sabotage drive. Scales with stress.value
+                // above the threshold, amplified by trauma. Preserves the legacy
+                // anchors: ~1.2 at EUPHORIC (stress~0.8), ~3.0 at BROKEN (stress~0.95).
+                float over_threshold = (stress.value - config_.sabotage_stress_threshold)
+                                     / std::max(0.001f, 1.0f - config_.sabotage_stress_threshold);
+                stress_drive = over_threshold * over_threshold * 3.0f;  // quadratic, up to 3.0
+            } else {
+                stress_drive = 0.0f;
+                if (stress.state == StressState::HOSTILE_EUPHORIA) stress_drive = 1.2f;
+                if (stress.state == StressState::BROKEN) stress_drive = 3.0f;
+                if (stress.state == StressState::DISSOCIATED && stress.trauma > 0.3f)
+                    stress_drive = stress.trauma * 0.5f;
+            }
             stress_drive *= (1.0f + stress.trauma);
             stress_drive *= (1.0f - personality.compliance * 0.3f);
             float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 1.5f);
