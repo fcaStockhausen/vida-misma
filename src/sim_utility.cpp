@@ -302,6 +302,11 @@ void Simulation::system_compute_utility() {
 
         // B4: Meaning crisis erodes compliance.
         // Being productive but unfulfilled makes agents less willing to serve.
+        // NOTE: A/B testing a smooth sigmoid replacement (Phase 2.3) caused
+        // production collapse in seed=2 (44->10 alive): the gradual compliance
+        // reduction starting from meaning=0 destabilizes the "compliance stays
+        // high until meaning genuinely crises" regime. The kink at 0.7 is not
+        // a patch — it is functionally load-bearing. Kept as-is.
         float effective_compliance = personality.compliance;
         if (needs.meaning > 0.7f) {
             effective_compliance *= (1.0f - (needs.meaning - 0.7f) * 1.5f);
