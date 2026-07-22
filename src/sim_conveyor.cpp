@@ -104,7 +104,7 @@ void Simulation::system_conveyor_transport() {
             // Conveyor dumps into Exit — deposit into adjacent Storage instead
             // so the quota system (system_ship_out_food) can pick it up.
             // If no adjacent Storage, contents stay on belt (backs up).
-            bool deposited = false;
+            float amount_before_deposit = amount;
             constexpr int ddx[] = {1, -1, 0, 0};
             constexpr int ddy[] = {0, 0, 1, -1};
             for (int i = 0; i < 4 && amount > 0.001f; i++) {
@@ -124,16 +124,15 @@ void Simulation::system_conveyor_transport() {
                     else
                         sd.stored_raw_material += dep;
                     amount -= dep;
-                    deposited = true;
                 }
             }
-            if (deposited) {
-                d.conveyor_contents -= std::min(d.conveyor_contents, throughput);
-            }
+            d.conveyor_contents -= amount_before_deposit - amount;
             // If no adjacent Storage, contents stay on belt — will try again next tick
         } else if (target == TileType::Conveyor) {
             auto& nd = grid_.data_at(tx, ty);
             if (!nd.built || nd.conveyor_condition < 0.2f) continue;
+            if (nd.conveyor_contents > 0.001f
+                && nd.conveyor_contents_type != d.conveyor_contents_type) continue;
             float room = throughput - nd.conveyor_contents;
             float transfer = std::min(amount, std::max(0.0f, room));
             if (transfer > 0.0f) {

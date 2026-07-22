@@ -1,314 +1,175 @@
-# La Vida Misma — GUI Interface Specification
+# La Vida Misma — Current GUI and Director Interface
 
-> Status: Analysis of current state + improvement plan.  
-> Last updated: 2025-06-01
+> **Status (2026-07-22):** Implemented interface reference. This replaces the
+> 2025 keyboard/font improvement proposal. Player view, explicit debug view and
+> indirect Director controls are all present in the current SDL2 executable.
 
----
+## 1. Launch Contract
 
-## 1. Current State Analysis
-
-### 1.1 Architecture
-
-| Component | Technology | Notes |
-|---|---|---|
-| Window | SDL2 | 1280x720 default, resizable |
-| Rendering | SDL2 software renderer | `SDL_RENDERER_ACCELERATED + VSYNC` |
-| Font system | Custom 5x7 bitmap glyphs | 95 chars (ASCII printable), 1px per pixel, no scaling |
-| Layout | Hardcoded pixel positions | No layout engine, no DPI scaling |
-| Sprite system | Procedural atlas (64x40 per sprite) | 31 sprites, generated at runtime |
-
-### 1.2 Rendering Layers (draw order)
-
-```
-Layer 0: Isometric tile grid (depth-sorted, back-to-front by Y)
-Layer 1: Agent sprites (per-tile, with stress-state variants)
-Layer 2: Agent count badges (tiny text on multi-agent tiles)
-Layer 3: Header bar (16px, top of window)
-Layer 4: Side panel (220px, right edge, toggleable)
-Layer 5: Help overlay (centered modal, 300x360)
+```text
+vida_gui [--seed N] [--record FILE] [--debug]
 ```
 
-### 1.3 Current Key Binding Map
+- `--seed N` overrides `simulation.seed` after startup configuration is loaded.
+- `--record FILE` writes accepted Director interventions as TOML when the GUI
+  exits. The schema-2 file includes seed, startup mode, an FNV-1a fingerprint of
+  the loaded configuration source, tick and global sequence.
+- `--debug` starts with internal agent inspection visible. The same view can be
+  toggled explicitly with `F12`.
+- Without an override, configuration comes from `config/default.toml`, loaded
+  once at process startup. The GUI does not hot-reload configuration.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  CAMERA NAVIGATION                                      │
-│  WASD (hold)    Smooth pan (6px/frame)                  │
-│  Arrow keys     Jump pan (40px single-press)            │
-│  Z / X          Zoom out / in (×1.15)                   │
-│  Mouse wheel    Zoom (×1.1)                             │
-│  RMB drag       Pan camera                              │
-│  C              Center on selected agent                │
-│  Shift+C        Center on map                           │
-│  F              Toggle follow-agent mode                │
-│                                                         │
-│  SIMULATION CONTROL                                     │
-│  Space          Toggle pause (if running) / step (paused)│
-│  Shift+Space    Force pause                             │
-│  Enter          Toggle run/pause                        │
-│  1-7            Speed presets (20/50/100/150/200/300/500ms)│
-│  +/-            Adjust speed ±25ms                      │
-│                                                         │
-│  AGENT SELECTION                                        │
-│  Tab            Next agent                              │
-│  I              Previous agent                          │
-│  LMB click      Select agent on clicked tile            │
-│                                                         │
-│  PANELS & OVERLAYS                                      │
-│  L              Toggle side panel                       │
-│  E              Toggle log mode (all vs. agent)         │
-│  G              Toggle grid coordinate overlay          │
-│  H              Toggle help overlay                     │
-│                                                         │
-│  CHORD PREFIX 'J'                                       │
-│  J 1-7          Speed presets (duplicate of direct 1-7) │
-│  J R / P / N    Run / Pause / step-N                   │
-│  J F            Toggle follow (duplicate of F)          │
-│  J L            Toggle panel (duplicate of L)           │
-│  J G            Toggle grid coords (duplicate of G)     │
-│                                                         │
-│  CHORD PREFIX 'K'                                       │
-│  K A / M / F    (UNIMPLEMENTED — empty switch cases)    │
-│                                                         │
-│  SYSTEM                                                 │
-│  Escape         Quit immediately (no confirmation)      │
-└─────────────────────────────────────────────────────────┘
-```
+Run from the repository root or the build directory so lookup can find
+`config/default.toml` or `../config/default.toml`.
 
-### 1.4 Identified Problems
+## 2. Runtime Architecture
 
-#### Graphical Issues
+| Component | Current implementation |
+|---|---|
+| Window | SDL2, resizable and HiDPI-aware, logical size `1280x720` |
+| Rendering | Accelerated SDL2 renderer with VSync and a procedural isometric sprite atlas |
+| Text | SDL2_ttf cache at 13/16/20 px; `VIDA_FONT_PATH`, Windows fonts, or known Unix/macOS monospace paths |
+| Layout | Isometric map, dynamic header, 280 px side panel, hover tooltip and modal overlays |
+| Threading | Simulation, input and rendering run on one thread |
+| Simulation cadence | Nine presets from 20 ms to 1200 ms per tick; render loop targets roughly 60 Hz |
 
-| # | Issue | Severity | Description |
-|---|---|---|---|
-| G1 | No font library | HIGH | 5x7 bitmap glyphs are illegible at low zoom, cannot scale, no international chars. All text rendering goes through `render_text_solid()` which draws individual pixels. |
-| G2 | No DPI awareness | MEDIUM | Hardcoded pixel sizes (16px header, 220px panel, 5x7 glyphs). On Retina/HiDPI displays everything is tiny. |
-| G3 | Side panel too narrow | HIGH | 220px must contain: agent ID, action, position, 7 need bars, stress state, inventory, 6 personality bars, 3 social bars, 4 opinion bars, 8 utility bars, and a chronicle log. All with 5px-tall bars and 8px line spacing. |
-| G4 | No visual hierarchy | MEDIUM | Same font size/style for section titles (NEEDS, PERSONALITY), labels (Hunger, Rest), and values (0.73). No bold, no size variation. |
-| G5 | Header bar cramped | LOW | 16px height with tick count, alive count, built machines, food, factory health, quota, shipped, broken, status, speed, chord indicator, follow indicator — all on one line. |
-| G6 | No animations | LOW | Panels pop in/out instantly. No smooth camera transitions (follow mode uses lerp but manual pan is jumpy). |
-| G7 | Agent count badge | LOW | Tiny number above agent sprite, easy to miss when multiple agents share a tile. |
-| G8 | No tooltip/hover info | MEDIUM | Hovering over tiles/agents shows nothing — must click to select and read side panel. |
+The GUI owns no behavioral decision path. It invokes the same `Simulation` tick
+pipeline as batch and sends institutional changes through typed Director commands.
 
-#### Keyboard Navigation Issues
+## 3. Information Boundaries
 
-| # | Issue | Severity | Description |
-|---|---|---|---|
-| K1 | Dual camera systems | MEDIUM | WASD (hold, smooth 6px) and Arrows (single-press, 40px jump) both move the camera. Two overlapping systems for the same action increases cognitive load. |
-| K2 | Chord duplication | LOW | J prefix duplicates many direct keys (J+1 = 1, J+F = F, J+L = L, J+G = G). The chord adds complexity without adding capability. |
-| K3 | K chord is empty | MEDIUM | K prefix switches on a/m/f but all cases are empty. Dead UI path. |
-| K4 | Tab/I asymmetry | LOW | Tab=next, I=prev. Non-standard. Most keyboard-driven interfaces use consistent pairs (n/p, j/k, Tab/Shift+Tab). |
-| K5 | No panel scrolling | HIGH | `log_scroll_` member exists but no key binds to scroll the side panel. When the chronicle log has many entries, there's no way to read older ones. |
-| K6 | Escape = instant quit | MEDIUM | No confirmation, no "go back" / close overlay first. One wrong press and the session is gone. |
-| K7 | Space overload | MEDIUM | Space means "toggle run↔pause" OR "step once if paused" depending on running_ state. Confusing. Enter also toggles run/pause. Two keys do the same thing with different edge-case behavior. |
-| K8 | No vi-keys for camera | LOW | HJKL would be natural for camera (H=left, J=down, K=up, L=right) but J/K are chord prefixes. Wasted ergonomic opportunity. |
-| K9 | No tile inspection | MEDIUM | Can't focus on a specific tile without clicking. No keyboard-driven tile cursor. |
-| K10 | No way to filter/sort agents | LOW | Tab cycles agents in entity-order. No way to filter by state (stressed, idle, building), or sort by need level. |
+### Player View
 
----
+Player view is the default. It exposes observable institutional consequences:
 
-## 2. Proposed Key Binding Redesign
+- current demand and quota fulfillment;
+- stored food and output, cumulative shipping and infrastructure wear;
+- population and map density;
+- anonymous occupancy zones and priority conveyor count;
+- accepted intervention count and factual Chronicle events;
+- map structures, occupants, flow state and tile hover details.
 
-### 2.1 Design Principles
+It does not expose exact needs, personality, relationships or action utility.
+Selecting or following an agent changes the camera only; it is not an order.
 
-1. **One hand for camera, one hand for actions** — left hand on keyboard home row, right hand optional for mouse.
-2. **Modal simplicity** — no chords for common operations. Chords reserved for infrequent power-user commands.
-3. **Consistent pairs** — next/prev uses the same modifier pattern (e.g., Tab/Shift+Tab).
-4. **Escape always goes back** — close overlay, cancel chord, THEN quit with confirmation.
-5. **Mnemonics** — key should hint at function (F=follow, H=help, P=pause).
+### Debug View
 
-### 2.2 Proposed Layout
+`F12` enters or leaves explicit debug view. This view adds the selected resident's
+exact needs, stress/trauma, inventory, personality, opinions, social state, utility
+scores and individual/colony journal. Keys `1-5` choose the Needs, Personality,
+Social, Utility and Journal tabs only while debug view is active.
 
-```
-LEFT HAND (camera + view)          RIGHT HAND (simulation + agents)
-─────────────────────────          ─────────────────────────────────
-                                   
-  Q   W   E   R   T   Y             U   I   O   P
-  |   |   |   |   |   |             |   |   |   └─ Pause/Play toggle
-  |   |   |   |   |   └─ (free)     |   |   └───── Zoom in
-  |   |   |   |   └───── Center map │   └───────── Zoom out  [MOVED from Z/X]
-  |   |   |   └───────── Follow toggle
-  |   |   └───────────── Toggle panel
-  |   └───────────────── (reserved)
-  └───────────────────── (reserved)
+Debug information is diagnostic and is not treated as knowledge available to the
+Director or fed back into simulation policy.
 
-  A   S   D   F   G                 H   J   K   L
-  |   |   |   |   |                 |   |   |   └─ (free)
-  |   |   |   |   └─ Grid coords    |   |   └───── (free)
-  |   |   |   └───── (free)         |   └───────── (free)  
-  |   |   └───────── (free)         └───────────── Help
-  |   └───────────── (free)
-  └───────────────── (free)
+## 4. Director Controls
 
-      Movement: WASD or Arrow keys (unified behavior: smooth when held)
-```
+Press `E` to enter Director edit mode. Entering pauses the simulation; leaving
+restores its previous run/pause state. `Escape` cancels edit mode before opening
+the quit confirmation.
 
-### 2.3 Proposed Binding Table
+| Key | Director operation |
+|---|---|
+| `1` | Set quota |
+| `2` | Set anonymous occupancy capacity (`0`, `1`, `2`, or `4`) |
+| `3` | Place Wall, Storage, FoodMachine, MaterialsMachine, OutputMachine or Conveyor |
+| `4` | Remove an eligible institutional structure |
+| `5` | Set normal/high maintenance priority on a conveyor |
+| `[` / `]` | Cycle the selected tool option |
+| `-` / `=` | Decrease/increase pending quota by `0.01` per tick |
+| `Enter` | Apply the pending quota |
+| `R` | Rotate the pending conveyor direction |
+| Left click | Apply zoning, placement, removal or maintenance to the hovered tile |
 
-```
-╔══════════════════════════════════════════════════════════════════╗
-║  CAMERA / VIEW                                                  ║
-║  W/↑ S/↓ A/← D/→   Pan camera (smooth, same speed held)       ║
-║  Mouse wheel        Zoom in/out                                 ║
-║  O / P              Zoom out / Zoom in                          ║
-║  R                  Center on map                                ║
-║  F                  Toggle follow selected agent                 ║
-║  T                  Toggle side panel                            ║
-║  G                  Toggle grid coordinates                      ║
-║  H                  Toggle help overlay                          ║
-║                                                                  ║
-║  SIMULATION                                                      ║
-║  Space              Play / Pause toggle                          ║
-║  > (Shift+.)        Speed up (next preset)                       ║
-║  < (Shift+,)        Speed down (previous preset)                 ║
-║  N                  Step forward (only while paused)             ║
-║                                                                  ║
-║  AGENT SELECTION                                                 ║
-║  Tab               Next agent                                    ║
-║  Shift+Tab         Previous agent                                ║
-║  LMB click          Select agent on tile                         ║
-║  [ / ]              First / Last agent (wrap)                    ║
-║                                                                  ║
-║  PANEL INTERACTION                                               ║
-║  PgUp / PgDn       Scroll side panel log (up / down)            ║
-║  E                  Toggle log mode (all / agent)                ║
-║                                                                  ║
-║  SYSTEM                                                          ║
-║  Escape            Close overlay → cancel chord → quit confirm  ║
-╚══════════════════════════════════════════════════════════════════╝
+Commands are validated before application. Rejected commands report an error and
+are not recorded. Accepted commands may address quota and physical coordinates,
+capacity, structure type, conveyor direction or maintenance priority. They cannot
+accept an agent identity, action, behavioral target, personality, relationship or
+utility state.
+
+Director event ticks are defined before `Simulation::advance()`. A recorded event
+at tick `t` is replayed immediately before advancing that tick.
+
+## 5. General Controls
+
+### Simulation And Camera
+
+| Key/input | Operation |
+|---|---|
+| `Space` | Play/pause |
+| `N` | Advance one tick while paused |
+| `<` / `>` | Slower/faster preset |
+| `WASD` or arrows | Smooth camera pan while held |
+| Right/middle drag | Pan camera |
+| Mouse wheel or `O` / `P` | Zoom out/in |
+| `C` | Center selected resident |
+| `Shift+C` or `Shift+R` | Center map |
+| `F` | Toggle follow for selected resident |
+
+### View And Inspection
+
+| Key/input | Operation |
+|---|---|
+| `E` | Toggle Director edit mode |
+| `F12` | Toggle explicit debug view |
+| `T` | Toggle side panel |
+| `G` | Toggle grid coordinates |
+| `H` | Toggle help overlay |
+| `Tab` / `Shift+Tab` | Select next/previous living resident by stable ID |
+| `[` / `]` | Select first/last living resident outside Director edit mode |
+| Left click | Select a resident on a tile outside Director edit mode |
+| `L` | Toggle individual/colony journal in debug view |
+| `PageUp` / `PageDown` | Scroll the debug panel or journal |
+| `Escape` | Close Director/help/confirmation first, otherwise request quit |
+| `Y` or `Enter` | Confirm quit |
+
+Hover tooltips show tile coordinates and type plus relevant physical state such as
+occupants, zone capacity, Storage contents, machine buffers, conveyor condition,
+contents and maintenance priority.
+
+## 6. Recording And Batch Replay
+
+Example recorded session:
+
+```bash
+./build/vida_gui --seed 42 --record interventions.toml
 ```
 
-### 2.4 Chord System (simplified)
+Replay the accepted interventions against the same seed:
 
-Remove J/K chords entirely. They duplicate direct keys and add cognitive overhead without benefit for a single-user simulation viewer. If power-user shortcuts are needed in the future, use a single modifier prefix (e.g., hold Shift for extended commands).
-
-### 2.5 Migration Notes
-
-| Old binding | New binding | Rationale |
-|---|---|---|
-| Arrow keys (40px jump) | Unified with WASD (smooth) | Remove dual system |
-| Z/X zoom | O/P zoom | Z/X freed for future undo/redo or other |
-| I = prev agent | Shift+Tab = prev agent | Consistent pair with Tab |
-| Enter = toggle run | Removed (Space only) | Space is standard play/pause |
-| J chord | Removed | All commands available directly |
-| K chord | Removed | Was unimplemented |
-| Escape = quit | Escape = back/quit with confirm | Prevent accidental exit |
-| 1-7 speed presets | </> cycle through presets | Fewer keys to remember |
-
----
-
-## 3. Graphical Improvements Plan
-
-### 3.1 Font System (Priority: HIGH)
-
-**Current**: 5x7 pixel glyphs drawn 1px at a time.  
-**Target**: SDL2_ttf with a bundled monospace font (e.g., IBM Plex Mono, 8px and 12px sizes).
-
-Implementation:
-```
-- Add SDL2_ttf dependency to CMakeLists.txt
-- Bundle a .ttf font (or use system monospace as fallback)
-- Create FontCache class: render to texture, cache glyphs
-- Replace all render_text_solid() calls with FontCache::draw()
-- Support 2 sizes: small (8-10px for values/labels), title (12-14px for section headers)
+```bash
+./build/vida_batch replay 3000 42 interventions.toml
 ```
 
-### 3.2 Side Panel Redesign (Priority: HIGH)
+Replay validates schema, seed, startup mode, configuration-source fingerprint,
+event ordering, tick range and command transitions. The deterministic test fixture
+compares replay with the original session across metrics, grid, population, quota,
+Chronicle and per-agent ledger. The CLI emits a separate schema-1 replay JSON with
+a state fingerprint for automation; schema-3 JSON remains the metrics contract.
 
-**Current**: 220px wide, everything crammed vertically.  
-**Target**: 280px, tabbed sections.
+## 7. Build And Platform Notes
 
-```
-┌─────────────────────────────┐
-│ Agent[7] · GATHER           │  ← Title + current action
-│ pos: 14,22 · FOLLOW         │  ← Position + status badges
-├─────────────────────────────┤
-│ [Needs] [Pers] [Soc] [Util] │  ← Tab bar (keyboard: 1-4)
-├─────────────────────────────┤
-│                             │
-│  (content area for active   │
-│   tab — needs/personality/  │
-│   social/utility)           │
-│                             │
-├─────────────────────────────┤
-│ CHRONICLE · E:toggle        │
-│ [event log lines]           │  ← Always visible at bottom
-│ [event log lines]           │
-├─────────────────────────────┤
-│ tick:142 alive:8 built:3    │  ← Footer (always visible)
-└─────────────────────────────┘
+The GUI requires SDL2 and SDL2_ttf. CMake resolves package targets, including
+vcpkg, before using its Unix/Homebrew fallback. A headless build with
+`VIDA_BUILD_GUI=OFF` does not require SDL.
+
+```bash
+cmake -S . -B build-gui -DVIDA_BUILD_GUI=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-gui --parallel --target vida_gui
 ```
 
-Panel tabs navigable with number keys 1-4 when panel is focused, or directly mapped.
+On Windows, pass the vcpkg toolchain and `x64-windows` triplet as documented in
+README. The MSVC build copies required DLLs next to the executable. Text rendering
+requires a discoverable monospace font; set `VIDA_FONT_PATH` when platform lookup
+does not find one.
 
-### 3.3 Header Bar Improvement (Priority: MEDIUM)
+## 8. Deliberate Constraints
 
-- Increase height to 24px
-- Group related stats with separators: `[Simulation: tick/alive] [Factory: built/food/health/quota] [View: speed/follow]`
-- Use color-coded values (already partially done)
-- Add FPS counter (debug, toggleable)
-
-### 3.4 Tile Hover Tooltip (Priority: MEDIUM)
-
-When mouse hovers over a tile (no click needed), show a small tooltip:
-- Tile type and state (e.g., "Machine (built, 87% condition)")
-- Agent count on tile
-- Agent names/IDs if present
-
-Implementation: track mouse position each frame, convert to grid coords, render a small floating rect near cursor.
-
-### 3.5 Visual Hierarchy (Priority: MEDIUM)
-
-Establish a type scale:
-```
-Title:     14px bold, COL_HIGHLIGHT
-Section:   12px bold, COL_WHITE  
-Label:     10px regular, COL_DIM
-Value:     10px bold, COL_TEXT
-Badges:     8px, colored backgrounds
-```
-
-### 3.6 Smooth Transitions (Priority: LOW)
-
-- Camera pan: already smooth via held keys, but jump commands (center_on_agent) should animate over ~10 frames instead of teleporting.
-- Panel toggle: slide in/out over 8-10 frames.
-- Zoom: smooth interpolation instead of discrete ×1.15 jumps.
-
-### 3.7 Minimap (Priority: LOW)
-
-Small minimap in a corner showing:
-- Factory overview (tile types as colored dots)
-- Agent positions as bright dots
-- Current viewport as a rectangle
-
-Navigable: click on minimap to jump camera.
-
----
-
-## 4. Implementation Priority
-
-| Phase | Items | Effort | Impact |
-|---|---|---|---|
-| **P0 — Keyboard cleanup** | Remove J/K chords, unify WASD/Arrow, fix Escape, add panel scroll (K1-K6, K8) | 2-3h | HIGH — fixes daily usability |
-| **P1 — Font system** | SDL2_ttf integration, FontCache, replace all render_text_solid calls (G1, G4) | 4-6h | HIGH — readability foundation |
-| **P2 — Panel redesign** | Wider panel, tabbed sections, always-visible log (G3, G4) | 6-8h | HIGH — information density |
-| **P3 — Header + tooltip** | Taller header, tile hover tooltip (G5, G8) | 3-4h | MEDIUM — quality of life |
-| **P4 — Polish** | Animations, minimap, DPI awareness (G2, G6, G7) | 8-12h | LOW — visual refinement |
-
----
-
-## 5. File Map (affected files)
-
-```
-src/graphical_view.h     — Key binding enum, panel state, tab tracking
-src/graphical_view.cpp   — handle_events(), render_*() methods
-src/sprite_atlas.h       — Unchanged (sprite system is separate from UI)
-CMakeLists.txt           — Add SDL2_ttf dependency
-```
-
-New files potentially needed:
-```
-src/font_cache.h         — SDL2_ttf wrapper with glyph caching
-src/font_cache.cpp       — Implementation
-assets/                  — Bundled .ttf font file
-```
+- There is no GUI command for assigning work, movement or a target to a resident.
+- Zoning expresses anonymous physical capacity, not profession, faction or culture.
+- Maintenance priority weights feasible resident utility; it does not select a
+  resident or force repair.
+- Player view intentionally withholds exact internal state. `F12` is an explicit
+  diagnostic boundary, not a normal gameplay overlay.
+- Recording is written on orderly GUI exit; it is not a continuous autosave or a
+  complete world-state save.

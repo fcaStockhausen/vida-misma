@@ -75,7 +75,7 @@ public:
         // inventory, not Storage) and routes workers to Materials forever.
         cp.construction_material += agent_c_mat;
 
-        // Count machines and sum storage
+        // Count machines and sum all physically buffered resources.
         for (int y = 0; y < grid.height(); y++)
             for (int x = 0; x < grid.width(); x++) {
                 auto t = grid.at(x, y);
@@ -88,11 +88,29 @@ public:
                         default: break;
                     }
                 }
-                if (t == TileType::Storage && d.built) {
+                if ((t == TileType::Storage || t == TileType::Machine) && d.built) {
                     cp.food += d.stored_food;
                     cp.raw_material += d.stored_raw_material;
                     cp.construction_material += d.stored_construction_material;
                     cp.output += d.stored_output;
+                }
+                if (t == TileType::Conveyor && d.built && d.conveyor_contents > 0.0f) {
+                    switch (d.conveyor_contents_type) {
+                        case ResourceType::RAW_MATERIAL:
+                            cp.raw_material += d.conveyor_contents;
+                            break;
+                        case ResourceType::FOOD:
+                            cp.food += d.conveyor_contents;
+                            break;
+                        case ResourceType::CONSTRUCTION_MATERIAL:
+                            cp.construction_material += d.conveyor_contents;
+                            break;
+                        case ResourceType::OUTPUT:
+                            cp.output += d.conveyor_contents;
+                            break;
+                        default:
+                            break;
+                    }
                 }
             }
 

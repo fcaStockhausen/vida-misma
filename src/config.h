@@ -17,7 +17,6 @@ struct Config {
     int   initial_population = 24;
     int   max_population     = 200;
     int   seed               = 0;
-    bool  use_wfc            = true;  // wave function collapse map generation
 
     // Need decay rates
     float hunger_decay         = 0.005f;
@@ -34,12 +33,36 @@ struct Config {
     float disease_severity      = 0.15f;   // disease increase per contraction
     float disease_recovery      = 0.002f;  // disease decay per tick (immune system)
     float disease_hunger_mult   = 2.0f;    // hunger decay multiplier at disease=1.0
-    float portion_size          = 1.0f;    // one "vianda" = this much food units
     float rest_recovery         = 0.015f;
     float social_satisfaction   = 0.05f;  // header fallback; config/default.toml overrides to 0.012
     float create_satisfaction   = 0.012f;
     float explore_satisfaction  = 0.008f;
     float work_purpose_gain     = 0.004f;
+    bool  allow_build           = true;     // experimental BUILD intervention
+
+    // Independent cultural mechanism toggles for paired counterfactuals.
+    bool  social_learning_enabled  = true;
+    bool  spatial_affinity_enabled = true;
+    bool  artifact_effects_enabled = true;
+    int   creative_work_ticks      = 20;
+
+    // Lifecycle and demographic flow.
+    bool  natural_mortality_enabled = true;
+    int   life_expectancy_ticks = 8000;
+    float lifespan_spread = 0.20f;
+    int   maturity_age_ticks = 1200;
+    int   founder_age_min_ticks = 800;
+    int   founder_age_max_ticks = 2000;
+    bool  arrivals_enabled = true;
+    float arrival_rate_per_1000_ticks = 0.8f;
+    int   arrival_age_min_ticks = 1200;
+    int   arrival_age_max_ticks = 3000;
+    bool  reproduction_enabled = true;
+    int   reproduction_check_interval_ticks = 50;
+    float reproduction_rate_per_1000_ticks = 1.0f;
+    int   reproduction_cooldown_ticks = 1500;
+    float personality_mutation_amplitude = 0.08f;
+    int   cohort_width_ticks = 1000;
 
     // Production
     float gather_rate       = 0.08f;   // resources gathered per tick
@@ -81,23 +104,11 @@ struct Config {
     float trauma_accumulation_rate = 0.001f;  // per tick while stress > 0.5
     float trauma_resilience_impact = 0.5f;     // effective_resilience *= (1 - trauma * this)
     float trauma_social_impact     = 0.3f;     // effective_gregariousness *= (1 - trauma * this)
-    float redemption_chance        = 0.08f;    // per sabotage tick, chance of epiphany
+    float post_sabotage_pause_chance = 0.08f;  // chance of a factual pause after sabotage
     float suicide_chance           = 0.03f;    // per sabotage tick, chance of self-destruction
     float sabotage_stress_threshold = 0.6f;    // stress must be >= this for SABOTAGE utility
 
-    // Personality ranges [min, max]
-    float compliance_range[2]     = {0.1f, 0.95f};
-    float laziness_range[2]       = {0.1f, 0.90f};
-    float artistry_range[2]       = {0.05f, 0.85f};
-    float gregariousness_range[2] = {0.1f, 0.90f};
-    float resilience_range[2]     = {0.2f, 0.90f};
-    float curiosity_range[2]      = {0.1f, 0.80f};
-
-    // Movement noise
-    float movement_noise = 0.05f;  // chance of random move instead of toward target
-
     // Conveyor
-    float conveyor_build_cost  = 1.5f;   // raw_material per segment
     float conveyor_decay_rate   = 0.0005f; // condition loss per tick
     float conveyor_throughput   = 0.5f;    // max resource movement per tick
     float maintain_rate       = 0.08f;  // condition restored per MAINTAIN tick
@@ -110,14 +121,26 @@ struct Config {
     float health_recovery_per_hit  = 0.002f; // factory_health rise when quota met
     float machine_break_threshold  = 0.25f;  // below this, machines may revert to unbuilt
     float machine_break_prob       = 0.0003f;// per-tick probability per built machine
-    float initial_food_per_agent   = 5.0f;   // 5 portions: enough to survive 1000 ticks while building
+    float initial_food_per_agent   = 5.0f;   // inherited personal reserve
     float selection_temperature    = 0.4f;   // Boltzmann selection: 0=greedy, higher=more random
     float quota_growth_rate         = 0.00002f; // quota increase per tick (factory demands more)
+    // External supply model A/B variant:
+    //   0 = legacy factory-health pressure, full resource regeneration
+    //   1 = shipped-output EMA scales resource regeneration
+    int   external_supply_variant        = 1;
+    // Institutional policy A/B variant:
+    //   0 = strategic legacy policy that reads noncompliance
+    //   1 = indifferent policy based only on anonymous physical state
+    int   external_policy_variant        = 1;
+    float external_supply_response_ticks = 600.0f;
+    float external_supply_floor          = 0.20f;
+    float external_supply_low            = 0.05f;
+    float external_supply_high           = 0.45f;
     int   restructure_interval     = 800;    // ticks between restructure checks
     float restructure_probability  = 0.2f;   // chance per check
     float noncompliance_stress     = 0.002f; // stress per tick per noncompliance level
 
-    // Adversarial factory policy — makes the factory an Evaluator (best-response)
+    // Legacy adversarial factory policy (external_policy_variant = 0 only).
     // rather than uniform-random noise. See doc/adversarial_utility_agents.md and
     // doc/plans/2026-05-30-factory-as-antagonist.md.
     // α=0 reproduces the old random baseline; α=1 is pure best-response; intermediate
@@ -125,7 +148,6 @@ struct Config {
     float adversary_intensity            = 0.7f;  // α: blend strategic vs uniform restructure targeting
     float restructure_temperature        = 0.3f;  // τ for softmax over restructure candidate scores
     float strategic_weight               = 1.0f;  // weight of strategic score vs uniform random in the blend
-    float faction_target_bonus           = 1.5f;  // bonus added to a restructure target near the largest faction
     // The Watcher — loyal high-influence agents ("foremen") report noncompliant
     // neighbors to the factory, reducing trust on the reporter→dissident edge.
     // Fulfills Task A3 of the factory-as-antagonist plan (never previously implemented).

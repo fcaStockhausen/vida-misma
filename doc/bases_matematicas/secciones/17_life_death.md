@@ -1,103 +1,238 @@
-# Life, Death, and Generations {#sec:birth-death}
+# Life, Death, Arrivals, and Generations {#sec:birth-death}
 
-The population of *La Vida Misma* is not static. Agents die when their physiological or psychological limits are exceeded, and new agents arrive to replace them. This section describes the mortality system, the initial population seeding mechanism, the intended-but-unimplemented replacement spawning pipeline, and the generational dynamics that full implementation is expected to produce.
+The executable has an active demographic system. It combines material and
+psychological mortality, age-dependent natural death, an exogenous arrival
+process, and endogenous reproduction. None of these mechanisms restores the
+population to `initial_population`: the number alive may rise to
+`max_population`, fall below the founding cohort, or remain at zero.
 
-## Death {#sec:death}
+## Identity and Lifecycle State
 
-Death is processed by `system_check_deaths`, which runs at the end of every tick after stress has been updated (Section @sec:stress-vida). When a death condition is triggered, the agent's `AgentComponent` is updated: the `alive` flag is set to `false` and the `cause_of_death` string is recorded. The entity is not removed from the ECS registry; dead agents are simply excluded from all subsequent system iterations by the `if (!alive) continue` guard that prefixes every system loop.
+Every person receives a monotonic historical ID and an ECS entity that is never
+reused. `LifecycleComponent` records (`src/components.h`):
 
-There are three mortality pathways, corresponding to the three need systems that can reach a critical ceiling.
+| Field | Meaning |
+|---|---|
+| `origin` | initial founder, exogenous arrival, or birth |
+| `parent_a`, `parent_b` | biological parent IDs for births; $-1$ otherwise |
+| `entry_tick`, `age_at_entry` | when the person entered and its age then |
+| `lifespan` | deterministic individual natural-death age |
+| `cohort` | temporal entry cohort |
+| `generation` | genealogical generation |
+| `last_reproduction_tick` | pair cooldown state |
+| `death_tick` | terminal tick, or $-1$ while alive |
+| `first_trusted_edge_tick` | first reciprocal familiarity/trust integration event |
+| `peak_influence` | largest observed continuous influence score |
 
-### Starvation
+Age is derived rather than incremented:
 
-An agent dies of starvation when its hunger need remains at maximum ($\text{hunger} \geq 1.0$) for $T_{\text{starve}} = 120$ consecutive ticks. The implementation tracks this via the `ticks_at_max_hunger` counter in `AgentComponent`, which increments each tick that hunger is at ceiling and resets to zero whenever hunger drops below $1.0$. This design means that intermittent feeding---even a single tick of eating that pushes hunger below the threshold---fully resets the counter. An agent on the verge of starvation must therefore find food within a contiguous 120-tick window, but can repeatedly approach the brink and recover so long as each critical episode is resolved before the counter expires.
+$$
+a_i(t)=a_i^{\mathrm{entry}}+
+       \max(0,t-t_i^{\mathrm{entry}}).
+$$
 
-At the default hunger decay rate of $0.005$ per tick (Table @tbl:decay-rates), an agent whose hunger reaches $1.0$ from zero has already gone approximately 200 ticks without eating. The additional 120-tick starvation window means that total time from full satisfaction to death is approximately 320 ticks. This generous margin exists to prevent premature death from transient pathfinding failures or resource shortages, giving the utility system adequate opportunity to redirect the agent toward food.
+The temporal cohort is
+$\lfloor t_i^{\mathrm{entry}}/w_c\rfloor$, with default width
+$w_c=1000$ ticks. Cohort and generation are deliberately different: unrelated
+arrivals in the same time window share a cohort, while a child's generation is
+one plus the larger parental generation.
 
-### Exhaustion
+`SocialFabric`, Chronicle, and per-agent metric ledgers expand as historical IDs
+grow. Dead entities remain in the registry for genealogy and post-hoc analysis,
+but all behavior systems skip `alive == false`.
 
-Exhaustion death follows an analogous mechanism: when $\text{rest} \geq 1.0$ for $T_{\text{exhaust}} = 160$ consecutive ticks, the agent is marked dead with `cause_of_death = "exhaustion"`. The `ticks_at_max_rest` counter tracks consecutive ticks at maximum fatigue and resets when the agent rests sufficiently to bring the need below $1.0$.
+## Founding Population
 
-Exhaustion is slightly more tolerant than starvation ($160$ vs.\ $120$ ticks at ceiling), reflecting the design judgment that while both are lethal, total physical collapse from sleep deprivation takes longer than death from complete caloric deprivation. At the default rest decay rate of $0.006$ per tick, an agent reaches maximum fatigue in approximately 167 ticks from full rest, yielding a total time to death of roughly 327 ticks.
+`spawn_initial_agents()` creates the configured 48 founders on independently
+sampled walkable Floor or OpenSpace positions (`config/default.toml`). A founder
+first samples one of six archetypes uniformly, then jitters its six continuous
+traits around that archetype's values and clamps them to $[0.05,0.95]$. The
+archetype is a display provenance for founders, not a profession assignment.
 
-### Stress Breakdown
+Founding needs are sampled independently from $[0,0.25]$; opinion priors come
+from the sampled archetype plus $\pm0.10$ noise; skills and XP start at zero;
+stress starts at zero; place memory and relationships are empty. Each founder
+receives the configured bootstrap reserve of 5 processed-food units. Founder age
+is a deterministic seed/ID hash in the configured interval $[800,2000]$ ticks.
 
-Unlike starvation and exhaustion, which require sustained need saturation, stress-induced breakdown is instantaneous: if an agent's accumulated stress exceeds the breakdown threshold, $\text{stress} \geq \theta_{\text{breakdown}} = 0.92$, the agent dies immediately. There is no grace period and no tick counter.
+For every origin, lifespan is another seed/ID hash:
 
-Stress accumulates from high unsatisfied needs (Section @sec:stress-vida) and is modulated by the agent's resilience personality facet. An agent with high resilience ($f_{\text{resilience}} \approx 0.9$) reduces stress input by approximately $63\%$, making breakdown extremely unlikely under normal conditions. An agent with low resilience ($f_{\text{resilience}} \approx 0.2$) receives only a $14\%$ reduction, making it vulnerable to cascading stress from even moderate need deficits. Breakdown thus functions as the personality-gated mortality pathway: it selectively removes agents who are both psychologically fragile and trapped in adverse conditions.
+$$
+L_i=\operatorname{round}\left(
+L_0[1+s(2u_i-1)]\right),
+$$
 
-### Summary of Mortality Conditions
+where default life expectancy $L_0=8000$, spread $s=0.20$, and
+$u_i\in[0,1)$. The implementation also enforces
+$L_i\geq a_{\mathrm{maturity}}+1$ (`src/sim_lifecycle.cpp`).
 
-| Cause | Trigger | Counter | Default threshold | Immediate? |
-|---|---|---|---|---|
-| Starvation | $\text{hunger} \geq 1.0$ | `ticks_at_max_hunger` | 120 ticks | No |
-| Exhaustion | $\text{rest} \geq 1.0$ | `ticks_at_max_rest` | 160 ticks | No |
-| Breakdown | $\text{stress} \geq 0.92$ | None | $\theta_{\text{breakdown}}$ | Yes |
+## Mortality and the Exclusive Death Pipeline {#sec:death}
 
-: Mortality pathways in the current implementation. {#tbl:mortality}
+Needs decay at the beginning of a tick, before decisions and actions. Stress and
+death checks occur much later, after production, policy, artifact, and community
+systems (@sec:tick-loop). `system_check_deaths()` evaluates the following
+causes in strict precedence order:
 
-### Consequences of Death
+| Cause | Active trigger under the default configuration |
+|---|---|
+| Starvation | hunger remains exactly at 1 for 180 consecutive death checks |
+| Exhaustion | rest remains exactly at 1 for 200 consecutive death checks |
+| Breakdown | stress is at least 0.92, followed by a probabilistic death draw |
+| Natural | derived age reaches the individual's lifespan |
 
-In the current implementation, death has limited systemic consequences. The `alive = false` flag causes the dead agent to be excluded from all subsequent system processing---it no longer decays needs, computes utility, moves, executes actions, or accumulates stress. The `cause_of_death` field is retained for post-hoc analysis.
+The hunger and rest counters reset to zero as soon as the associated need falls
+below 1. In the canonical continuous stress model, breakdown is **not immediate**:
+the per-tick probability is 0.005 at the threshold and smoothly decreases to
+0.003 as stress approaches 1. The lower probability at the most extreme stress
+is current executable behavior, intended to leave time for sabotage or recovery;
+it should not be documented as a deterministic ceiling death
+(`src/simulation.cpp`, `[stress]` and `[death]` in `config/default.toml`).
 
-Several designed consequences are not yet implemented:
+Natural mortality is checked only after the three preceding causes. Thus, if
+starvation and lifespan coincide, the recorded cause is starvation. Suicide can
+occur during SABOTAGE execution and enters the same pipeline through
+`kill_agent()` before the later death check. `DeathCause::COLLAPSE` remains a
+typed historical category, but canonical factory collapse does not directly kill
+agents.
 
-- **Grief events.** The intended design specifies that when an agent dies, all surviving agents connected to it in the social graph receive a grief-induced stress spike proportional to the relationship weight. This would create cascading stress propagation through the network. Neither grief events nor the social graph itself currently exist in the codebase.
+`kill_agent()` is the sole terminal operation. It sets the alive flag and typed
+cause, records `death_tick`, releases all tile claims held by that ID, emits one
+factual Chronicle event, increments suicide state when applicable, and queues one
+generic grief application. `record_metric_deaths()` subsequently records each ID
+once. Factory health and quota never call a direct population-kill operation.
 
-- **Skill gap.** If the deceased agent had developed high proficiency in a particular skill, that specialisation is lost. Other agents must rebuild it through the skill-utility feedback loop (Section @sec:inhabitants). This consequence is implicit---the simulation does not actively compensate for lost skills---but it becomes significant once the skill system is functional.
+## Exogenous Arrivals {#sec:new-arrivals}
 
-- **Social graph restructuring.** The removal of a high-degree vertex (an informal leader, as described in the designed model of Section @sec:social-fabric) could fragment the social graph and isolate peripheral agents. This mechanism awaits the implementation of the relationship graph.
+Arrivals are active by default and are not death replacements. At the end of each
+tick, `system_lifecycle()` evaluates a deterministic Bernoulli event with
 
-## Population Seeding {#sec:population-seeding}
+$$
+p_A = 1-\exp(-\lambda_A/1000),
+$$
 
-The initial population is created by `spawn_initial_agents()` during simulation construction. Agents are placed on randomly selected walkable tiles (Floor and OpenSpace) across the entire grid. Each agent receives the following initial state:
+where the default rate is $\lambda_A=0.8$ attempts per 1000 ticks. The draw is a
+hash of seed and tick; it does not inspect deaths, `initial_population`, factory
+state, relationships, or the shared behavioral RNG. A death can only affect
+whether capacity is available when an already scheduled attempt occurs.
 
-- **Personality.** Each facet is drawn independently from a uniform distribution over its configured range: $f_i \sim \mathcal{U}(\text{range}_i[0],\; \text{range}_i[1])$. The default ranges, specified in the `Config` struct, are deliberately asymmetric---no facet spans the full $[0, 1]$ interval. For example, compliance is drawn from $[0.1, 0.95]$ and resilience from $[0.2, 0.9]$. This ensures that extreme personality profiles are possible but rare, and that no agent is born entirely incapable of social functioning or factory work.
+If the number alive has reached `max_population = 200`, the attempt is counted as
+blocked and discarded. It is not queued. Otherwise, the new person appears at the
+first Entrance tile and receives:
 
-- **Needs.** All needs start at a low random value drawn from $\mathcal{U}(0, 0.15)$, approximating full satisfaction. This gives newly seeded agents a grace period before urgency-driven behavior becomes necessary.
+- six independent traits in $[0.1,0.9]$ and no assigned archetype;
+- four neutral opinions in $[0.45,0.55]$;
+- hunger, rest, social, expression, and purpose independently in $[0,0.2]$;
+- an empty inventory, no skills or XP, no relationships, no place memory, and
+  zero stress;
+- a deterministic entry age in the default interval $[1200,3000]$.
 
-- **Skills.** All four skills (factory work, domestic, artistic, social) are initialised to $0.0$. No skill-modifying systems are active in the current implementation.
+The arrival is recorded with origin `ARRIVAL`, no parents, a new monotonic ID,
+and the temporal cohort of its entry tick. Because lifecycle runs after all
+behavior and metrics for the tick, the newcomer first acts on the following tick.
 
-- **Stress.** Initial stress is $0.0$.
+## Endogenous Reproduction
 
-- **Relationships.** No relationship graph exists. Agents begin as socially anonymous entities.
+Reproduction is also active by default. It is evaluated every 50 ticks at a base
+rate of 1.0 per 1000 ticks. Candidate agents are sorted by historical ID. A pair
+is eligible only when both agents:
 
-- **Inventory.** Empty (all resources at $0.0$).
+- are at least 1200 ticks old;
+- have completed the 1500-tick reproduction cooldown;
+- are within Manhattan distance 3;
+- have positive reciprocal familiarity and trust evidence.
 
-## New Agent Arrivals {#sec:new-arrivals}
+The social factor is
 
-The replacement spawning mechanism---whereby new agents arrive at Entrance tiles to replace the dead---is a design target that is not yet implemented. The intended specification is as follows.
+$$
+S_{ab}=\sqrt{f_{ab}f_{ba}\max(0,t_{ab})\max(0,t_{ba})}.
+$$
 
-When an agent dies and the population falls below the configured `initial_population`, a new agent is spawned at a randomly selected Entrance tile on the grid boundary. The new agent receives:
+This is multiplied by continuous material, wellbeing, and age factors. Material
+state combines each parent's hunger/rest satisfaction with local food security:
+personal food plus 10% of food and raw-food stocks in Storage within Manhattan
+radius 12, normalized and clamped. Wellbeing combines both stress levels and
+moods. The age factor ramps up after maturity and falls between 75% and 95% of
+individual lifespan. For combined score $Q_{ab}$ and check interval $\Delta=50$,
+the birth probability is
 
-- **Random personality.** Each facet is drawn from the same uniform distributions used during initial seeding. The Director cannot control the personality of arriving agents. This is a deliberate design constraint: it prevents the Director from optimising population composition and forces adaptation to the personality distribution that chance provides.
+$$
+p_B=1-\exp\left(-\lambda_B\Delta Q_{ab}/1000\right).
+$$
 
-- **No skills and no relationships.** The new agent begins as a blank slate, with all skills at $0.0$ and no edges in the social graph.
+The draw is deterministic from seed, reproduction epoch, and parent IDs. Material
+abundance alone cannot bypass absent reciprocal social evidence. If a successful
+draw occurs at live capacity, the blocked birth is counted and discarded; there
+is no deferred pregnancy or replacement queue.
 
-- **Full needs.** All needs start at $0.0$ (complete satisfaction).
+## Inheritance and Genealogy
 
-The replacement mechanism ensures population continuity: the simulation never runs out of agents, but each replacement arrives without the accumulated human capital (skills, relationships, spatial familiarity) of the agent it replaced.
+A child appears at the first parent's current position with age zero, origin
+`BIRTH`, both parent IDs, and generation
+$1+\max(g_a,g_b)$. For each personality dimension $k$,
 
-## Integration of New Agents {#sec:integration}
+$$
+x_k^{\mathrm{child}}=
+\operatorname{clamp}_{[0.05,0.95]}
+\left(\frac{x_k^a+x_k^b}{2}+\epsilon_k\right),
+\qquad \epsilon_k\in[-0.08,0.08].
+$$
 
-New agents---whether from the initial cohort or future replacement spawns---must integrate into the factory's activity patterns through the existing systems:
+The child starts with each ordinary need at 0.05, opinions at 0.5, empty
+inventory, zero skills/XP, no archetype, no relationships, no community label,
+no place memory, and no inherited creative progress. Genealogy therefore records
+descent but does not copy a role, social group, learned relation, spatial culture,
+or practiced skill. Subsequent cultural similarity must be produced by later
+interaction, not by a hidden descendant label.
 
-1. **Proximity and action.** The new agent is placed on a tile and begins selecting actions via the utility system (Section @sec:inhabitants). Co-location with existing agents during shared activities (working adjacent machines, eating at the same storage) creates the conditions for social interaction.
+## Integration, Cohorts, and Metrics
 
-2. **Skill development.** The new agent gains experience in whatever actions it performs. The skill-utility feedback loop, once active, will gradually produce specialisation, but the process takes time. A factory that loses its only high-skill machine worker faces a production gap until a replacement reaches comparable proficiency.
+At each lifecycle pass, an agent is marked socially integrated for metrics when
+there exists another living agent such that both directed edges have familiarity
+and trust at least 0.1. `first_trusted_edge_tick - entry_tick` is reported as
+integration latency. Peak influence is updated continuously. These quantities are
+descriptive mobility proxies, not proof of assimilation or leadership.
 
-3. **Social embedding.** Once the relationship graph is implemented, new agents will form edges with existing agents through repeated co-location and collaboration. The rate of edge formation depends on the gregariousness facet and on spatial proximity. Agents placed at Entrance tiles on the grid boundary face a longer integration period because they must first traverse the map to reach high-density areas.
+Schema-3 metrics (`src/batch_main.cpp`) close historical population accounting:
 
-The integration process introduces a natural recovery latency following catastrophic mortality events. If many agents die simultaneously---from a sustained resource collapse that triggers starvation across the population, or from a stress cascade---the replacement cohort lacks the skills and social connections of the agents they replaced. The social graph may restructure around surviving agents, and new informal leaders may emerge with different personality profiles than their predecessors.
+$$
+N_{\mathrm{ever}}=N_{\mathrm{initial}}+N_{\mathrm{arrivals}}+N_{\mathrm{births}}
+=N_{\mathrm{alive}}+N_{\mathrm{deaths}}.
+$$
 
-## Generational Dynamics {#sec:generational-dynamics}
+They report attempts, admissions, capacity blocks, origins among survivors,
+deaths by cause, temporal cohorts with person-ticks and live censoring, and a
+per-person genealogy containing age, lifespan, parents, generation, integration,
+influence, and traits. The field named `integrated_descendants` counts all
+integrated non-founders, including both arrivals and births.
 
-Generational dynamics are a design target, not yet emergent in the running simulation. The intended mechanism operates as follows.
+## What Has and Has Not Been Demonstrated
 
-If the simulation runs for a sufficiently long period, the original agents die and are replaced entirely by new arrivals. At this generational boundary, no living agent retains firsthand experience of the factory's founding conditions. Social memory exists only in the structure of the relationship graph: edges between agents who joined in the same cohort may differ systematically from edges between agents of different cohorts, because same-cohort agents have had more time to interact and develop stronger ties.
+The Phase 7 verification ran deterministic 10,000-tick CALM simulations. Across
+the established seeds, no founder remained alive; multiple cohorts, arrivals,
+births, natural deaths, and generations were observed, and population peaks could
+rise above 48 before falling well below it. Separate fixtures demonstrate
+persistent extinction when arrivals and reproduction are disabled, and identical
+arrival schedules in worlds differing only by an unrelated death. These are
+evidence for demographic turnover and for the absence of target-population
+replacement (`tests/simulation_tests.cpp`).
 
-This creates the possibility of a generational shift. The spatial patterns, informal hierarchies, and behavioural norms established by the original cohort may persist---if replacement agents, through the same utility-driven spatial self-organisation process (Section @sec:spaces), converge on similar tile-use patterns---or may diverge, if the personality distribution of the new cohort differs sufficiently from the original. The simulation does not enforce continuity between generations; it may emerge or not, depending on stochastic personality draws and the environmental state inherited from the previous generation.
+They do **not** demonstrate preservation, loss, or divergence of a culture across
+generations. The executable records the genealogy and social/spatial observations
+needed for such a study, but no multiseed intergenerational norm metric or
+counterfactual has yet established institutional memory, generational conflict,
+or inherited subculture. Those outcomes remain hypotheses.
 
-The formal conditions for generational turnover depend on three parameters: the average agent lifespan (determined by mortality rates and resource availability), the replacement spawn rate, and the population size. When lifespan is short relative to simulation runtime and replacement is immediate, turnover is rapid and generational boundaries are diffuse. When lifespan is long and replacements are infrequent, generations are discrete and the transition between them is a punctuated event that may disrupt established social structures.
+## Implementation and Verification References
 
-These dynamics are not yet observable in the current implementation because the replacement spawning mechanism is not active. Once implemented, generational turnover is expected to produce the emergent phenomena catalogued in Section @sec:social-fabric: potential loss of institutional knowledge, reconfiguration of informal leadership, and possible divergence in spatial organisation patterns between successive cohorts.
+- Lifecycle implementation: `src/sim_lifecycle.cpp`; spawning and death pipeline:
+  `src/simulation.cpp`; state types: `src/components.h`.
+- Active defaults: `[simulation]`, `[lifecycle]`, `[death]`, and `[stress]` in
+  `config/default.toml`; declarations and parsing in `src/config.h` and
+  `src/config.cpp`.
+- Focused tests: `test_natural_mortality_uses_exclusive_death_pipeline()`,
+  `test_arrivals_are_exogenous_and_newcomers_start_empty()`,
+  `test_reproduction_inherits_traits_not_roles_or_relationships()`, and
+  `test_dynamic_identity_and_ten_thousand_tick_turnover()` in
+  `tests/simulation_tests.cpp`.
+- Schema and accounting checks: `tests/verify_metrics.cmake`; static prohibition
+  of inherited behavioral labels: `tests/verify_policy_audit.cmake`.

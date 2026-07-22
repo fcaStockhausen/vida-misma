@@ -1,27 +1,28 @@
 # La Vida Misma - Simulation Configuration
 #
 # DIRECTOR:
-#   calm   = no external pressure, observe cultural/social emergence
+#   calm   = no external pressure; suitable for cultural/social measurements
 #   normal = standard factory pressure with quota escalation
+#   production = diagnostic mode without cultural drives
+# Configuration is loaded once at process startup; restart after editing.
 #
 # PRODUCTION CHAIN:
-#   FoodSource tiles → GATHER → raw_food in inventory
-#   ScrapPile tiles  → GATHER → raw_material in inventory
-#   Unbuilt Machine  → BUILD (costs raw_material) → operational Machine
-#   Operational Machine + WORK → consumes raw_food → produces food
-#   Storage tiles hold communal resources (any adjacent agent can deposit/withdraw)
+#   One active FoodMachine, MaterialsMachine, and OutputMachine are inherited.
+#   FoodSource under FoodMachine auto-feeds raw_food → WORK → processed food.
+#   ScrapPile under MaterialsMachine auto-feeds raw_material → WORK → construction material.
+#   Construction material feeds OutputMachine → WORK → output → Exit-adjacent Storage.
+#   Only output shipped from Exit-adjacent Storage satisfies quota and external support.
+#   A degraded output belt reaches Exit; other tiers still require agent hauling.
 #
 # EATING:
-#   raw_food: 50% efficiency (survival mode)
+#   raw_food: 70% efficiency (survival mode)
 #   food:     100% efficiency (proper meals from machines)
-#   Sources: inventory or adjacent Storage tile
+#   Sources: inventory or Storage within the implemented radius-3 scan
 #
 # TENSION:
-#   Phase 1 (ticks 0-200):   Agents gather raw food to survive. Barely sustainable.
-#   Phase 2 (ticks 200-500): Some agents invest in gathering materials + building.
-#                             Risk: builders don't eat. Reward: machines.
-#   Phase 3 (ticks 500+):    Machines operational. Workers feed community.
-#                             Some agents freed for higher pursuits.
+#   Phase 1 (ticks 0-200):   Agents reactivate and maintain inherited machinery.
+#   Phase 2 (ticks 200-500): Hauling and storage bottlenecks expose the old layout.
+#   Phase 3 (ticks 500+):    Residents repair, reroute, and expand the chain.
 
 [grid]
 width = 60
@@ -31,7 +32,6 @@ height = 40
 initial_population = 48
 max_population = 200
 seed = 0
-use_wfc = true
 
 [needs]
 # Calibrated so survival doesn't dominate every cycle. Slower decay gives agents
@@ -51,6 +51,31 @@ social_satisfaction  = 0.012
 create_satisfaction  = 0.012
 explore_satisfaction = 0.008
 work_purpose_gain    = 0.004
+allow_build          = true   # false for inherited-factory counterfactuals
+
+[culture]
+social_learning_enabled  = true
+spatial_affinity_enabled = true
+artifact_effects_enabled = true
+creative_work_ticks      = 20   # effective CREATE ticks per artifact work unit
+
+[lifecycle]
+natural_mortality_enabled = true
+life_expectancy_ticks = 8000
+lifespan_spread = 0.20
+maturity_age_ticks = 1200
+founder_age_min_ticks = 800
+founder_age_max_ticks = 2000
+arrivals_enabled = true
+arrival_rate_per_1000_ticks = 0.8  # exogenous attempts; never death replacement
+arrival_age_min_ticks = 1200
+arrival_age_max_ticks = 3000
+reproduction_enabled = true
+reproduction_check_interval_ticks = 50
+reproduction_rate_per_1000_ticks = 1.0
+reproduction_cooldown_ticks = 1500
+personality_mutation_amplitude = 0.08
+cohort_width_ticks = 1000
 
 [production]
 gather_rate    = 0.25
@@ -59,12 +84,10 @@ machine_output = 0.40
 machine_mat_output = 0.30
 machine_out_output = 0.30
 machine_input  = 0.15
-portion_size   = 1.0      # one "vianda" = this much food units
 
 # Conveyor belts — condition decays, agents MAINTAIN them. Belts carry one
-# resource type at a time and deposit into Storage or (future) downstream machines.
+# resource type at a time and deposit into Storage or downstream machines.
 [conveyor]
-build_cost    = 1.5      # raw_material per segment
 decay_rate    = 0.0005   # condition loss per tick
 throughput    = 0.5      # max resource movement per tick
 maintain_rate = 0.08     # condition restored per MAINTAIN tick
@@ -76,15 +99,16 @@ rebuild_window   = 200   # ticks before social penalty for not rebuilding
 
 [urgency]
 alpha = 2.0
-# Survival urgency curve variant (Phase 2.1 A/B test):
-#   0 = legacy (x^4 + critical_spike + eat_weight + HARD OVERRIDE) [baseline]
+# Survival urgency curve variant. Variant 3 is canonical; variant 0 exists only
+# to reproduce the pre-redesign A/B baseline:
+#   0 = legacy A/B only (x^4 + critical_spike + eat_weight + HARD OVERRIDE)
 #   1 = steep pure exponential (no overrides)
 #   2 = extra-steep pure (no overrides)
-#   3 = sigmoid pure (no overrides) [DEFAULT — 2.5x survival vs legacy in A/B test]
+#   3 = canonical/default sigmoid (no overrides; 2.5x survival vs legacy in the original A/B)
 curve_variant = 3
-# Stress model (Phase 3 A/B test):
-#   0 = legacy FSM (stress.state drives behavior via discrete if-branches) [baseline]
-#   1 = continuous (smoothstep modifiers from stress.value; enum is display-only) [DEFAULT]
+# Stress model. Variant 1 is canonical; variant 0 is retained only for historical A/B:
+#   0 = legacy A/B only (stress.state drives behavior via discrete branches)
+#   1 = canonical/default continuous model (smoothstep from stress.value; state is a label)
 stress_model_variant = 1
 
 [death]
@@ -102,48 +126,47 @@ high_need                = 0.008
 decay                    = 0.005
 breakdown_threshold      = 0.92
 sabotage_threshold       = 0.6     # stress >= this opens SABOTAGE utility
-noncompliance_stress     = 0.002   # stress per tick per noncompliance level
+noncompliance_stress     = 0.002   # legacy policy_variant=0 only
 trauma_accumulation_rate = 0.001   # per tick while stress > 0.5
 trauma_resilience_impact = 0.5     # effective_resilience *= (1 - trauma * this)
 trauma_social_impact     = 0.3     # effective_gregariousness *= (1 - trauma * this)
-redemption_chance        = 0.08    # per sabotage tick, chance of epiphany
+post_sabotage_pause_chance = 0.08  # chance of a factual pause after sabotage
 suicide_chance           = 0.03    # per sabotage tick, chance of self-destruction
 selection_temperature    = 0.4     # Boltzmann action selection (0=greedy, higher=more random)
 
-[personality]
-compliance_range     = [0.1, 0.95]
-laziness_range       = [0.1, 0.90]
-artistry_range       = [0.05, 0.85]
-gregariousness_range = [0.1, 0.90]
-resilience_range     = [0.2, 0.90]
-curiosity_range      = [0.1, 0.80]
-
-[movement]
-noise = 0.05  # chance of random step instead of toward target
-
-# External pressure — the factory must ship output product through Exit tiles or the
-# supply chain contracts (factory_health drops; built machines may break).
+# External support model. supply_variant=1 is canonical and derives delayed
+# material replenishment only from output shipped through Exit. Variant 0 is a
+# historical factory-health A/B path, not an alternative canonical ontology.
 [external]
 quota_per_tick          = 0.10      # output units demanded out per tick
 quota_growth_rate       = 0.00002   # quota increase per tick (factory demands more)
-health_decay_per_miss   = 0.0015    # factory_health drop when quota not met
-health_recovery_per_hit = 0.0008    # factory_health rise when quota met
-machine_break_threshold = 0.40      # below this, built machines may revert to unbuilt
-machine_break_prob      = 0.0008    # per-tick probability per built machine when health low
-initial_food_per_agent  = 5.0       # bootstrap so agents survive while building infrastructure
+supply_variant          = 1         # 0=legacy A/B only, 1=canonical shipped-output support EMA
+policy_variant          = 1         # 0=legacy A/B only, 1=canonical indifferent physical policy
+supply_response_ticks   = 600.0     # EMA response time; short misses are buffered
+supply_floor            = 0.20      # minimum replenishment, preserving recoverability
+supply_low              = 0.05      # support at or below this maps to the floor
+supply_high             = 0.45      # support at or above this maps to full replenishment
+
+# Legacy supply_variant=0 only. These values do not drive canonical support,
+# utility, mortality, efficiency or machine failure.
+health_decay_per_miss   = 0.0015    # legacy factory_health drop when quota is missed
+health_recovery_per_hit = 0.0008    # legacy factory_health rise when quota is met
+machine_break_threshold = 0.40      # legacy threshold for machine reversion
+machine_break_prob      = 0.0008    # legacy per-tick failure probability below threshold
+initial_food_per_agent  = 5.0       # inherited personal reserve while the old chain ramps up
 restructure_interval    = 800       # ticks between restructure checks
 restructure_probability = 0.2       # chance per check
 
-# Adversarial factory — the factory evaluates candidate targets by strategic
-# value (throughput, output stock, Exit connectivity) and by proximity to the
-# largest faction, then softmax-selects. With adversary_intensity=0 this
-# collapses to the original uniform-random behavior (baseline).
+# Legacy policy_variant=0 only; none of these knobs affect canonical policy.
+# The legacy factory scores physical strategic value and softmax-selects a target.
+# Relationship-graph communities are unavailable even to this retained path.
 adversary_intensity      = 0.7     # α∈[0,1]: 0=random baseline, 1=best-response, mid=edge-of-chaos
 restructure_temperature  = 0.3     # τ for softmax over candidate scores (higher=more random)
 strategic_weight         = 1.0     # weight of strategic score vs uniform in the blend
-faction_target_bonus     = 1.5     # score bonus when target is near the largest faction
 
-# The Watcher — loyal high-influence, high-compliance agents ("foremen") report
+# Legacy policy_variant=0 only; canonical policy never classifies actions as
+# noncompliant and never receives reports. In the retained path, loyal
+# high-influence agents ("foremen") report
 # noncompliant neighbors, eroding the reporter's trust toward the dissident.
 # This is Task A3 of the factory-as-antagonist plan: the factory acts THROUGH
 # loyal agents, not just as ambient damage.
@@ -154,19 +177,21 @@ watcher_radius                 = 4     # Manhattan radius a reporter scans
 noncompliance_report_threshold = 0.5   # AgentComponent.noncompliance above which reported
 report_severity                = 0.02  # trust penalty on reporter→dissident edge per report
 
-# Eating zones — agents build designated eating spaces, must stay away from the
-# work zone, and pay a social cost if they eat next to a Machine.
+# Eating zones are buildable physical places but carry no canonical behavioral
+# privilege. Canonical policy imposes no institutional penalty for eating near
+# machinery; policy_variant=0 alone retains the historical witnessed sanction.
 [eating]
 inv_food_cap                = 2.0    # max food an agent can carry ("una vianda")
 min_dist_to_machine         = 5      # Manhattan distance an EatingZone must keep from machines
 build_cost                  = 2.0    # raw_material to construct an EatingZone (~17 BUILD ticks)
-eat_at_work_health_decay    = 0.002  # factory_health drop per eat-at-work tick
-eat_at_work_stress          = 0.010  # stress added to the transgressor per eat-at-work tick
-witness_radius              = 3      # another agent within Manhattan ≤ N "reports" the transgression
-                                     # — without a witness present, no penalty fires.
+eat_at_work_health_decay    = 0.002  # legacy policy: health drop per witnessed meal
+eat_at_work_stress          = 0.010  # legacy policy: stress added to the eater
+witness_radius              = 3      # radius for legacy sanction or local observation
 
-# Director — the meta-agent that modulates external pressure.
-# calm:   no quota, no deterioration, no restructure — pure observation
-# normal: standard factory pressure with quota escalation
+# Startup pressure mode, loaded once with the rest of this file. This is separate
+# from typed human Director interventions recorded by the GUI and replayed by batch.
+# calm:   no quota, deterioration, restructuring or anonymous space closure
+# normal: standard canonical pressure with quota escalation
+# production: diagnostic mode with cultural drives disabled by the batch command
 [director]
 mode = "normal"

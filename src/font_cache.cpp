@@ -1,11 +1,13 @@
 #include "font_cache.h"
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <vector>
 
-// Font paths to try (in order of preference)
-static const char* FONT_PATHS[] = {
+static const char* SYSTEM_FONT_PATHS[] = {
     "/System/Library/Fonts/Menlo.ttc",
     "/System/Library/Fonts/SFNSMono.ttf",
     "/System/Library/Fonts/Monaco.ttf",
@@ -45,28 +47,41 @@ bool FontCache::init(SDL_Renderer* renderer) {
         return false;
     }
 
-    // Try each font path
-    const char* found_path = nullptr;
-    for (int i = 0; FONT_PATHS[i]; i++) {
-        FILE* f = std::fopen(FONT_PATHS[i], "rb");
+    std::vector<std::string> font_paths;
+    if (const char* configured = std::getenv("VIDA_FONT_PATH")) {
+        font_paths.emplace_back(configured);
+    }
+#ifdef _WIN32
+    if (const char* windows_dir = std::getenv("WINDIR")) {
+        font_paths.emplace_back(std::string(windows_dir) + "\\Fonts\\consola.ttf");
+        font_paths.emplace_back(std::string(windows_dir) + "\\Fonts\\lucon.ttf");
+    }
+#endif
+    for (int i = 0; SYSTEM_FONT_PATHS[i]; i++) {
+        font_paths.emplace_back(SYSTEM_FONT_PATHS[i]);
+    }
+
+    std::string found_path;
+    for (const auto& path : font_paths) {
+        FILE* f = std::fopen(path.c_str(), "rb");
         if (f) {
             std::fclose(f);
-            found_path = FONT_PATHS[i];
+            found_path = path;
             break;
         }
     }
 
-    if (!found_path) {
+    if (found_path.empty()) {
         std::fprintf(stderr, "FontCache: no suitable monospace font found\n");
         return false;
     }
 
     // Load each size
     for (int i = 0; i < (int)FontSize::COUNT; i++) {
-        fonts_[i] = TTF_OpenFont(found_path, FONT_SIZES[i]);
+        fonts_[i] = TTF_OpenFont(found_path.c_str(), FONT_SIZES[i]);
         if (!fonts_[i]) {
             std::fprintf(stderr, "TTF_OpenFont(%s, %d) failed: %s\n",
-                         found_path, FONT_SIZES[i], TTF_GetError());
+                         found_path.c_str(), FONT_SIZES[i], TTF_GetError());
             return false;
         }
     }

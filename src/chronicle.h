@@ -7,7 +7,7 @@
 //
 // Design goals:
 //   - Every significant state change produces a chronicle event
-//   - Events are queryable for reconstruction (agent follow, faction arcs, etc.)
+//   - Events are queryable for reconstruction (agent and community arcs, etc.)
 //   - Events carry enough context to generate human-readable prose later
 //   - Cheap: O(1) push, O(k) query where k = result set
 
@@ -28,32 +28,39 @@
 enum class EventType : uint8_t {
     // Agent lifecycle
     SPAWNED,
+    ARRIVED,
+    BORN,
     DIED_STARVATION,
     DIED_EXHAUSTION,
     DIED_BREAKDOWN,
     DIED_COLLAPSE,
     DIED_SUICIDE,
+    DIED_NATURAL,
+    DISEASE_CONTRACTED,
 
     // Stress & trauma
     STRESS_STATE_CHANGE,
     TRAUMA_GAINED,
     BREAKDOWN,
-    REDEMPTION,
+    POST_SABOTAGE_PAUSE,
     SABOTAGE,
 
     // Social
     OPINION_SHIFT,
     TRUST_MILESTONE,
     FOOD_SHARED,
-    FACTION_FORMED,
-    FACTION_JOINED,
-    FACTION_LEFT,
+    COMMUNITY_DETECTED,
+    COMMUNITY_ENTERED,
+    COMMUNITY_LEFT,
     FOREMAN_REPORT,        // Watcher: loyal agent reports a noncompliant neighbor
 
     // Production
     BUILT_MACHINE,
     BUILT_CONVEYOR,
     BUILT_EATING_ZONE,
+    BUILT_STORAGE,
+    CONVEYOR_FRAME_PLACED,
+    EATING_ZONE_STARTED,
     WORK_COMPLETED,
     GATHERED,
     MAINTAINED,
@@ -65,16 +72,16 @@ enum class EventType : uint8_t {
     FACTORY_RESTRUCTURE,
     FACTORY_CONFISCATED,
     FACTORY_SEALED_SPACE,
-    FACTORY_TARGETED_FACTION,  // Adversarial restructure deliberately hit a faction's area
     ARTIFACT_CREATED,
     HIDDEN_SPACE_FOUND,
     QUOTA_MILESTONE,
+    DIRECTOR_INTERVENTION,
 
     // Narrative markers (synthesized from state transitions)
     FIRST_BUILD,
     FIRST_DEATH,
     FIRST_SABOTAGE,
-    FIRST_FACTION,
+    FIRST_COMMUNITY,
     FIRST_ARTIFACT,
     POPULATION_MILESTONE,
     CRISIS_PERIOD,
@@ -85,26 +92,33 @@ enum class EventType : uint8_t {
 inline const char* event_type_name(EventType t) {
     switch (t) {
         case EventType::SPAWNED:           return "SPAWNED";
+        case EventType::ARRIVED:           return "ARRIVED";
+        case EventType::BORN:              return "BORN";
         case EventType::DIED_STARVATION:   return "DIED_STARVATION";
         case EventType::DIED_EXHAUSTION:   return "DIED_EXHAUSTION";
         case EventType::DIED_BREAKDOWN:    return "DIED_BREAKDOWN";
         case EventType::DIED_COLLAPSE:     return "DIED_COLLAPSE";
         case EventType::DIED_SUICIDE:      return "DIED_SUICIDE";
+        case EventType::DIED_NATURAL:      return "DIED_NATURAL";
+        case EventType::DISEASE_CONTRACTED: return "DISEASE_CONTRACTED";
         case EventType::STRESS_STATE_CHANGE: return "STRESS_STATE";
         case EventType::TRAUMA_GAINED:     return "TRAUMA";
         case EventType::BREAKDOWN:         return "BREAKDOWN";
-        case EventType::REDEMPTION:        return "REDEMPTION";
+        case EventType::POST_SABOTAGE_PAUSE: return "POST_SABOTAGE_PAUSE";
         case EventType::SABOTAGE:          return "SABOTAGE";
         case EventType::OPINION_SHIFT:     return "OPINION_SHIFT";
         case EventType::TRUST_MILESTONE:   return "TRUST_MILESTONE";
         case EventType::FOOD_SHARED:       return "FOOD_SHARED";
-        case EventType::FACTION_FORMED:    return "FACTION_FORMED";
-        case EventType::FACTION_JOINED:    return "FACTION_JOINED";
-        case EventType::FACTION_LEFT:      return "FACTION_LEFT";
+        case EventType::COMMUNITY_DETECTED: return "COMMUNITY_DETECTED";
+        case EventType::COMMUNITY_ENTERED: return "COMMUNITY_ENTERED";
+        case EventType::COMMUNITY_LEFT:    return "COMMUNITY_LEFT";
         case EventType::FOREMAN_REPORT:    return "FOREMAN_REPORT";
         case EventType::BUILT_MACHINE:     return "BUILT_MACHINE";
         case EventType::BUILT_CONVEYOR:    return "BUILT_CONVEYOR";
         case EventType::BUILT_EATING_ZONE: return "BUILT_EATING_ZONE";
+        case EventType::BUILT_STORAGE:     return "BUILT_STORAGE";
+        case EventType::CONVEYOR_FRAME_PLACED: return "CONVEYOR_FRAME_PLACED";
+        case EventType::EATING_ZONE_STARTED: return "EATING_ZONE_STARTED";
         case EventType::WORK_COMPLETED:    return "WORK_COMPLETED";
         case EventType::GATHERED:          return "GATHERED";
         case EventType::MAINTAINED:        return "MAINTAINED";
@@ -114,14 +128,14 @@ inline const char* event_type_name(EventType t) {
         case EventType::FACTORY_RESTRUCTURE: return "RESTRUCTURE";
         case EventType::FACTORY_CONFISCATED: return "CONFISCATED";
         case EventType::FACTORY_SEALED_SPACE: return "SEALED_SPACE";
-        case EventType::FACTORY_TARGETED_FACTION: return "TARGETED_FACTION";
         case EventType::ARTIFACT_CREATED:  return "ARTIFACT";
         case EventType::HIDDEN_SPACE_FOUND: return "HIDDEN_SPACE";
         case EventType::QUOTA_MILESTONE:   return "QUOTA_MILESTONE";
+        case EventType::DIRECTOR_INTERVENTION: return "DIRECTOR_INTERVENTION";
         case EventType::FIRST_BUILD:       return "FIRST_BUILD";
         case EventType::FIRST_DEATH:       return "FIRST_DEATH";
         case EventType::FIRST_SABOTAGE:    return "FIRST_SABOTAGE";
-        case EventType::FIRST_FACTION:     return "FIRST_FACTION";
+        case EventType::FIRST_COMMUNITY:   return "FIRST_COMMUNITY";
         case EventType::FIRST_ARTIFACT:    return "FIRST_ARTIFACT";
         case EventType::POPULATION_MILESTONE: return "POP_MILESTONE";
         case EventType::CRISIS_PERIOD:     return "CRISIS";
@@ -132,8 +146,8 @@ inline const char* event_type_name(EventType t) {
 // Broad categories for filtering
 enum class EventCategory : uint8_t {
     LIFECYCLE,    // spawn, death
-    STRESS,       // stress states, trauma, breakdown, redemption
-    SOCIAL,       // opinions, trust, sharing, factions
+    STRESS,       // stress states, trauma, breakdown, post-sabotage pauses
+    SOCIAL,       // opinions, trust, sharing, observed communities
     PRODUCTION,   // build, work, gather, maintain, dismantle
     WORLD,        // factory events, machines, artifacts
     NARRATIVE,    // milestones, firsts, crises
@@ -143,32 +157,39 @@ enum class EventCategory : uint8_t {
 inline EventCategory category_of(EventType t) {
     switch (t) {
         case EventType::SPAWNED:
+        case EventType::ARRIVED:
+        case EventType::BORN:
         case EventType::DIED_STARVATION:
         case EventType::DIED_EXHAUSTION:
         case EventType::DIED_BREAKDOWN:
         case EventType::DIED_COLLAPSE:
         case EventType::DIED_SUICIDE:
+        case EventType::DIED_NATURAL:
+        case EventType::DISEASE_CONTRACTED:
             return EventCategory::LIFECYCLE;
 
         case EventType::STRESS_STATE_CHANGE:
         case EventType::TRAUMA_GAINED:
         case EventType::BREAKDOWN:
-        case EventType::REDEMPTION:
+        case EventType::POST_SABOTAGE_PAUSE:
         case EventType::SABOTAGE:
             return EventCategory::STRESS;
 
         case EventType::OPINION_SHIFT:
         case EventType::TRUST_MILESTONE:
         case EventType::FOOD_SHARED:
-        case EventType::FACTION_FORMED:
-        case EventType::FACTION_JOINED:
-        case EventType::FACTION_LEFT:
+        case EventType::COMMUNITY_DETECTED:
+        case EventType::COMMUNITY_ENTERED:
+        case EventType::COMMUNITY_LEFT:
         case EventType::FOREMAN_REPORT:
             return EventCategory::SOCIAL;
 
         case EventType::BUILT_MACHINE:
         case EventType::BUILT_CONVEYOR:
         case EventType::BUILT_EATING_ZONE:
+        case EventType::BUILT_STORAGE:
+        case EventType::CONVEYOR_FRAME_PLACED:
+        case EventType::EATING_ZONE_STARTED:
         case EventType::WORK_COMPLETED:
         case EventType::GATHERED:
         case EventType::MAINTAINED:
@@ -180,16 +201,16 @@ inline EventCategory category_of(EventType t) {
         case EventType::FACTORY_RESTRUCTURE:
         case EventType::FACTORY_CONFISCATED:
         case EventType::FACTORY_SEALED_SPACE:
-        case EventType::FACTORY_TARGETED_FACTION:
         case EventType::ARTIFACT_CREATED:
         case EventType::HIDDEN_SPACE_FOUND:
         case EventType::QUOTA_MILESTONE:
+        case EventType::DIRECTOR_INTERVENTION:
             return EventCategory::WORLD;
 
         case EventType::FIRST_BUILD:
         case EventType::FIRST_DEATH:
         case EventType::FIRST_SABOTAGE:
-        case EventType::FIRST_FACTION:
+        case EventType::FIRST_COMMUNITY:
         case EventType::FIRST_ARTIFACT:
         case EventType::POPULATION_MILESTONE:
         case EventType::CRISIS_PERIOD:
@@ -210,7 +231,7 @@ struct ChronicleEvent {
     int         agent_id;       // -1 = system/world event
     int         x = -1, y = -1; // location (-1 if not applicable)
     float       value = 0.0f;   // generic float (amount, level, etc.)
-    int         ref_id = -1;    // reference to another entity (other agent, faction, etc.)
+    int         ref_id = -1;    // reference to another entity or observed community
     std::string text;           // human-readable one-line description
 
     // Compact single-line representation for UI display
@@ -235,34 +256,42 @@ struct ChronicleEvent {
             case StressState::BROKEN:          mood = "... "; break;
             case StressState::DISSOCIATED:     mood = ""; break;
             case StressState::HOSTILE_EUPHORIA: mood = "* "; break;
-            case StressState::REDEEMED:        mood = "~ "; break;
             default: break;
         }
 
-        // Try CFG generation if available
-        if (s_textgen && s_rng) {
-            const char* sym = event_symbol(type);
-            if (sym) {
-                return std::string(mood) + s_textgen->generate(sym, *s_rng);
-            }
+        std::string generated = generated_text(type, tick, agent_id, ref_id, arch);
+        if (!generated.empty()) {
+            return std::string(mood) + generated;
         }
 
         return std::string(mood) + narrative_text(arch);
     }
 
-    // Static pointers for CFG text generation (set by Simulation)
-    static TextGen* s_textgen;
-    static std::mt19937* s_rng;
+    static std::mt19937 presentation_rng(EventType type, int tick,
+                                         int agent_id, int ref_id = -1) {
+        uint32_t seed = 2166136261u;
+        auto mix = [&](uint32_t value) {
+            seed ^= value;
+            seed *= 16777619u;
+        };
+        mix(static_cast<uint32_t>(type));
+        mix(static_cast<uint32_t>(tick));
+        mix(static_cast<uint32_t>(agent_id));
+        mix(static_cast<uint32_t>(ref_id));
+        return std::mt19937(seed);
+    }
 
     static const char* event_symbol(EventType t) {
         switch (t) {
             case EventType::SPAWNED:            return "spawned";
+            case EventType::ARRIVED:            return "spawned";
+            case EventType::BORN:               return "spawned";
             case EventType::DIED_STARVATION:    return "died_starvation";
             case EventType::DIED_EXHAUSTION:    return "died_exhaustion";
             case EventType::DIED_BREAKDOWN:     return "died_breakdown";
             case EventType::DIED_SUICIDE:       return "died_suicide";
             case EventType::BREAKDOWN:          return "breakdown";
-            case EventType::REDEMPTION:         return "redemption";
+            case EventType::POST_SABOTAGE_PAUSE: return "redemption";
             case EventType::SABOTAGE:           return "sabotage";
             case EventType::ARTIFACT_CREATED:   return "artifact";
             case EventType::BUILT_MACHINE:      return "built";
@@ -271,12 +300,39 @@ struct ChronicleEvent {
             case EventType::FOOD_SHARED:        return "shared";
             case EventType::GATHERED:           return "gathered";
             case EventType::HIDDEN_SPACE_FOUND: return "hidden_space";
-            case EventType::FACTION_FORMED:     return "faction_formed";
+            case EventType::COMMUNITY_DETECTED: return "community_detected";
             case EventType::TRUST_MILESTONE:    return "trust";
             case EventType::MACHINE_BROKE:      return "machine_broke";
             case EventType::CRISIS_PERIOD:      return "crisis";
             default: return nullptr;
         }
+    }
+
+    static void set_archetype_context(TextGen& generator, Archetype arch) {
+        static constexpr const char* feelings[] = {
+            "I showed up to run the floor",
+            "I came looking for people",
+            "I arrived with something to make",
+            "I just wanted to see tomorrow",
+            "I wanted to see every corner",
+            "I showed up with my hands ready",
+        };
+        int index = static_cast<int>(arch);
+        if (index >= 0 && index < 6) {
+            generator.set_context("arch_feeling", feelings[index]);
+        } else {
+            generator.set_context("arch_feeling", "I entered life without an assigned role");
+        }
+    }
+
+    static std::string generated_text(EventType type, int tick, int agent_id,
+                                      int ref_id, Archetype arch) {
+        const char* symbol = event_symbol(type);
+        if (!symbol) return {};
+        TextGen generator = make_narrative_grammar();
+        set_archetype_context(generator, arch);
+        auto rng = presentation_rng(type, tick, agent_id, ref_id);
+        return generator.generate(symbol, rng);
     }
 
 private:
@@ -292,6 +348,8 @@ private:
                     case Archetype::STEADY_WORKER: return "I showed up quietly. Hands ready.";
                     default: return "I woke up somewhere I didn't choose to be.";
                 }
+            case EventType::ARRIVED: return "I came in from outside. I know nobody here yet.";
+            case EventType::BORN: return "I was born here, without knowing what came before.";
             case EventType::DIED_STARVATION:
                 return arch == Archetype::SURVIVOR
                     ? "After everything... hunger took me. The one thing I outran."
@@ -303,6 +361,8 @@ private:
                     : "Something in me broke. I couldn't put it back.";
             case EventType::DIED_COLLAPSE:  return "The ceiling came down. That was it.";
             case EventType::DIED_SUICIDE:   return "This machine ate everything I was. I chose to stop letting it.";
+            case EventType::DIED_NATURAL:   return "I reached the end of my life.";
+            case EventType::DISEASE_CONTRACTED: return "The raw food made me sick.";
 
             case EventType::STRESS_STATE_CHANGE: return text.c_str();
             case EventType::TRAUMA_GAINED:  return "Something broke inside me that won't heal right.";
@@ -310,7 +370,7 @@ private:
                 return arch == Archetype::FOREMAN
                     ? "I can't hold the floor anymore. I can't hold anything."
                     : "I can't do this. None of it. Not anymore.";
-            case EventType::REDEMPTION:
+            case EventType::POST_SABOTAGE_PAUSE:
                 switch (arch) {
                     case Archetype::FOREMAN:  return "I built this place FOR them. Not for the machine. I see that now.";
                     case Archetype::ARTISAN:  return "I've been destroying when I should be creating. I see that now.";
@@ -332,9 +392,9 @@ private:
                 return arch == Archetype::SURVIVOR
                     ? "I shared what I had. I know what it's like to have nothing."
                     : "Here. Take this. We're in this together.";
-            case EventType::FACTION_FORMED: return "We found each other. We stand together now.";
-            case EventType::FACTION_JOINED: return "I'm not alone anymore.";
-            case EventType::FACTION_LEFT:   return "I have to walk my own path.";
+            case EventType::COMMUNITY_DETECTED: return "We found each other. We stand together now.";
+            case EventType::COMMUNITY_ENTERED: return "I'm not alone anymore.";
+            case EventType::COMMUNITY_LEFT: return "I have to walk my own path.";
 
             case EventType::BUILT_MACHINE:
                 return arch == Archetype::FOREMAN
@@ -342,6 +402,9 @@ private:
                     : "I built something that lasts. That's something.";
             case EventType::BUILT_CONVEYOR:    return "Another belt. Another vein in the machine's body.";
             case EventType::BUILT_EATING_ZONE: return "A place to eat together. Like a home, almost.";
+            case EventType::BUILT_STORAGE:     return "A place to keep what we have.";
+            case EventType::CONVEYOR_FRAME_PLACED: return "Another route marked into the floor.";
+            case EventType::EATING_ZONE_STARTED: return "Maybe this can become a place to eat.";
             case EventType::WORK_COMPLETED:
                 return arch == Archetype::STEADY_WORKER
                     ? "Shift done. I don't mind. It's what I know."
@@ -368,10 +431,10 @@ private:
                     : "There's a hidden place here. Somewhere the machine can't see.";
             case EventType::QUOTA_MILESTONE:     return "We made the quota. For once, the pressure lifts.";
 
-            case EventType::FIRST_BUILD:      return "The first thing anyone built here. It begins.";
+            case EventType::FIRST_BUILD:      return "Our first repair or addition to what was already here.";
             case EventType::FIRST_DEATH:       return "Someone died. The first, but not the last.";
             case EventType::FIRST_SABOTAGE:    return "Someone fought back. The factory felt it.";
-            case EventType::FIRST_FACTION:     return "A group formed. Strength in numbers.";
+            case EventType::FIRST_COMMUNITY:   return "A group formed. Strength in numbers.";
             case EventType::FIRST_ARTIFACT:    return "Someone made art in this place. Beauty amid machinery.";
             case EventType::POPULATION_MILESTONE: return "More of us now. Or fewer. The factory doesn't care.";
             case EventType::CRISIS_PERIOD:     return "Everything is falling apart.";
@@ -391,7 +454,7 @@ public:
 
     // Deduplication: suppress the same event type from the same agent
     // if it happened within the last `dedup_window` ticks. Prevents spam
-    // from repeated REDEMPTION, SABOTAGE, "ate at work" events.
+    // from repeated pause, sabotage, and "ate at work" events.
     static constexpr int DEDUP_WINDOW = 50;
 
     void record(ChronicleEvent ev) {
@@ -400,8 +463,10 @@ public:
 
         // Check for recent duplicate (same agent + type within window)
         // Only for spam-prone types
-        if (aid >= 0 && aid < MAX_AGENT_INDEX) {
-            bool is_spam_prone = (ev.type == EventType::REDEMPTION
+        if (aid >= 0) {
+            if (static_cast<size_t>(aid) >= agent_index_.size())
+                agent_index_.resize(static_cast<size_t>(aid) + 1);
+            bool is_spam_prone = (ev.type == EventType::POST_SABOTAGE_PAUSE
                                || ev.type == EventType::SABOTAGE
                                || ev.type == EventType::FOOD_SHARED
                                || ev.type == EventType::WORK_COMPLETED
@@ -421,7 +486,7 @@ public:
         events_.push_back(std::move(ev));
 
         // Agent index
-        if (aid >= 0 && aid < MAX_AGENT_INDEX) {
+        if (aid >= 0) {
             agent_index_[aid].push_back((int)events_.size() - 1);
         }
 
@@ -445,7 +510,7 @@ public:
     // All events for a specific agent (lifetime arc)
     std::vector<const ChronicleEvent*> by_agent(int agent_id) const {
         std::vector<const ChronicleEvent*> result;
-        if (agent_id < 0 || agent_id >= MAX_AGENT_INDEX) return result;
+        if (agent_id < 0 || static_cast<size_t>(agent_id) >= agent_index_.size()) return result;
         for (int idx : agent_index_[agent_id]) {
             result.push_back(&events_[idx]);
         }
@@ -478,7 +543,7 @@ public:
         int agent_id, int from, int to) const
     {
         std::vector<const ChronicleEvent*> result;
-        if (agent_id < 0 || agent_id >= MAX_AGENT_INDEX) return result;
+        if (agent_id < 0 || static_cast<size_t>(agent_id) >= agent_index_.size()) return result;
         for (int idx : agent_index_[agent_id]) {
             if (events_[idx].tick >= from && events_[idx].tick <= to)
                 result.push_back(&events_[idx]);
@@ -528,7 +593,7 @@ public:
     size_t size() const { return events_.size(); }
     bool empty() const { return events_.empty(); }
     int count_for_agent(int agent_id) const {
-        if (agent_id < 0 || agent_id >= MAX_AGENT_INDEX) return 0;
+        if (agent_id < 0 || static_cast<size_t>(agent_id) >= agent_index_.size()) return 0;
         return (int)agent_index_[agent_id].size();
     }
     int count_of_type(EventType type) const {
@@ -566,7 +631,8 @@ public:
                 || e.type == EventType::DIED_EXHAUSTION
                 || e.type == EventType::DIED_BREAKDOWN
                 || e.type == EventType::DIED_COLLAPSE
-                || e.type == EventType::DIED_SUICIDE;
+                || e.type == EventType::DIED_SUICIDE
+                || e.type == EventType::DIED_NATURAL;
         });
         for (auto* d : deaths) {
             out += "  " + d->summary() + "\n";
@@ -580,10 +646,10 @@ public:
         std::string out = "--- Narrative ---\n";
         auto milestones = filter([](const ChronicleEvent& e) {
             return category_of(e.type) == EventCategory::NARRATIVE
-                || e.type == EventType::FACTION_FORMED
+                || e.type == EventType::COMMUNITY_DETECTED
                 || e.type == EventType::FIRST_DEATH
                 || e.type == EventType::FIRST_SABOTAGE
-                || e.type == EventType::REDEMPTION
+                || e.type == EventType::POST_SABOTAGE_PAUSE
                 || e.type == EventType::DIED_SUICIDE;
         });
         for (auto* m : milestones) {
@@ -610,6 +676,7 @@ public:
                 case EventType::BUILT_MACHINE:
                 case EventType::BUILT_CONVEYOR:
                 case EventType::BUILT_EATING_ZONE:
+                case EventType::BUILT_STORAGE:
                     built++; break;
                 case EventType::GATHERED:      break;  // counted for completeness, not surfaced in arcs
                 case EventType::WORK_COMPLETED: worked++; break;
@@ -622,6 +689,7 @@ public:
                 case EventType::DIED_BREAKDOWN:  death = "breakdown"; break;
                 case EventType::DIED_COLLAPSE:   death = "collapse"; break;
                 case EventType::DIED_SUICIDE:    death = "suicide"; break;
+                case EventType::DIED_NATURAL:    death = "natural causes"; break;
                 default: break;
             }
         }
@@ -660,6 +728,7 @@ public:
             else if (death == "exhaustion") death_phrase = "collapsed from exhaustion";
             else if (death == "breakdown") death_phrase = "broke down completely";
             else if (death == "suicide") death_phrase = "chose to end it";
+            else if (death == "natural causes") death_phrase = "died of natural causes";
             else if (death == "collapse") death_phrase = "was crushed in a factory collapse";
             out += std::string(" ") + death_phrase + ".";
         }
@@ -672,32 +741,18 @@ public:
         int tick_start;
         int tick_end;
         int count;
+        int agent_id;
+        int ref_id;
         std::string text;
     };
 
     // Helper: generate text for a collapsed event group
     std::string group_text(const EventGroup& g, Archetype arch = Archetype::COUNT) const {
-        // Set archetype context if available
-        if (arch != Archetype::COUNT && ChronicleEvent::s_textgen) {
-            const char* feelings[] = {
-                "I showed up to run the floor",     // FOREMAN
-                "I came looking for people",        // NETWORKER
-                "I arrived with something to make", // ARTISAN
-                "I just wanted to see tomorrow",    // SURVIVOR
-                "I wanted to see every corner",     // EXPLORER
-                "I showed up with my hands ready",  // STEADY_WORKER
-            };
-            int ai = (int)arch;
-            if (ai < 6) ChronicleEvent::s_textgen->set_context("arch_feeling", feelings[ai]);
-        }
         // Single event: try CFG generation
         if (g.count <= 1) {
-            if (ChronicleEvent::s_textgen && ChronicleEvent::s_rng) {
-                const char* sym = ChronicleEvent::event_symbol(g.type);
-                if (sym) {
-                    return ChronicleEvent::s_textgen->generate(sym, *ChronicleEvent::s_rng);
-                }
-            }
+            std::string generated = ChronicleEvent::generated_text(
+                g.type, g.tick_start, g.agent_id, g.ref_id, arch);
+            if (!generated.empty()) return generated;
             return g.text;
         }
         // Collapsed groups: narrative summaries
@@ -759,7 +814,8 @@ public:
                 groups.back().count++;
                 groups.back().tick_end = ev->tick;
             } else {
-                groups.push_back({ev->type, ev->tick, ev->tick, 1, display_text});
+                groups.push_back({ev->type, ev->tick, ev->tick, 1,
+                                  ev->agent_id, ev->ref_id, display_text});
             }
         }
 
@@ -785,16 +841,16 @@ public:
         return out;
     }
 
-    // Ex-post analysis: faction arcs
-    std::string faction_arcs() const {
-        std::string out = "--- Faction Arcs ---\n";
-        auto faction_events = filter([](const ChronicleEvent& e) {
-            return e.type == EventType::FACTION_FORMED
-                || e.type == EventType::FACTION_JOINED
-                || e.type == EventType::FACTION_LEFT;
+    // Ex-post analysis of observational relationship-graph communities.
+    std::string community_arcs() const {
+        std::string out = "--- Community Observations ---\n";
+        auto community_events = filter([](const ChronicleEvent& e) {
+            return e.type == EventType::COMMUNITY_DETECTED
+                || e.type == EventType::COMMUNITY_ENTERED
+                || e.type == EventType::COMMUNITY_LEFT;
         });
-        if (faction_events.empty()) { out += "  (no factions formed)\n"; return out; }
-        for (auto* ev : faction_events) {
+        if (community_events.empty()) { out += "  (no graph communities detected)\n"; return out; }
+        for (auto* ev : community_events) {
             out += "  " + ev->summary() + "\n";
         }
         return out;
@@ -805,6 +861,7 @@ public:
         std::string out = "--- Crisis Timeline ---\n";
         auto crises = filter([](const ChronicleEvent& e) {
             return e.type == EventType::BREAKDOWN
+                || e.type == EventType::DIED_BREAKDOWN
                 || e.type == EventType::SABOTAGE
                 || e.type == EventType::DIED_SUICIDE
                 || e.type == EventType::CRISIS_PERIOD;
@@ -864,8 +921,7 @@ public:
     }
 
 private:
-    static constexpr int MAX_AGENT_INDEX = 64;
     std::deque<ChronicleEvent> events_;
-    std::vector<int> agent_index_[MAX_AGENT_INDEX] = {};
+    std::vector<std::vector<int>> agent_index_;
     std::vector<int> type_index_[(int)EventType::COUNT] = {};
 };

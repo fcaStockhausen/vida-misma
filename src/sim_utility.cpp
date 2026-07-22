@@ -91,102 +91,6 @@ float survival_urgency_variant(int variant, float need) {
 }  // namespace
 
 void Simulation::system_compute_utility() {
-    // ================================================================
-    // GRID-LEVEL SUPPLY-CHAIN SIGNALS (computed once, used by all agents)
-    // Replaces 5 redundant per-agent loops with a single scan.
-    // ================================================================
-    int total_machines = 0, built_machines = 0;
-    int built_food_machines = 0;
-    int unbuilt_resources = 0;  // FoodSource + ScrapPile not yet built on
-    float total_stor_food = 0.0f;
-    float total_stor_raw_food = 0.0f;
-    for (int gy = 0; gy < grid_.height(); gy++)
-        for (int gx = 0; gx < grid_.width(); gx++) {
-            if (grid_.at(gx, gy) == TileType::Machine) {
-                total_machines++;
-                if (grid_.data_at(gx, gy).built) {
-                    built_machines++;
-                    if (grid_.data_at(gx, gy).machine_type == MachineType::Food)
-                        built_food_machines++;
-                }
-            } else if (grid_.at(gx, gy) == TileType::FoodSource) {
-                unbuilt_resources++;  // potential FoodMachine site
-            } else if (grid_.at(gx, gy) == TileType::ScrapPile) {
-                unbuilt_resources++;  // potential OutputMachine site
-            } else if (grid_.at(gx, gy) == TileType::Storage) {
-                total_stor_food += grid_.data_at(gx, gy).stored_food;
-                total_stor_raw_food += grid_.data_at(gx, gy).stored_raw_food;
-            }
-        }
-
-    // infra_gap: does the colony have ENOUGH infrastructure?
-    // Based on actual NEED (machines per agent ratio), not total possible tiles.
-    // When the colony has enough food/materials/output machines, infra_gap → 0
-    // and agents are free to socialize, create, explore.
-    int alive_n = alive_count();
-    int food_machine_need = std::max(0, (alive_n / 12) - built_food_machines);
-    int built_mat = 0, built_out = 0;
-    for (int gy = 0; gy < grid_.height(); gy++)
-        for (int gx = 0; gx < grid_.width(); gx++)
-            if (grid_.at(gx, gy) == TileType::Machine && grid_.data_at(gx, gy).built) {
-                if (grid_.data_at(gx, gy).machine_type == MachineType::Materials) built_mat++;
-                else if (grid_.data_at(gx, gy).machine_type == MachineType::Output) built_out++;
-            }
-    int mat_machine_need = std::max(0, (alive_n / 12) - built_mat);
-    int out_machine_need = std::max(0, 2 - built_out);
-    int total_machine_need = food_machine_need + mat_machine_need + out_machine_need;
-    int total_infra = total_machines + unbuilt_resources;
-    float built_ratio = (total_infra > 0)
-        ? (float)built_machines / (float)total_infra : 0.0f;
-    float infra_gap = (total_machine_need > 0)
-        ? std::min(1.0f, (float)total_machine_need / 4.0f)
-        : 0.0f;  // all needs met = zero infra drive
-
-    // Food supply ratio: how much food we have vs how much we need.
-    // Includes BOTH storage food AND agent inventory food, since agents
-    // carry bootstrap food and that's real supply even if not in storages.
-    float total_agent_food = 0.0f;
-    {
-        auto food_view = registry_.view<InventoryComponent, const AgentComponent>();
-        for (auto fe : food_view) {
-            if (registry_.get<AgentComponent>(fe).alive)
-                total_agent_food += registry_.get<InventoryComponent>(fe).food;
-        }
-    }
-    float total_food_supply = total_stor_food + total_agent_food;
-    float food_consumption_rate = (float)alive_count() * config_.hunger_decay;
-    // Ratio: total food / (consumption rate * 100 ticks buffer)
-    // 2.0 = abundant, 1.0 = ~100 ticks of buffer, <1.0 = deficit
-    float food_supply_ratio = (food_consumption_rate > 0.001f)
-        ? std::min(2.0f, total_food_supply / (food_consumption_rate * 100.0f))
-        : 2.0f;
-
-    // Community pressure: storage buffer × external supply-chain health.
-    // Empty storage → 1, abundant → 0. Amplified when factory_health is low.
-    float community_food   = total_stor_food;  // reuse the pre-computed value
-    float storage_pressure = std::max(0.0f, 1.0f - community_food / 30.0f);
-    float external_amp     = 1.0f + (1.0f - factory_health_);  // 1 at full, 2 at zero health
-    float community_pressure = std::min(1.5f, storage_pressure * external_amp);
-
-    // Raw material supply: Storage + agent inventory + machine buffers.
-    // Used by the raw_gap gate to suppress GATHER when the colony already has
-    // plenty of raw material. Mirrors the infra_gap pattern that killed BUILD spam.
-    // colony_prod_ already sums Storage raw_material; add agent-carried too.
-    // Use a generous threshold — raw material is needed for both construction
-    // AND machine operation, so we only suppress when truly excessive.
-    float raw_banked = colony_prod_.raw_material;
-    {
-        auto rm_view = registry_.view<InventoryComponent, const AgentComponent>();
-        for (auto re : rm_view) {
-            if (registry_.get<AgentComponent>(re).alive)
-                raw_banked += registry_.get<InventoryComponent>(re).raw_material;
-        }
-    }
-    // Allow up to 5x the per-agent baseline before suppressing hard.
-    // At 0 raw: gap=1 (full gather). At 5x need: gap=0.2. At 10x need: gap=0.1.
-    float raw_need = std::max(2.0f, (float)alive_n * 0.3f);
-    float raw_gap = std::min(1.0f, raw_need / std::max(0.5f, raw_banked * 0.2f));
-
     auto view = registry_.view<NeedsComponent, PersonalityComponent,
                                InventoryComponent, ActionComponent,
                                const AgentComponent, StressComponent>();
@@ -198,9 +102,133 @@ void Simulation::system_compute_utility() {
         auto& inv        = registry_.get<InventoryComponent>(e);
         auto& action     = registry_.get<ActionComponent>(e);
         auto& soc        = registry_.get<SocialComponent>(e);
+        auto& skills     = registry_.get<SkillsComponent>(e);
         auto  pos        = registry_.get<PositionComponent>(e);
         auto  ag         = registry_.get<AgentComponent>(e);
         auto& stress     = registry_.get<StressComponent>(e);
+        bool no_culture = (config_.director_mode == DirectorMode::PRODUCTION_TEST);
+
+        // Agents observe nearby physical state; they do not read colony-wide
+        // inventories or the ProductionChain assessment.
+        constexpr int observation_radius = Simulation::OBSERVATION_RADIUS;
+        int total_machines = 0, built_machines = 0;
+        int built_food_machines = 0, built_mat = 0, built_out = 0;
+        int unbuilt_resources = 0;
+        bool visible_food_source = false, visible_scrap = false;
+        bool free_foodsource = false, free_scrap = false;
+        bool unbuilt_ez_exists = false;
+        bool built_conveyor = false, unbuilt_conveyor = false;
+        bool any_storage_food = false, dismantle_candidate = false;
+        std::pair<int, int> near_unbuilt_machine = {-1, -1};
+        std::pair<int, int> near_unbuilt_ez = {-1, -1};
+        std::pair<int, int> near_degraded_conveyor = {-1, -1};
+        int unbuilt_machine_dist = 999999, unbuilt_ez_dist = 999999;
+        int degraded_conveyor_dist = 999999;
+        int degraded_conveyor_priority = -1;
+        float total_stor_food = 0.0f;
+        float total_stor_raw_food = 0.0f;
+        float local_output = 0.0f;
+        float raw_banked = inv.raw_material;
+        for (int gy = std::max(0, pos.y - observation_radius);
+             gy <= std::min(grid_.height() - 1, pos.y + observation_radius); gy++)
+            for (int gx = std::max(0, pos.x - observation_radius);
+                 gx <= std::min(grid_.width() - 1, pos.x + observation_radius); gx++) {
+                if (std::abs(gx - pos.x) + std::abs(gy - pos.y) > observation_radius) continue;
+                TileType tile = grid_.at(gx, gy);
+                const auto& data = grid_.data_at(gx, gy);
+                if (tile == TileType::Machine) {
+                    total_machines++;
+                    if (data.built) {
+                        built_machines++;
+                        if (data.machine_type == MachineType::Food) built_food_machines++;
+                        else if (data.machine_type == MachineType::Materials) built_mat++;
+                        else if (data.machine_type == MachineType::Output) built_out++;
+                        raw_banked += data.stored_raw_material;
+                        local_output += data.stored_output;
+                    } else {
+                        int distance = std::abs(gx - pos.x) + std::abs(gy - pos.y);
+                        if (distance < unbuilt_machine_dist) {
+                            unbuilt_machine_dist = distance;
+                            near_unbuilt_machine = {gx, gy};
+                        }
+                    }
+                } else if (tile == TileType::FoodSource || tile == TileType::ScrapPile) {
+                    unbuilt_resources++;
+                    if (tile == TileType::FoodSource) {
+                        visible_food_source |= data.resource_amount > 0.01f;
+                        free_foodsource |= data.claimed_by < 0 || data.claimed_by == ag.id;
+                    } else {
+                        visible_scrap |= data.resource_amount > 0.01f;
+                        free_scrap |= data.claimed_by < 0 || data.claimed_by == ag.id;
+                    }
+                } else if (tile == TileType::Storage) {
+                    total_stor_food += data.stored_food;
+                    total_stor_raw_food += data.stored_raw_food;
+                    raw_banked += data.stored_raw_material;
+                    local_output += data.stored_output;
+                    any_storage_food |= data.stored_food > 0.01f;
+                } else if (tile == TileType::Conveyor) {
+                    built_conveyor |= data.built;
+                    if (data.built && data.conveyor_contents_type == ResourceType::RAW_MATERIAL)
+                        raw_banked += data.conveyor_contents;
+                    if (data.built && data.conveyor_contents_type == ResourceType::OUTPUT)
+                        local_output += data.conveyor_contents;
+                    if (!data.built) unbuilt_conveyor = true;
+                    if (data.built && data.conveyor_condition < 0.9f) {
+                        int distance = std::abs(gx - pos.x) + std::abs(gy - pos.y);
+                        int priority = static_cast<int>(data.maintenance_priority);
+                        if (priority > degraded_conveyor_priority
+                            || (priority == degraded_conveyor_priority
+                                && distance < degraded_conveyor_dist)) {
+                            degraded_conveyor_priority = priority;
+                            degraded_conveyor_dist = distance;
+                            near_degraded_conveyor = {gx, gy};
+                        }
+                    }
+                }
+                if (tile == TileType::EatingZone) {
+                    if (!data.built) {
+                        unbuilt_ez_exists = true;
+                        int distance = std::abs(gx - pos.x) + std::abs(gy - pos.y);
+                        if (distance < unbuilt_ez_dist) {
+                            unbuilt_ez_dist = distance;
+                            near_unbuilt_ez = {gx, gy};
+                        }
+                    }
+                }
+                dismantle_candidate |= grid_.is_dismantle_candidate(gx, gy);
+            }
+
+        int visible_agents = 1;
+        auto visible_view = registry_.view<PositionComponent, const AgentComponent>();
+        for (auto other : visible_view) {
+            if (other == e || !registry_.get<AgentComponent>(other).alive) continue;
+            const auto& other_pos = registry_.get<PositionComponent>(other);
+            if (std::abs(other_pos.x - pos.x) + std::abs(other_pos.y - pos.y)
+                <= observation_radius) visible_agents++;
+        }
+
+        int local_machine_baseline = std::max(1, visible_agents / 12);
+        int food_machine_need = std::max(0, local_machine_baseline - built_food_machines);
+        int mat_machine_need = std::max(0, local_machine_baseline - built_mat);
+        int out_machine_need = std::max(0, 1 - built_out);
+        int total_machine_need = food_machine_need + mat_machine_need + out_machine_need;
+        int total_infra = total_machines + unbuilt_resources;
+        float built_ratio = total_infra > 0
+            ? static_cast<float>(built_machines) / static_cast<float>(total_infra) : 0.0f;
+        float infra_gap = total_machine_need > 0
+            ? std::min(1.0f, static_cast<float>(total_machine_need) / 3.0f) : 0.0f;
+
+        float total_food_supply = total_stor_food + inv.food;
+        float food_consumption_rate = visible_agents * config_.hunger_decay;
+        float food_supply_ratio = food_consumption_rate > 0.001f
+            ? std::min(2.0f, total_food_supply / (food_consumption_rate * 100.0f)) : 2.0f;
+        float storage_pressure = std::max(0.0f, 1.0f - total_stor_food / 30.0f);
+        float policy_health = config_.external_supply_variant == 0 ? factory_health_ : 1.0f;
+        float external_amp = 1.0f + (1.0f - policy_health);
+        float community_pressure = std::min(1.5f, storage_pressure * external_amp);
+        float raw_need = std::max(0.5f, visible_agents * 0.3f);
+        float raw_gap = std::min(1.0f, raw_need / std::max(0.5f, raw_banked * 0.2f));
 
         // ================================================================
         // STICKINESS (The Sims / RimWorld pattern):
@@ -213,25 +241,49 @@ void Simulation::system_compute_utility() {
             bool survival_override = (needs.hunger > 0.8f && action.sticky_action != ActionType::EAT);
             bool chain_delivery = (action.sticky_action == ActionType::WORK &&
                                    inv.construction_material > 1.5f);
-            // Production override: break stickiness if colony needs different
-            // machine type AND agent has been working long enough to produce.
-            bool production_override = false;
-            if (action.sticky_action == ActionType::WORK && action.sticky_ticks < 10) {
-                const auto& cp = colony_production();
-                if (cp.primary_need == ColonyProduction::Need::OPERATE_OUTPUT
-                    || cp.primary_need == ColonyProduction::Need::OPERATE_MATERIALS) {
-                    production_override = true;
-                }
+            bool still_feasible = false;
+            if (action.sticky_action == ActionType::WORK
+                && action.target_x >= 0 && action.target_y >= 0) {
+                still_feasible = work_target_feasible(e, action.target_x, action.target_y);
+            } else if (action.sticky_action == ActionType::BUILD
+                       && action.target_x >= 0 && action.target_y >= 0) {
+                TileType target = grid_.at(action.target_x, action.target_y);
+                const auto& data = grid_.data_at(action.target_x, action.target_y);
+                bool has_material = target == TileType::Machine
+                    && data.machine_type == MachineType::Output
+                    ? inv.construction_material > 0.05f : inv.raw_material > 0.05f;
+                still_feasible = config_.allow_build && has_material
+                    && (target == TileType::Floor || target == TileType::FoodSource
+                        || target == TileType::ScrapPile
+                        || ((target == TileType::Machine || target == TileType::Conveyor
+                             || target == TileType::EatingZone) && !data.built));
+            } else {
+                still_feasible = action_feasible(e, action.sticky_action);
             }
-            if (!survival_override && !chain_delivery && !production_override) {
+            if (!survival_override && !chain_delivery && still_feasible) {
                 action.sticky_ticks--;
-                action.last_utility_gather = 0.0f;
-                action.last_utility_build  = 0.0f;
-                action.last_utility_work   = 0.0f;
-                action.last_utility_eat    = 0.0f;
+                metrics_.action_selected[metric_index(action.current)]++;
                 continue;
             }
             action.sticky_ticks = 0;
+        }
+
+        PlaceChoice rest_place{pos.x, pos.y, 0.0f};
+        PlaceChoice social_place{pos.x, pos.y, 0.0f};
+        PlaceChoice create_place{pos.x, pos.y, 0.0f};
+        if (needs.rest > 0.001f)
+            rest_place = find_preferred_place(e, ActionType::REST);
+        if (!no_culture && needs.social > 0.15f)
+            social_place = find_preferred_place(e, ActionType::SOCIALIZE);
+        if (!no_culture && needs.expression > 0.25f)
+            create_place = find_preferred_place(e, ActionType::CREATE);
+        for (const auto& plan : {std::pair{ActionType::REST, rest_place},
+                                 std::pair{ActionType::SOCIALIZE, social_place},
+                                 std::pair{ActionType::CREATE, create_place}}) {
+            size_t index = metric_index(plan.first);
+            action.preferred_x[index] = plan.second.x;
+            action.preferred_y[index] = plan.second.y;
+            action.preferred_place_score[index] = plan.second.score;
         }
 
         float alpha = config_.urgency_alpha;
@@ -338,25 +390,23 @@ void Simulation::system_compute_utility() {
         }
 
         // Food only comes from machines now → only check inventory food and storage.
-        bool has_food     = inv.food > 0.01f;
+        bool has_food     = inv.food > 0.01f
+                         || inv.raw_food >= config_.eat_food_per_tick;
         bool storage_near = has_adjacent_storage_with_food(e);
         bool can_eat      = has_food || storage_near;
 
         // Only scrap is gatherable in this model.
-        bool scrap_available = grid_.find_nearest(TileType::ScrapPile,
-            pos.x, pos.y).first >= 0;
+        bool scrap_available = visible_scrap;
 
         // Are there unbuilt machines?
-        bool unbuilt_exists = grid_.find_nearest_unbuilt_machine(pos.x, pos.y).first >= 0;
+        bool unbuilt_exists = near_unbuilt_machine.first >= 0;
 
         // Are there built machines?
-        bool built_exists = grid_.find_nearest_built_machine(pos.x, pos.y).first >= 0;
+        bool built_exists = built_machines > 0;
 
         // === ACTION UTILITIES ===
 
         // Production test mode: zero all cultural drives
-        bool no_culture = (config_.director_mode == DirectorMode::PRODUCTION_TEST);
-
         // Personal food buffer (processed only, since FoodSource is gone).
         float food_security = std::min(1.0f, inv.food / 2.0f);
 
@@ -373,7 +423,7 @@ void Simulation::system_compute_utility() {
             float low_mat = std::max(0.0f, 1.0f - inv.raw_material / 2.0f);
 
             // Factory health crisis amplifies
-            float gather_urgency = factory_pressure(factory_health_, 2.0f);
+            float gather_urgency = factory_pressure(policy_health, 2.0f);
 
             // Base drive: compliance × infrastructure gap × material scarcity
             // infra_gap from grid-level signal — no redundant per-agent loop
@@ -401,8 +451,7 @@ void Simulation::system_compute_utility() {
             // have nothing to process, food production stops.
             float raw_food_drive = 0.0f;
             {
-                bool food_source_available = grid_.find_nearest(TileType::FoodSource,
-                    pos.x, pos.y).first >= 0;
+                bool food_source_available = visible_food_source;
                 if (food_source_available) {
                     // Drive 1: personal hunger → forage to eat
                     if (inv.raw_food < 0.5f) {
@@ -435,12 +484,9 @@ void Simulation::system_compute_utility() {
             // tiles and the agent has no material.
             float raw_material_drive = 0.0f;
             {
-                bool scrap_available_local = grid_.find_nearest(TileType::ScrapPile,
-                    pos.x, pos.y).first >= 0;
-                bool free_foodsources = grid_.find_nearest_free_foodsource(
-                    pos.x, pos.y).first >= 0;
-                bool free_scrappiles = grid_.find_nearest_free_scrappile(
-                    pos.x, pos.y).first >= 0;
+                bool scrap_available_local = visible_scrap;
+                bool free_foodsources = free_foodsource;
+                bool free_scrappiles = free_scrap;
                 if (scrap_available_local && inv.raw_material < 1.0f &&
                     (free_foodsources || free_scrappiles)) {
                     float mat_deficit = std::max(0.0f, 1.0f - inv.raw_material);
@@ -470,12 +516,8 @@ void Simulation::system_compute_utility() {
         // for FOOD machines when food_supply_ratio < 1.0.
         // ================================================================
         float u_build = 0.0f;
-        bool unbuilt_ez_exists = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y).first >= 0;
-        bool built_ez_exists   = grid_.find_nearest_built_eatingzone(pos.x, pos.y).first >= 0;
-        bool unbuilt_conveyor  = grid_.find_nearest_conveyor_to_build(pos.x, pos.y).first >= 0;
-
         // Factory health crisis amplifies BUILD urgency: infrastructure = survival.
-        float build_urgency = factory_pressure(factory_health_, 2.0f);
+        float build_urgency = factory_pressure(policy_health, 2.0f);
 
         // Material availability boost: having material should STRONGLY push toward BUILD
         float mat_readiness = std::min(1.0f, inv.raw_material / 2.0f);
@@ -499,7 +541,7 @@ void Simulation::system_compute_utility() {
             // is the clearest "do this now" signal in the game.
             float u_build_mach = 0.0f;
             if (unbuilt_exists) {
-                auto near_m = grid_.find_nearest_unbuilt_machine(pos.x, pos.y);
+                auto near_m = near_unbuilt_machine;
                 float finish_bonus = 0.0f;
                 if (near_m.first >= 0) {
                     const auto& td = grid_.data_at(near_m.first, near_m.second);
@@ -530,25 +572,14 @@ void Simulation::system_compute_utility() {
             // Sub 2: continue an unbuilt EatingZone frame (high finish_bonus pull)
             float u_build_ez = 0.0f;
             if (unbuilt_ez_exists) {
-                auto near_ez = grid_.find_nearest_unbuilt_eatingzone(pos.x, pos.y);
+                auto near_ez = near_unbuilt_ez;
                 const auto& td = grid_.data_at(near_ez.first, near_ez.second);
                 float finish_bonus = (td.build_cost > 0.0f)
                     ? (td.build_progress / td.build_cost) * 1.5f : 0.0f;
                 u_build_ez = effective_compliance * u_purpose * 1.0f * mat_readiness + finish_bonus;
             }
 
-            // Sub 3: initiate a new EatingZone — only when none exist (built OR being built)
-            //        and a valid site is reachable.
-            float u_build_new_ez = 0.0f;
-            if (!built_ez_exists && !unbuilt_ez_exists) {
-                auto site = grid_.find_nearest_valid_eatingzone_site(
-                    pos.x, pos.y, config_.eatingzone_min_dist_machine);
-                if (site.first >= 0) {
-                    u_build_new_ez = effective_compliance * u_purpose * 1.0f * mat_readiness;
-                }
-            }
-
-            u_build = std::max({u_build_mach, u_build_ez, u_build_new_ez});
+            u_build = std::max(u_build_mach, u_build_ez);
         }
 
         // Conveyor build: connect machines to Storage/Exit.
@@ -557,8 +588,13 @@ void Simulation::system_compute_utility() {
         {
             float u_build_conv = 0.0f;
             // Check existing unbuilt conveyor frames AND new sites from Floor
-            bool can_build_conveyor = unbuilt_conveyor ||
-                grid_.find_conveyor_build_site(pos.x, pos.y).x >= 0;
+            bool can_build_conveyor = unbuilt_conveyor;
+            if (!can_build_conveyor && inv.raw_material > 0.05f) {
+                auto conveyor_site = grid_.find_conveyor_build_site(pos.x, pos.y);
+                can_build_conveyor = conveyor_site.x >= 0
+                    && std::abs(conveyor_site.x - pos.x)
+                       + std::abs(conveyor_site.y - pos.y) <= observation_radius;
+            }
             if (can_build_conveyor && inv.raw_material > 0.05f) {
                 float conv_mat = std::min(1.0f, inv.raw_material / 0.5f);
 
@@ -592,9 +628,10 @@ void Simulation::system_compute_utility() {
                 // CRITICAL: massive urgency when quota is failing — conveyors are the
                 // only way to move output from distant machines to Exit-adjacent Storage.
                 // Only fires when Output machines actually exist and have output to move.
-                int n_out_machines = count_built_machines(MachineType::Output);
-                float total_output_in_system = total_storage_output();
-                if (last_quota_fill_ < 0.5f && n_out_machines > 0
+                int n_out_machines = built_out;
+                float total_output_in_system = local_output;
+                if (config_.external_supply_variant == 0
+                    && last_quota_fill_ < 0.5f && n_out_machines > 0
                     && total_output_in_system > 0.1f) {
                     float quota_urgency = (1.0f - last_quota_fill_) * 2.0f;
                     conv_base += quota_urgency;
@@ -613,7 +650,9 @@ void Simulation::system_compute_utility() {
         {
             float u_build_storage = 0.0f;
             auto storage_site = grid_.find_storage_build_site(pos.x, pos.y);
-            if (storage_site.first >= 0 && inv.raw_material > 0.05f) {
+            if (storage_site.first >= 0 && inv.raw_material > 0.05f
+                && std::abs(storage_site.first - pos.x)
+                   + std::abs(storage_site.second - pos.y) <= observation_radius) {
                 float stor_mat = std::min(1.0f, inv.raw_material / 1.0f);
                 float stor_base = effective_compliance * stor_mat * build_infra_gap * 2.5f;
                 float stor_sup  = effective_compliance * u_purpose * 0.8f;
@@ -628,8 +667,7 @@ void Simulation::system_compute_utility() {
         // Auto-gathers raw_food, no need for agents to carry inputs.
         {
             float u_build_food = 0.0f;
-            auto fs = grid_.find_nearest_free_foodsource(pos.x, pos.y);
-            if (fs.first >= 0 && inv.raw_material > 0.05f) {
+            if (free_foodsource && inv.raw_material > 0.05f) {
                 float food_mat = std::min(1.0f, inv.raw_material / 2.0f);
                 // Urgency scales inversely with food supply
                 float food_urg = 1.0f + std::max(0.0f, 1.0f - food_supply_ratio) * 3.0f;
@@ -646,14 +684,14 @@ void Simulation::system_compute_utility() {
         // High priority when quota is failing or no Output machines exist.
         {
             float u_build_output = 0.0f;
-            int n_out = count_built_machines(MachineType::Output);
-            if (inv.construction_material > 0.05f && n_out < 3) {
+            int n_out = built_out;
+            if (inv.construction_material > 0.05f && n_out < 2) {
                 float out_mat = std::min(1.0f, inv.construction_material / 1.0f);
                 float out_base = effective_compliance * out_mat * build_infra_gap * 2.5f;
                 float out_sup  = effective_compliance * u_purpose * 1.2f;
                 // Extra urgency when quota is failing or no Output machines
                 if (n_out == 0) out_base += 5.0f;  // critical: no output capacity
-                else if (last_quota_fill_ < 0.5f) {
+                else if (config_.external_supply_variant == 0 && last_quota_fill_ < 0.5f) {
                     out_base += (1.0f - last_quota_fill_) * 5.0f;
                 }
                 u_build_output = out_base + out_sup;
@@ -673,6 +711,7 @@ void Simulation::system_compute_utility() {
                 config_.director_mode == DirectorMode::CALM,
                 hu, needs.hunger, needs.rest, food_supply_ratio, 0.3f);
         }
+        bool build_plan_feasible = u_build > 0.0f;
 
         // ================================================================
         // WORK: operate built machines to produce food/material/output.
@@ -692,7 +731,7 @@ void Simulation::system_compute_utility() {
             : (stress.state != StressState::BROKEN);
         if (work_allowed) {
         if (built_exists) {
-            float health_urgency = factory_pressure(factory_health_, 3.0f);
+            float health_urgency = factory_pressure(policy_health, 3.0f);
 
             // Input readiness: how prepared the agent is to WORK.
             // TWO components:
@@ -704,10 +743,10 @@ void Simulation::system_compute_utility() {
             float input_readiness = 0.0f;
             if (inv.output > 0.05f) {
                 // Hauling output: high urgency to reach Exit-adjacent Storage
-                input_readiness = 5.0f + inv.output * 5.0f;
+                input_readiness = std::min(3.0f, 1.0f + inv.output);
             } else if (inv.construction_material > 0.05f) {
                 // Refined product from MaterialsMachine: even small amounts are valuable
-                input_readiness = 1.0f + inv.construction_material * 5.0f;
+                input_readiness = std::min(3.0f, 1.0f + inv.construction_material);
             } else if (raw_total > 0.5f) {
                 // Raw gathered resources: stock up before going to machine
                 input_readiness = std::min(3.5f, raw_total);
@@ -719,8 +758,9 @@ void Simulation::system_compute_utility() {
                 // Higher base when Output machines exist and quota is failing —
                 // the factory needs workers even if they arrive empty-handed.
                 input_readiness = 0.3f;
-                int n_out = count_built_machines(MachineType::Output);
-                if (n_out > 0 && last_quota_fill_ < 0.5f) {
+                int n_out = built_out;
+                if (config_.external_supply_variant == 0
+                    && n_out > 0 && last_quota_fill_ < 0.5f) {
                     input_readiness = 0.6f;  // quota failing: go work even without inputs
                 }
             }
@@ -737,7 +777,8 @@ void Simulation::system_compute_utility() {
                 work_pull *= calm_work_focus(true, higher_unmet);
                 work_pull *= calm_comfortable_dampener(
                     true, higher_unmet, needs.hunger, needs.rest, food_supply_ratio, 0.2f);
-            } else if (config_.director_mode == DirectorMode::NORMAL
+            } else if (config_.external_supply_variant == 0
+                       && config_.director_mode == DirectorMode::NORMAL
                        && last_quota_fill_ < 0.5f) {
                 // Factory pressure boosts WORK
                 work_pull *= 3.0f;
@@ -751,8 +792,8 @@ void Simulation::system_compute_utility() {
             //   ratio > 1.5: no urgency (food is abundant)
             //   ratio = 1.0: mild urgency (100 ticks of buffer)
             //   ratio = 0.5: high urgency (50 ticks of buffer)
-            //   ratio = 0.2: CRITICAL (20 ticks of buffer) → 6x multiplier
-            //   ratio = 0.0: EMERGENCY → 10x multiplier
+            //   ratio = 0.2: CRITICAL (20 ticks of buffer) -> 6x multiplier
+            //   ratio = 0.0: EMERGENCY -> 10x multiplier
             float food_work_urgency = 1.0f;
             if (built_food_machines > 0 && food_supply_ratio < 1.5f) {
                 // Exponential urgency: steeper than linear
@@ -802,6 +843,7 @@ void Simulation::system_compute_utility() {
         if (needs.rest > 0.7f) rest_weight *= 1.5f;
         if (needs.rest > 0.9f) rest_weight *= 2.0f;
         float u_rest_action = rest_weight * u_rest;  // u_rest already uses survival_urgency
+        u_rest_action *= 1.0f + std::clamp(rest_place.score, -0.5f, 0.5f) * 0.10f;
 
         // SOCIALIZE: boosted by nearby trust (known agents are more attractive)
         // THRESHOLD GATE — lower threshold so social fires more readily.
@@ -819,6 +861,7 @@ void Simulation::system_compute_utility() {
             u_socialize = effective_gregariousness * u_social * (0.8f + social_gate);
             u_socialize *= (0.5f + 0.5f * nearby_trust);
             u_socialize += soc.influence * 0.1f;
+            u_socialize *= 1.0f + std::clamp(social_place.score, -0.5f, 0.5f) * 0.15f;
             // Maslow boost — stronger when fed and rested
             u_socialize *= maslow_boost(needs.hunger, needs.rest, 4.0f, 2.0f);
         }
@@ -827,10 +870,8 @@ void Simulation::system_compute_utility() {
         // Below 0.25 expression = near-zero CREATE drive. Above = ramps hard.
         // This is the “creative impulse” — it doesn’t compete with survival,
         // but when it fires, it fires strong.
-        bool open_space_available = grid_.find_nearest(TileType::OpenSpace,
-            pos.x, pos.y).first >= 0;
         float u_create = 0.0f;
-        if (!no_culture && open_space_available && needs.expression > 0.25f) {
+        if (!no_culture && needs.expression > 0.25f) {
             float expr_gate = (needs.expression - 0.25f) / 0.75f;  // 0..1 above threshold
             u_create = personality.artistry * u_expression * (1.0f + expr_gate);
             if (needs.meaning > 0.4f)
@@ -841,6 +882,7 @@ void Simulation::system_compute_utility() {
                 : (stress.state == StressState::DISSOCIATED ? 1.3f : 1.0f);
             // Maslow boost
             u_create *= maslow_boost(needs.hunger, needs.rest, 2.5f, 1.5f);
+            u_create *= 1.0f + std::clamp(create_place.score, -0.5f, 0.5f) * 0.15f;
         }
 
         // EXPLORE: THRESHOLD GATE — curiosity fires above 0.25 purpose
@@ -860,13 +902,15 @@ void Simulation::system_compute_utility() {
         // MAINTAIN: repair degraded conveyors. Compliance-driven, scales with degradation.
         float u_maintain = 0.0f;
         {
-            auto conv = grid_.find_nearest_conveyor_needing_maintain(pos.x, pos.y, 0.9f);
+            auto conv = near_degraded_conveyor;
             if (conv.first >= 0) {
                 const auto& cd = grid_.data_at(conv.first, conv.second);
                 float degradation = 1.0f - cd.conveyor_condition;
+                float priority_signal = 1.0f + 0.75f * cd.maintenance_priority;
                 float hunger_gate = std::max(0.0f, 1.0f - u_hunger * 2.0f);
-                u_maintain = effective_compliance * degradation * u_purpose * 1.5f * hunger_gate
-                           + community_pressure * degradation * 0.8f * hunger_gate;
+                u_maintain = (effective_compliance * degradation * u_purpose * 1.5f * hunger_gate
+                           + community_pressure * degradation * 0.8f * hunger_gate)
+                           * priority_signal;
                 u_maintain *= mood_factor;
             }
         }
@@ -875,7 +919,7 @@ void Simulation::system_compute_utility() {
         float u_dismantle = 0.0f;
         {
             bool blocking_nearby = false;
-            bool dead_end_nearby = grid_.find_nearest_dead_end_conveyor(pos.x, pos.y).first >= 0;
+            bool dead_end_nearby = dismantle_candidate;
             for (int sy = std::max(0, pos.y - 8); sy < std::min(grid_.height(), pos.y + 8); sy++)
                 for (int sx = std::max(0, pos.x - 8); sx < std::min(grid_.width(), pos.x + 8); sx++)
                     if (grid_.is_conveyor_blocking_path(sx, sy)) blocking_nearby = true;
@@ -893,8 +937,7 @@ void Simulation::system_compute_utility() {
 
         // S3: SABOTAGE — irrational destruction driven by chronic stress.
         float u_sabotage = 0.0f;
-        if (stress.value >= config_.sabotage_stress_threshold
-            && stress.state != StressState::REDEEMED) {
+        if (stress.value >= config_.sabotage_stress_threshold) {
             float stress_drive;
             if (config_.stress_model_variant == 1) {
                 // Phase 3: continuous sabotage drive. Scales with stress.value
@@ -921,11 +964,9 @@ void Simulation::system_compute_utility() {
         float u_get_food = 0.0f;
         {
             float room_in_inv = std::max(0.0f, config_.inv_food_cap - inv.food);
-            bool any_storage_food = grid_.find_nearest_storage_with_food(pos.x, pos.y).first >= 0;
             if (any_storage_food && room_in_inv > 0.1f) {
                 float pocket_emptiness = room_in_inv / config_.inv_food_cap;
                 u_get_food = pocket_emptiness * (0.3f + u_hunger * 0.8f);
-                if (built_ez_exists) u_get_food *= 1.3f;
             }
         }
 
@@ -1003,6 +1044,11 @@ void Simulation::system_compute_utility() {
         u_create     *= bonabeau(u_create,     th_create);
         u_explore    *= bonabeau(u_explore,    th_explore);
 
+        u_gather *= 1.0f + skills.domestic * 0.02f;
+        u_work *= 1.0f + skills.factory_work * 0.02f;
+        u_socialize *= 1.0f + skills.social_skill * 0.02f;
+        u_create *= 1.0f + skills.artistic * 0.02f;
+
         // HARD SURVIVAL OVERRIDE: when critical, zero out non-survival actions.
         // This prevents agents from building themselves to death.
         // Only active in variant 0 (legacy). Variants 1-3 rely on the steeper
@@ -1017,6 +1063,37 @@ void Simulation::system_compute_utility() {
                 u_build *= 0.1f; u_work *= 0.1f; u_gather *= 0.1f;
             }
         }
+
+        if (!config_.allow_build) u_build = 0.0f;
+
+        bool feasible_gather = inv.total() < InventoryComponent::CAPACITY - 0.001f
+            && (visible_food_source || visible_scrap);
+        bool feasible_build = config_.allow_build && build_plan_feasible;
+        bool feasible_work = find_feasible_work_target(e).first >= 0;
+        bool feasible_eat = can_eat;
+        bool feasible_rest = needs.rest > 0.001f;
+        bool feasible_socialize = visible_agents > 1;
+        bool feasible_create = needs.expression > 0.001f && create_place.x >= 0;
+        bool feasible_explore = action_feasible(e, ActionType::EXPLORE);
+        bool feasible_get_food = inv.food < config_.inv_food_cap - 0.001f
+            && any_storage_food;
+        bool feasible_maintain = near_degraded_conveyor.first >= 0;
+        bool feasible_dismantle = dismantle_candidate;
+        bool feasible_sabotage = built_machines > 0 || built_conveyor;
+
+        if (!feasible_gather) u_gather = 0.0f;
+        if (!feasible_build) u_build = 0.0f;
+        if (!feasible_work) u_work = 0.0f;
+        if (!feasible_eat) u_eat = 0.0f;
+        if (!feasible_rest) u_rest_action = 0.0f;
+        if (!feasible_socialize) u_socialize = 0.0f;
+        if (!feasible_create) u_create = 0.0f;
+        if (!feasible_explore) u_explore = 0.0f;
+        if (!feasible_get_food) u_get_food = 0.0f;
+        if (!feasible_maintain) u_maintain = 0.0f;
+        if (!feasible_dismantle) u_dismantle = 0.0f;
+        if (!feasible_sabotage) u_sabotage = 0.0f;
+        constexpr float u_idle = 0.02f;
 
         // Pick best action
         // === BOLTZMANN ACTION SELECTION ===
@@ -1038,45 +1115,54 @@ void Simulation::system_compute_utility() {
             {ActionType::MAINTAIN,  u_maintain},
             {ActionType::DISMANTLE, u_dismantle},
             {ActionType::SABOTAGE,  u_sabotage},
+            {ActionType::IDLE,      u_idle},
         };
         constexpr int N = sizeof(options) / sizeof(options[0]);
 
         float tau = config_.selection_temperature;
         if (tau <= 0.001f) {
             // Degenerate: greedy argmax (legacy behavior)
-            float best_score = -1.0f;
+            action.current = ActionType::IDLE;
+            float best_score = 0.0f;
             for (auto& opt : options)
                 if (opt.score > best_score) {
                     best_score = opt.score;
                     action.current = opt.type;
                 }
         } else {
-            // Boltzmann: compute softmax weights
-            float max_u = options[0].score;
-            for (int i = 1; i < N; i++)
+            // Impossible or inactive actions have zero weight. A conventional
+            // softmax would give utility-zero actions a nonzero chance.
+            float max_u = 0.0f;
+            for (int i = 0; i < N; i++)
                 if (options[i].score > max_u) max_u = options[i].score;
 
             float weights[N];
             float sum_w = 0.0f;
             for (int i = 0; i < N; i++) {
-                float u = std::max(0.0f, options[i].score);
-                weights[i] = std::exp((u - max_u) / tau);
+                float u = options[i].score;
+                weights[i] = u > 0.0f ? std::exp((u - max_u) / tau) : 0.0f;
                 sum_w += weights[i];
             }
 
-            // Weighted random selection
-            std::uniform_real_distribution<float> pick(0.0f, sum_w);
-            float r = pick(rng_);
-            float cumulative = 0.0f;
+            // Preserve one selection draw per decision even when IDLE is the
+            // only feasible result, keeping the RNG stream stable.
+            std::uniform_real_distribution<float> pick(0.0f, sum_w > 0.0f ? sum_w : 1.0f);
+            float r = pick(registry_.get<RandomComponent>(e).engine);
             action.current = ActionType::IDLE;
-            for (int i = 0; i < N; i++) {
-                cumulative += weights[i];
-                if (r <= cumulative) {
-                    action.current = options[i].type;
-                    break;
+            if (sum_w > 0.0f) {
+                float cumulative = 0.0f;
+                for (int i = 0; i < N; i++) {
+                    if (weights[i] <= 0.0f) continue;
+                    cumulative += weights[i];
+                    if (r <= cumulative) {
+                        action.current = options[i].type;
+                        break;
+                    }
                 }
             }
         }
+
+        metrics_.action_selected[metric_index(action.current)]++;
 
         // Set stickiness for ALL actions (The Sims / DF pattern).
         // Agents commit to actions for a minimum duration — they don't
@@ -1120,14 +1206,35 @@ void Simulation::system_compute_utility() {
             }
         }
 
-        action.last_utility_gather    = u_gather;
-        action.last_utility_build     = u_build;
-        action.last_utility_work      = u_work;
-        action.last_utility_eat       = u_eat;
-        action.last_utility_rest      = u_rest_action;
-        action.last_utility_socialize = u_socialize;
-        action.last_utility_create    = u_create;
-        action.last_utility_explore   = u_explore;
-        action.last_utility_get_food  = u_get_food;
+        auto record_utility = [&](ActionType type, float score, bool factory_action,
+                                  bool feasible) {
+            size_t index = metric_index(type);
+            auto& breakdown = action.last_utility[index];
+            breakdown = {};
+            if (factory_action) breakdown.factory = score;
+            else breakdown.self = score;
+            breakdown.final = score;
+            breakdown.feasible = feasible;
+            metrics_.utility_samples[index]++;
+            if (breakdown.feasible) metrics_.feasible_samples[index]++;
+            metrics_.utility_self_sum[index] += breakdown.self;
+            metrics_.utility_factory_sum[index] += breakdown.factory;
+            metrics_.utility_cost_sum[index] += breakdown.cost;
+            metrics_.utility_risk_sum[index] += breakdown.risk;
+            metrics_.utility_final_sum[index] += breakdown.final;
+        };
+        record_utility(ActionType::GATHER, u_gather, true, feasible_gather);
+        record_utility(ActionType::BUILD, u_build, true, feasible_build);
+        record_utility(ActionType::WORK, u_work, true, feasible_work);
+        record_utility(ActionType::EAT, u_eat, false, feasible_eat);
+        record_utility(ActionType::REST, u_rest_action, false, feasible_rest);
+        record_utility(ActionType::SOCIALIZE, u_socialize, false, feasible_socialize);
+        record_utility(ActionType::CREATE, u_create, false, feasible_create);
+        record_utility(ActionType::EXPLORE, u_explore, false, feasible_explore);
+        record_utility(ActionType::GET_FOOD, u_get_food, false, feasible_get_food);
+        record_utility(ActionType::MAINTAIN, u_maintain, true, feasible_maintain);
+        record_utility(ActionType::DISMANTLE, u_dismantle, true, feasible_dismantle);
+        record_utility(ActionType::SABOTAGE, u_sabotage, false, feasible_sabotage);
+        record_utility(ActionType::IDLE, u_idle, false, true);
     }
 }

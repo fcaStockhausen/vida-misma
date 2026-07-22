@@ -1,41 +1,119 @@
 # Simulation Design Principles {#sec:diseno}
 
-The preceding sections have presented the mathematical components individually. This section synthesizes the design philosophy that guides their combination into a coherent simulation system, drawing primarily on the design methodology of Dwarf Fortress and the formal properties of emergent systems.
+The principles below are methodological constraints, not claims that every
+desired macro-phenomenon has emerged. They distinguish the architecture that
+exists, the objectives that guide it, and hypotheses that still require evidence.
 
-## Decomposition and Emergent Composition
+## Decomposition and Causal Legibility
 
-The central design principle of Dwarf Fortress, articulated by Tarn Adams [@adams2014}, is decomposition: rather than programming composite phenomena directly, program independent subsystems and allow complex phenomena to emerge from their interaction. A "desert" is not a single entity; it is the intersection of high temperature, low rainfall, well-drained soil, and sparse vegetation---each computed independently. A "depressed dwarf" is not a scripted state; it is the conjunction of high stress, negative recent events, a personality susceptible to anxiety, and a social graph that provides insufficient positive reinforcement.
+**Background.** Decomposition replaces a scripted composite state with smaller
+processes that interact through shared state. This idea is common to simulation
+game design [@adams2014] and to formal ABM descriptions such as ODD
+[@grimm2020]. It increases the number of possible combinations, but complexity
+alone does not prove emergence.
 
-This principle has a formal basis in the theory of complex systems: when multiple independent processes operate on a shared substrate (the tile grid, the agent state, the social graph), their intersection produces a combinatorial space of possible states that is exponentially larger than what any single process could generate. The designer does not need to anticipate every possible combination; the system produces them automatically.
+**Implemented.** `Simulation::advance()` defines one ordered pipeline: resource
+regeneration and need decay; utility, targeting, movement, and execution; social
+and spatial learning; conveyor transport and shipping; institutional policy;
+artifacts, graph communities, stress, death, lifecycle, and metrics. Action
+scoring, target selection, movement, effects, conveyor transport, indifferent
+policy, lifecycle, and Director interventions are separate translation units.[^design-pipeline]
 
-## The Adequacy Principle
+**Design objective.** Each aggregate explanation should be traceable through that
+pipeline. For example, reduced shipping updates external support, support changes
+future resource regeneration, and scarcity can later affect hunger and mortality.
+The explanation must not jump directly from "quota missed" to "agent punished."
 
-Adams' second principle is that simulation fidelity should be calibrated to the *observable resolution* of the player (or, more generally, the consumer of the simulation output). Dwarf Fortress fluids do not simulate turbulence, viscosity, or surface tension because these phenomena are not observable at the tile-level resolution of the game. The 8-level quantization was chosen because it is the minimum that allows players to visually distinguish fluid states.
+## Adequacy Rather Than Maximal Fidelity
 
-This is not a compromise; it is an application of the principle of *behavioral adequacy*: a model should reproduce the qualitative phenomena relevant to its purpose, not the underlying physics. The Navier-Stokes equations are not "better" than the 7-level CA for simulation purposes if the additional fidelity does not produce observable behavioral differences. The computational savings from reduced fidelity can be invested in other subsystems (more agents, larger maps, additional social dynamics).
+**Background.** A model is adequate when it preserves distinctions relevant to
+its question at the observable scale; more physical detail is not automatically
+better.
 
-## Iterative Development
+**Implemented.** The executable uses a bounded $60\times40$ grid, five resource
+types, three machine recipes, directed single-content conveyors, and one-tick
+updates. It does not model continuous mechanics, fluid dynamics, or a third
+spatial dimension. Cached A* provides movement paths over the grid, while agent
+choice is mostly bounded to radius-twelve observations.
 
-Dwarf Fortress has been developed over approximately 20 years, accumulating roughly 700,000 lines of code [@adams2021}. Adams describes his development process as iterative: build a minimal system, observe what emerges, identify gaps or failures, extend the system, repeat. This is consistent with the methodology of agent-based modeling in the scientific literature, where the ODD protocol [@grimm2020} similarly emphasizes incremental model development with explicit documentation of each extension.
+**Design objective.** Add fidelity only when it changes a measured decision,
+logistical constraint, or player-visible consequence. The current known exception
+to strict locality is conveyor planning, whose global route query should be
+treated as technical debt or explicitly reinterpreted as institutional planning,
+not silently described as local perception.
 
-The practical implication for engine design is that the initial implementation should be minimal and correct, not comprehensive. Each subsystem should be independently testable and should produce observable output. Complex behavior should emerge from the interaction of simple subsystems, not from the complexity of individual subsystems.
+## Hybrid ECS/Grid Architecture
 
-## Real-World Analogues
+**Implemented.** The runtime is hybrid rather than a pure Entity-Component-System:
 
-Adams' fourth principle is to ground simulation rules in real-world phenomena, not because the simulation should be realistic, but because the real world has already solved many design problems through evolution and physical law. The orographic rain shadow model (mountains block moisture-carrying winds, producing dry leeward regions) was adopted from meteorology and immediately improved world generation because it captures a genuine statistical regularity in climate geography.
+| Representation | Current responsibility |
+|---|---|
+| EnTT registry | inhabitants, artifacts, and their components |
+| `Grid` dense arrays | tile type and `TileData` for terrain, resources, machines, storage, conveyors, zoning, and construction |
+| Systems | transformations that read and write both representations |
+| `SocialFabric` | dynamically sized directed trust/familiarity matrix keyed by stable agent ID |
+| `Chronicle` and `SimulationMetrics` | factual event history and aggregate observation |
 
-This principle applies beyond terrain generation: the stress and personality model draws on clinical psychology, the social graph draws on sociological network models, and the utility AI draws on microeconomic decision theory. Grounding simulation rules in established models from other disciplines increases the probability that the emergent behavior will be qualitatively plausible.
+An inhabitant is an ECS entity with plain-data components, but a wall, machine,
+storage tile, or resource source is not an ECS entity. It is a grid cell. Systems
+such as execution bridge the two: an entity's `ActionComponent` changes a
+`TileData` resource buffer and the inhabitant's inventory in the same causal
+operation. Calling the implementation simply "ECS" obscures this deliberate
+division.[^design-hybrid]
 
-## Entity-Component-System Architecture
+## Indifferent Institution and Human Indirection
 
-The implementation architecture that supports these principles is Entity-Component-System (ECS):
+**Implemented.** Canonical `external.policy_variant = 1` applies stable physical
+rules to conveyor wear/load, storage occupancy, and anonymous occupancy capacity.
+It cannot inspect identity, personality, action, trust, opinion, graph community,
+or output semantics. Canonical `external.supply_variant = 1` links only shipped
+output to delayed material replenishment. The old strategic policy remains under
+variant 0 solely for controlled A/B comparison; it is not the canonical ontology
+of the factory.[^design-policy]
 
-- **Entity**: an opaque identifier with no behavior. Each agent, item, or tile is an entity.
-- **Component**: a pure data structure. Position, Health, Needs, Skills, Personality are each independent components attached to entities.
-- **System**: a function that operates on all entities possessing a specific set of components. NeedDecaySystem updates all entities with a Needs component; PathfindingSystem processes all entities with both Position and MovementGoal components.
+**Design objective.** The institution may be demanding and materially harmful,
+but it is not a player that hates, classifies, or strategically targets people.
+The human Director likewise changes environmental conditions rather than issuing
+orders to inhabitants. These are separate boundaries: one governs autonomous
+institutional pressure, and the other governs player intervention.
 
-The critical property of ECS is that systems are independent: the pathfinding system has no knowledge of the needs system. Coordination occurs through shared data in components. An agent with high hunger (Needs component) receives high utility for "eat" actions (UtilityAI system) and requests a path to the dining hall (Pathfinding system). The three systems never communicate directly; they interact through the entity's component state.
+## Iteration, Counterfactuals, and Maturity
 
-This decoupling enables incremental development: new systems can be added without modifying existing ones, as long as they operate on well-defined component types. It also facilitates testing: each system can be validated in isolation by constructing entities with known component states and verifying the system's output.
+**Background.** Iterative development is valuable when each model extension is
+observable and can be compared with a baseline. Without a counterfactual, however,
+a visually plausible pattern may be only a direct consequence of a coefficient or
+map stamp.
 
-Nystrom (2014) [@nystrom2014} provides a practical treatment of ECS in the context of game development, emphasizing its advantages for cache-friendly data access patterns and its suitability for simulations with large numbers of entities.
+**Implemented.** Batch metrics distinguish selection, target lookup, target
+arrival, and effective execution. The same seed and build replay deterministically.
+Mechanism toggles exist for social learning, place affinity, artifact effects,
+lifecycle processes, BUILD, supply variant, and institutional policy. The regular
+regression set uses seeds `0 1 2 3 7`, while macro-claims use twenty or more seeds.
+Director interventions have their own typed replay ledger.[^design-evidence]
+
+**Design objective.** Documentation uses three maturity levels:
+
+1. **Implemented mechanism:** directly traceable to code, configuration, and a
+   focused test.
+2. **Design objective:** a normative property such as locality, indirection, or
+   causal legibility.
+3. **Hypothesis or result:** an aggregate statement requiring a defined metric,
+   comparison, horizon, and uncertainty.
+
+**Not established.** Segregation, artistic subculture, informal leadership, and
+free-riding have not passed that third standard. Their absence is a valid result
+and must not be repaired by introducing a categorical label or privilege merely
+to make the pattern visible.
+
+[^design-pipeline]: `src/simulation.cpp` is the scheduling source; subsystem
+    boundaries are declared in `src/simulation.h` and compiled through
+    `VIDA_SIM_SOURCES` in `CMakeLists.txt`.
+[^design-hybrid]: See `src/components.h`, `src/grid.h`, `src/social.h`, and
+    `src/chronicle.h`. EnTT architecture background is discussed by
+    [@nystrom2014].
+[^design-policy]: See `src/sim_policy.cpp`, `src/sim_space_policy.cpp`, and
+    `config/default.toml`. `tests/verify_policy_audit.cmake` statically forbids
+    behavioral and social dependencies in the canonical policy.
+[^design-evidence]: See `src/metrics.h`, `src/batch_main.cpp`,
+    `tests/simulation_tests.cpp`, `tests/verify_metrics.cmake`, and
+    `tests/verify_replay.cmake`.

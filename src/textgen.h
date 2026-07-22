@@ -188,7 +188,7 @@ inline TextGen make_narrative_grammar() {
         "I yanked the belt off its track",
     });
 
-    // ---- REDEMPTION ----
+    // ---- OPTIONAL INTERPRETATION OF A POST-SABOTAGE PAUSE ----
     g.add("redemption", {
         "{red_thought}. {red_resolution}.",
         "{red_resolution}. {red_thought}.",
@@ -331,8 +331,8 @@ inline TextGen make_narrative_grammar() {
         "This is mine. This one thing.",
     });
 
-    // ---- FACTION FORMED ----
-    g.add("faction_formed", {
+    // ---- COMMUNITY DETECTED ----
+    g.add("community_detected", {
         "We found each other. We stand together now.",
         "A group of us — finally, people I trust.",
         "We talked and realized: we're the same.",

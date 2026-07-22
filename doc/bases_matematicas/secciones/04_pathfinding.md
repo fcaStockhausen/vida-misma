@@ -4,7 +4,7 @@ Agents must navigate the spatial environment to satisfy their needs. Pathfinding
 
 ## A*: Informed Search on a Graph
 
-A* [@hart1968} is the standard pathfinding algorithm for grid-based worlds. It extends Dijkstra's algorithm with an admissible heuristic $h(n)$ that estimates the cost from node $n$ to the goal:
+A* [@hart1968] is the standard pathfinding algorithm for grid-based worlds. It extends Dijkstra's algorithm with an admissible heuristic $h(n)$ that estimates the cost from node $n$ to the goal:
 
 $$f(n) = g(n) + h(n)$$ {#eq:astar}
 
@@ -23,7 +23,7 @@ A* has worst-case complexity $O(b^d)$ where $b$ is the branching factor and $d$ 
 
 ## Jump Point Search
 
-Harabor and Grastien (2012) [@harabor2012} observed that on uniform-cost grids, many nodes expanded by A* are structurally irrelevant: they lie on straight corridors or open areas where the optimal path cannot deviate. Jump Point Search (JPS) exploits this by "jumping" over such nodes, expanding only *jump points*---nodes where the path is forced to turn.
+@harabor2012 observed that on uniform-cost grids, many nodes expanded by A* are structurally irrelevant: they lie on straight corridors or open areas where the optimal path cannot deviate. Jump Point Search (JPS) exploits this by "jumping" over such nodes, expanding only *jump points*---nodes where the path is forced to turn.
 
 JPS expands up to 100x fewer nodes than A* on uniform-cost grids while returning identical paths. The limitation is that it applies only when all traversable tiles have equal movement cost. For variable-cost terrain (swamps that slow movement, roads that accelerate it), A* with appropriate edge weights remains necessary.
 

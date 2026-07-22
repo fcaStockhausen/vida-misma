@@ -10,8 +10,8 @@ constexpr int GraphicalView::PANEL_W;
 // Construction & lifecycle
 // ============================================================
 
-GraphicalView::GraphicalView(Simulation& sim, std::atomic<bool>& paused)
-    : sim_(sim), paused_(paused) {}
+GraphicalView::GraphicalView(Simulation& sim, bool debug_view)
+    : sim_(sim), debug_view_(debug_view), director_quota_(sim.current_quota()) {}
 
 GraphicalView::~GraphicalView() {
     fonts_.destroy();
@@ -56,9 +56,15 @@ void GraphicalView::run() {
     cam_target_x_ = cam_x_;
     cam_target_y_ = cam_y_;
 
+    Uint64 next_tick_ms = SDL_GetTicks64();
     while (!quit_) {
         handle_events();
         handle_held_keys();
+        Uint64 now_ms = SDL_GetTicks64();
+        if (running_ && now_ms >= next_tick_ms) {
+            sim_.advance();
+            next_tick_ms = now_ms + static_cast<Uint64>(speed_ms());
+        }
         update_camera_smooth();
         if (follow_agent_) center_on_agent();
         render();
@@ -105,8 +111,11 @@ void GraphicalView::center_camera() {
 
 void GraphicalView::center_on_agent() {
     auto agents = sim_.alive_agents();
-    if (agents.empty() || (size_t)selected_idx_ >= agents.size()) return;
-    auto& pos = sim_.registry().get<PositionComponent>(agents[selected_idx_]);
+    auto selected = std::find_if(agents.begin(), agents.end(), [&](entt::entity entity) {
+        return sim_.registry().get<AgentComponent>(entity).id == selected_agent_id_;
+    });
+    if (selected == agents.end()) return;
+    auto& pos = sim_.registry().get<PositionComponent>(*selected);
     float sx, sy;
     iso_to_screen(pos.x, pos.y, sx, sy);
     int ww, wh;
@@ -119,7 +128,18 @@ void GraphicalView::center_on_agent() {
 void GraphicalView::next_agent(int dir) {
     auto agents = sim_.alive_agents();
     if (agents.empty()) return;
-    selected_idx_ = ((int)selected_idx_ + dir + (int)agents.size()) % (int)agents.size();
+    std::sort(agents.begin(), agents.end(), [&](entt::entity left, entt::entity right) {
+        return sim_.registry().get<AgentComponent>(left).id
+             < sim_.registry().get<AgentComponent>(right).id;
+    });
+    auto selected = std::find_if(agents.begin(), agents.end(), [&](entt::entity entity) {
+        return sim_.registry().get<AgentComponent>(entity).id == selected_agent_id_;
+    });
+    int index = selected == agents.end() ? 0
+        : static_cast<int>(std::distance(agents.begin(), selected));
+    index = (index + dir + static_cast<int>(agents.size()))
+          % static_cast<int>(agents.size());
+    selected_agent_id_ = sim_.registry().get<AgentComponent>(agents[index]).id;
 }
 
 void GraphicalView::prev_agent() { next_agent(-1); }
@@ -130,7 +150,105 @@ int GraphicalView::speed_ms() const {
 
 void GraphicalView::cycle_speed(int dir) {
     speed_idx_ = std::clamp(speed_idx_ + dir, 0, SPEED_COUNT - 1);
-    if (speed_cb_) speed_cb_(speed_ms());
+}
+
+const char* GraphicalView::director_tool_name() const {
+    switch (director_tool_) {
+        case DirectorTool::Quota: return "QUOTA";
+        case DirectorTool::Zone: return "ZONE";
+        case DirectorTool::Place: return "PLACE";
+        case DirectorTool::Remove: return "REMOVE";
+        case DirectorTool::Maintenance: return "MAINTENANCE";
+    }
+    return "DIRECTOR";
+}
+
+const char* GraphicalView::director_option_name() const {
+    static constexpr int capacities[] = {0, 1, 2, 4};
+    static constexpr const char* structures[] = {
+        "wall", "storage", "food machine", "materials machine", "output machine", "conveyor"
+    };
+    static char option[48];
+    switch (director_tool_) {
+        case DirectorTool::Quota:
+            std::snprintf(option, sizeof(option), "%.2f/tick", director_quota_);
+            break;
+        case DirectorTool::Zone:
+            std::snprintf(option, sizeof(option), "capacity %d", capacities[director_zone_index_]);
+            break;
+        case DirectorTool::Place:
+            std::snprintf(option, sizeof(option), "%s", structures[director_structure_index_]);
+            break;
+        case DirectorTool::Remove:
+            std::snprintf(option, sizeof(option), "selected structure");
+            break;
+        case DirectorTool::Maintenance:
+            std::snprintf(option, sizeof(option), "%s", maintenance_priority_name(director_priority_));
+            break;
+    }
+    return option;
+}
+
+void GraphicalView::toggle_director_edit() {
+    director_edit_ = !director_edit_;
+    if (director_edit_) {
+        director_restore_running_ = running_;
+        running_ = false;
+        director_quota_ = sim_.current_quota();
+        director_status_ = "Editing pauses simulation";
+    } else {
+        running_ = director_restore_running_;
+        director_status_.clear();
+    }
+}
+
+void GraphicalView::cycle_director_option(int dir) {
+    if (director_tool_ == DirectorTool::Zone) {
+        director_zone_index_ = (director_zone_index_ + dir + 4) % 4;
+    } else if (director_tool_ == DirectorTool::Place) {
+        director_structure_index_ = (director_structure_index_ + dir + 6) % 6;
+    } else if (director_tool_ == DirectorTool::Maintenance) {
+        director_priority_ = director_priority_ == MaintenancePriority::High
+            ? MaintenancePriority::Normal : MaintenancePriority::High;
+    }
+}
+
+void GraphicalView::apply_director_quota() {
+    DirectorResult result = sim_.apply_director_command(DirectorSetQuota{director_quota_});
+    director_status_ = result.applied() ? "Quota applied" : director_error_name(result.error);
+}
+
+void GraphicalView::apply_director_at(int x, int y) {
+    static constexpr int capacities[] = {0, 1, 2, 4};
+    DirectorCommand command;
+    if (director_tool_ == DirectorTool::Zone) {
+        command = DirectorSetZone{x, y, capacities[director_zone_index_]};
+    } else if (director_tool_ == DirectorTool::Remove) {
+        command = DirectorRemoveStructure{x, y};
+    } else if (director_tool_ == DirectorTool::Maintenance) {
+        command = DirectorSetMaintenancePriority{x, y, director_priority_};
+    } else if (director_tool_ == DirectorTool::Place) {
+        DirectorPlaceStructure placement;
+        placement.x = x;
+        placement.y = y;
+        placement.conveyor_direction = director_direction_;
+        if (director_structure_index_ == 0) {
+            placement.structure = DirectorStructure::Wall;
+        } else if (director_structure_index_ == 1) {
+            placement.structure = DirectorStructure::Storage;
+        } else if (director_structure_index_ == 5) {
+            placement.structure = DirectorStructure::Conveyor;
+        } else {
+            placement.structure = DirectorStructure::Machine;
+            placement.machine_type = static_cast<MachineType>(director_structure_index_ - 2);
+        }
+        command = placement;
+    } else {
+        director_status_ = "Press Enter to apply quota";
+        return;
+    }
+    DirectorResult result = sim_.apply_director_command(command);
+    director_status_ = result.applied() ? "Intervention applied" : director_error_name(result.error);
 }
 
 // ============================================================
@@ -162,9 +280,20 @@ void GraphicalView::handle_events() {
                 SDL_Keycode key = e.key.keysym.sym;
                 bool shift = e.key.keysym.mod & KMOD_SHIFT;
                 keys_held_.insert(key);
+                if (e.key.repeat != 0) break;
+
+                if (key == SDLK_F12) {
+                    debug_view_ = !debug_view_;
+                    break;
+                }
+                if (key == SDLK_e) {
+                    toggle_director_edit();
+                    break;
+                }
 
                 // Escape: back/quit
                 if (key == SDLK_ESCAPE) {
+                    if (director_edit_) { toggle_director_edit(); break; }
                     if (show_quit_confirm_) { show_quit_confirm_ = false; break; }
                     if (show_help_) { show_help_ = false; break; }
                     show_quit_confirm_ = true;
@@ -181,11 +310,38 @@ void GraphicalView::handle_events() {
                     break;
                 }
 
+                if (director_edit_) {
+                    switch (key) {
+                        case SDLK_1: director_tool_ = DirectorTool::Quota; break;
+                        case SDLK_2: director_tool_ = DirectorTool::Zone; break;
+                        case SDLK_3: director_tool_ = DirectorTool::Place; break;
+                        case SDLK_4: director_tool_ = DirectorTool::Remove; break;
+                        case SDLK_5: director_tool_ = DirectorTool::Maintenance; break;
+                        case SDLK_LEFTBRACKET: cycle_director_option(-1); break;
+                        case SDLK_RIGHTBRACKET: cycle_director_option(1); break;
+                        case SDLK_MINUS:
+                            director_quota_ = std::max(0.0f, director_quota_ - 0.01f); break;
+                        case SDLK_EQUALS:
+                            director_quota_ += 0.01f; break;
+                        case SDLK_RETURN:
+                            if (director_tool_ == DirectorTool::Quota) apply_director_quota();
+                            break;
+                        case SDLK_r:
+                            if (director_tool_ == DirectorTool::Place
+                                && director_structure_index_ == 5) {
+                                director_direction_ = static_cast<ConveyorDir>(
+                                    (static_cast<int>(director_direction_) + 1) % 4);
+                            }
+                            break;
+                        default: break;
+                    }
+                    break;
+                }
+
                 switch (key) {
                     // Simulation
                     case SDLK_SPACE:
-                        if (running_) { running_ = false; paused_ = true; }
-                        else { running_ = true; paused_ = false; }
+                        running_ = !running_;
                         break;
                     case SDLK_n:
                         if (!running_) sim_.advance();
@@ -229,19 +385,21 @@ void GraphicalView::handle_events() {
                     case SDLK_TAB:
                         if (shift) prev_agent(); else next_agent(); break;
                     case SDLK_LEFTBRACKET:
-                        selected_idx_ = 0; break;
+                        selected_agent_id_ = 0; break;
                     case SDLK_RIGHTBRACKET: {
                         auto agents = sim_.alive_agents();
-                        if (!agents.empty()) selected_idx_ = (int)agents.size() - 1;
+                        for (auto entity : agents)
+                            selected_agent_id_ = std::max(selected_agent_id_,
+                                sim_.registry().get<AgentComponent>(entity).id);
                         break;
                     }
 
                     // Panel tabs
-                    case SDLK_1: panel_tab_ = PanelTab::Needs; break;
-                    case SDLK_2: panel_tab_ = PanelTab::Personality; break;
-                    case SDLK_3: panel_tab_ = PanelTab::Social; break;
-                    case SDLK_4: panel_tab_ = PanelTab::Utility; break;
-                    case SDLK_5: panel_tab_ = PanelTab::Journal; break;
+                    case SDLK_1: if (debug_view_) panel_tab_ = PanelTab::Needs; break;
+                    case SDLK_2: if (debug_view_) panel_tab_ = PanelTab::Personality; break;
+                    case SDLK_3: if (debug_view_) panel_tab_ = PanelTab::Social; break;
+                    case SDLK_4: if (debug_view_) panel_tab_ = PanelTab::Utility; break;
+                    case SDLK_5: if (debug_view_) panel_tab_ = PanelTab::Journal; break;
 
                     // Panel scroll
                     case SDLK_PAGEUP:   panel_scroll_ = std::max(0, panel_scroll_ - 5); break;
@@ -268,14 +426,23 @@ void GraphicalView::handle_events() {
                     drag_last_y_ = e.button.y;
                 }
                 if (e.button.button == SDL_BUTTON_LEFT) {
+                    float logical_x = static_cast<float>(e.button.x);
+                    float logical_y = static_cast<float>(e.button.y);
+                    SDL_RenderWindowToLogical(renderer_, e.button.x, e.button.y,
+                                              &logical_x, &logical_y);
                     int gx, gy;
-                    if (screen_to_grid(e.button.x, e.button.y, gx, gy)) {
-                        auto agents = sim_.alive_agents();
-                        for (size_t i = 0; i < agents.size(); i++) {
-                            auto& pos = sim_.registry().get<PositionComponent>(agents[i]);
-                            if (pos.x == gx && pos.y == gy) {
-                                selected_idx_ = (int)i;
-                                break;
+                    if (screen_to_grid(static_cast<int>(logical_x),
+                                       static_cast<int>(logical_y), gx, gy)) {
+                        if (director_edit_) {
+                            apply_director_at(gx, gy);
+                        } else {
+                            auto agents = sim_.alive_agents();
+                            for (size_t i = 0; i < agents.size(); i++) {
+                                auto& pos = sim_.registry().get<PositionComponent>(agents[i]);
+                                if (pos.x == gx && pos.y == gy) {
+                                    selected_agent_id_ = sim_.registry().get<AgentComponent>(agents[i]).id;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -292,7 +459,11 @@ void GraphicalView::handle_events() {
                     drag_last_y_ = e.motion.y;
                 }
                 // Track hover
-                screen_to_grid(e.motion.x, e.motion.y, hover_gx_, hover_gy_);
+                float logical_x, logical_y;
+                SDL_RenderWindowToLogical(renderer_, e.motion.x, e.motion.y,
+                                          &logical_x, &logical_y);
+                screen_to_grid(static_cast<int>(logical_x), static_cast<int>(logical_y),
+                               hover_gx_, hover_gy_);
                 break;
             case SDL_MOUSEWHEEL:
                 if (e.wheel.y > 0) zoom_target_ = std::min(4.0f, zoom_target_ * 1.1f);
@@ -358,11 +529,15 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
 
     int ac = 0;
     bool sel = false;
+    entt::entity selected_entity = entt::null;
     for (size_t i = 0; i < agents.size(); i++) {
         auto& pos = sim_.registry().get<PositionComponent>(agents[i]);
         if (pos.x == gx && pos.y == gy) {
             ac++;
-            if ((int)i == selected_idx_) sel = true;
+            if (sim_.registry().get<AgentComponent>(agents[i]).id == selected_agent_id_) {
+                sel = true;
+                selected_entity = agents[i];
+            }
         }
     }
 
@@ -387,8 +562,8 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
             else sid = SpriteID::StorageEmpty;
             break;
         }
-        case TileType::Entrance:    sid = SpriteID::Entrance; break;
         case TileType::Exit:        sid = SpriteID::Exit; break;
+        case TileType::Entrance:    sid = SpriteID::Entrance; break;
         case TileType::ScrapPile:
             sid = (d.resource_amount > 2.f) ? SpriteID::ScrapRich : SpriteID::ScrapDepleted;
             break;
@@ -419,14 +594,13 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
 
     if (ac > 0) {
         SpriteID agent_sid = SpriteID::AgentNormal;
-        if (sel && (size_t)selected_idx_ < agents.size()) {
-            auto& st = sim_.registry().get<StressComponent>(agents[selected_idx_]);
+        if (sel && selected_entity != entt::null) {
+            auto& st = sim_.registry().get<StressComponent>(selected_entity);
             switch (st.state) {
                 case StressState::NORMAL:          agent_sid = SpriteID::AgentSelected; break;
                 case StressState::DISSOCIATED:     agent_sid = SpriteID::AgentDissociated; break;
                 case StressState::HOSTILE_EUPHORIA:agent_sid = SpriteID::AgentEuphoric; break;
                 case StressState::BROKEN:          agent_sid = SpriteID::AgentBroken; break;
-                case StressState::REDEEMED:        agent_sid = SpriteID::AgentRedeemed; break;
             }
         }
         atlas_.draw_agent(agent_sid, (int)sx, (int)sy, zoom_);
@@ -450,7 +624,8 @@ void GraphicalView::render_tile(int gx, int gy, const std::vector<entt::entity>&
 // ============================================================
 
 void GraphicalView::get_output_size(int& w, int& h) const {
-    SDL_GetWindowSize(window_, &w, &h);
+    SDL_RenderGetLogicalSize(renderer_, &w, &h);
+    if (w <= 0 || h <= 0) SDL_GetWindowSize(window_, &w, &h);
 }
 
 void GraphicalView::render_rect(int x, int y, int w, int h, SDL_Color color) {
@@ -504,10 +679,10 @@ void GraphicalView::render_header_bar() {
 
     x += fonts_.drawf(x, y, COL_TEXT, FontSize::Small, "tick:%d", sim_.tick());
     x += 8;
-    x += fonts_.drawf(x, y, COL_TEXT, FontSize::Small, "alive:%d/%d",
-        sim_.alive_count(), sim_.config().initial_population);
+    x += fonts_.drawf(x, y, COL_TEXT, FontSize::Small, "alive:%d ever:%d",
+        sim_.alive_count(), sim_.ever_created());
     x += 8;
-    x += fonts_.drawf(x, y, COL_GREEN, FontSize::Small, "built:%d", sim_.total_machines_built());
+    x += fonts_.drawf(x, y, COL_GREEN, FontSize::Small, "machines:%d", sim_.built_machine_count());
     x += 8;
     x += fonts_.drawf(x, y, COL_YELLOW, FontSize::Small, "food:%.0f", sim_.total_storage_food());
     x += 8;
@@ -519,10 +694,12 @@ void GraphicalView::render_header_bar() {
 
     float qf = sim_.last_quota_fill();
     SDL_Color qf_c = (qf >= 1.0f) ? COL_GREEN : (qf > 0.0f) ? COL_YELLOW : COL_RED;
-    x += fonts_.drawf(x, y, qf_c, FontSize::Small, "quota:%.0f%%", qf * 100);
+    x += fonts_.drawf(x, y, qf_c, FontSize::Small, "demand:%.2f fill:%.0f%%",
+        sim_.current_quota(), qf * 100);
     x += 8;
 
-    x += fonts_.drawf(x, y, COL_DIM, FontSize::Small, "shipped:%.0f", sim_.total_food_shipped());
+    x += fonts_.drawf(x, y, COL_DIM, FontSize::Small, "output:%.1f shipped:%.0f",
+        sim_.total_storage_output(), sim_.total_food_shipped());
     x += 8;
     x += fonts_.drawf(x, y, COL_DIM, FontSize::Small, "broken:%d", sim_.total_machines_broken());
 
@@ -544,6 +721,13 @@ void GraphicalView::render_header_bar() {
         rx -= fonts_.text_width(" FOLLOW", FontSize::Small) + 4;
         fonts_.draw(rx, y, "FOLLOW", COL_CYAN, FontSize::Small);
     }
+    if (director_edit_) {
+        rx -= fonts_.text_width(" DIRECTOR EDIT", FontSize::Small) + 4;
+        fonts_.draw(rx, y, "DIRECTOR EDIT", COL_HIGHLIGHT, FontSize::Small);
+    } else if (debug_view_) {
+        rx -= fonts_.text_width(" DEBUG", FontSize::Small) + 4;
+        fonts_.draw(rx, y, "DEBUG", COL_RED, FontSize::Small);
+    }
 }
 
 // ============================================================
@@ -561,6 +745,11 @@ void GraphicalView::render_side_panel() {
     SDL_SetRenderDrawColor(renderer_, 50, 50, 65, 255);
     SDL_RenderDrawLine(renderer_, px, 0, px, wh);
 
+    if (!debug_view_) {
+        render_player_panel(px, pw, header_h);
+        return;
+    }
+
     int y = header_h + 4;
     int margin = 6;
     int bw = pw - margin * 2;
@@ -571,8 +760,14 @@ void GraphicalView::render_side_panel() {
         return;
     }
 
-    if ((size_t)selected_idx_ >= agents.size()) selected_idx_ = 0;
-    auto e = agents[selected_idx_];
+    auto selected = std::find_if(agents.begin(), agents.end(), [&](entt::entity entity) {
+        return sim_.registry().get<AgentComponent>(entity).id == selected_agent_id_;
+    });
+    if (selected == agents.end()) {
+        selected = agents.begin();
+        selected_agent_id_ = sim_.registry().get<AgentComponent>(*selected).id;
+    }
+    auto e = *selected;
     auto& ag  = sim_.registry().get<AgentComponent>(e);
     auto& nd  = sim_.registry().get<NeedsComponent>(e);
     auto& ps  = sim_.registry().get<PersonalityComponent>(e);
@@ -582,6 +777,7 @@ void GraphicalView::render_side_panel() {
     auto& po  = sim_.registry().get<PositionComponent>(e);
     auto& soc = sim_.registry().get<SocialComponent>(e);
     auto& op  = sim_.registry().get<OpinionComponent>(e);
+    auto& life = sim_.registry().get<LifecycleComponent>(e);
 
     char buf[64];
     int lh_s = fonts_.line_height(FontSize::Small);
@@ -595,7 +791,9 @@ void GraphicalView::render_side_panel() {
     static const char* aname[] = {
         "GATHER","BUILD","WORK","EAT","REST","SOCIAL","CREATE","EXPLORE","GETFOOD","MAINT","DSMNTL","SABOTAGE","IDLE"
     };
-    std::snprintf(buf, sizeof(buf), "%s  pos:%d,%d", aname[(int)ac.current], po.x, po.y);
+    int age = life.age_at_entry + std::max(0, sim_.tick() - life.entry_tick);
+    std::snprintf(buf, sizeof(buf), "%s pos:%d,%d age:%d gen:%d",
+        aname[(int)ac.current], po.x, po.y, age, life.generation);
     fonts_.draw(px + margin, y, buf, COL_DIM, FontSize::Small);
     y += lh_s + 4;
 
@@ -645,7 +843,6 @@ void GraphicalView::render_side_panel() {
             fonts_.drawf(px + margin, y, {200, 100, 255, 255}, FontSize::Small, "trauma: %.2f", st.trauma);
             y += lh_s + 1;
             fonts_.draw(px + margin, y, stress_state_name(st.state),
-                st.state == StressState::REDEEMED ? COL_GREEN :
                 st.state == StressState::BROKEN ? COL_RED : COL_DIM, FontSize::Small);
             y += lh_s + 1;
             if (ag.noncompliance > 0.01f) {
@@ -693,14 +890,14 @@ void GraphicalView::render_side_panel() {
                 render_bar(bar_x, y + 1, bar_w, lh_s - 2, val / 2.0f, {100, 100, 130, 255}, COL_BAR_BG);
                 y += lh_s + 1;
             };
-            ur("GATH", ac.last_utility_gather);
-            ur("BULD", ac.last_utility_build);
-            ur("WORK", ac.last_utility_work);
-            ur("EAT", ac.last_utility_eat);
-            ur("REST", ac.last_utility_rest);
-            ur("SOC", ac.last_utility_socialize);
-            ur("CREA", ac.last_utility_create);
-            ur("EXPL", ac.last_utility_explore);
+            ur("GATH", ac.last_utility[static_cast<size_t>(ActionType::GATHER)].final);
+            ur("BULD", ac.last_utility[static_cast<size_t>(ActionType::BUILD)].final);
+            ur("WORK", ac.last_utility[static_cast<size_t>(ActionType::WORK)].final);
+            ur("EAT", ac.last_utility[static_cast<size_t>(ActionType::EAT)].final);
+            ur("REST", ac.last_utility[static_cast<size_t>(ActionType::REST)].final);
+            ur("SOC", ac.last_utility[static_cast<size_t>(ActionType::SOCIALIZE)].final);
+            ur("CREA", ac.last_utility[static_cast<size_t>(ActionType::CREATE)].final);
+            ur("EXPL", ac.last_utility[static_cast<size_t>(ActionType::EXPLORE)].final);
             y += 4;
             break;
         }
@@ -728,7 +925,6 @@ void GraphicalView::render_side_panel() {
                 case StressState::DISSOCIATED:     return {120, 120, 160, 255};
                 case StressState::HOSTILE_EUPHORIA: return {220, 80, 80, 255};
                 case StressState::BROKEN:          return {90, 90, 90, 255};
-                case StressState::REDEEMED:        return {80, 220, 160, 255};
                 default:                           return COL_DIM;
             }
         };
@@ -802,8 +998,89 @@ void GraphicalView::render_side_panel() {
     // Footer
     render_separator(px + 3, footer_y - 2, pw - 6);
     fonts_.drawf(px + margin, footer_y, COL_DIM, FontSize::Small,
-        "tick:%d alive:%d built:%d",
-        sim_.tick(), sim_.alive_count(), sim_.total_machines_built());
+        "tick:%d alive:%d machines:%d",
+        sim_.tick(), sim_.alive_count(), sim_.built_machine_count());
+}
+
+void GraphicalView::render_player_panel(int px, int pw, int header_h) {
+    int ww, wh;
+    get_output_size(ww, wh);
+    (void)ww;
+    int margin = 8;
+    int y = header_h + 7;
+    int lh = fonts_.line_height(FontSize::Small);
+    int lh_n = fonts_.line_height(FontSize::Normal);
+
+    fonts_.draw(px + margin, y, "DIRECTOR VIEW", COL_HIGHLIGHT, FontSize::Normal);
+    y += lh_n + 5;
+    if (director_edit_) {
+        fonts_.drawf(px + margin, y, COL_CYAN, FontSize::Small, "%s: %s",
+            director_tool_name(), director_option_name());
+        y += lh + 2;
+        fonts_.draw(px + margin, y,
+            director_tool_ == DirectorTool::Quota ? "Enter applies" : "LMB applies to tile",
+            COL_DIM, FontSize::Small);
+        y += lh + 2;
+        if (!director_status_.empty()) {
+            fonts_.draw(px + margin, y, director_status_, COL_YELLOW, FontSize::Small);
+            y += lh + 2;
+        }
+    } else {
+        fonts_.draw(px + margin, y, "E: institutional controls", COL_DIM, FontSize::Small);
+        y += lh + 2;
+    }
+
+    render_separator(px + 3, y, pw - 6); y += 6;
+    fonts_.draw(px + margin, y, "OBSERVABLE CONSEQUENCES", COL_WHITE, FontSize::Small);
+    y += lh + 3;
+    fonts_.drawf(px + margin, y, COL_TEXT, FontSize::Small,
+        "Demand %.2f   fulfilled %.0f%%", sim_.current_quota(), sim_.last_quota_fill() * 100.0f);
+    y += lh + 2;
+    fonts_.drawf(px + margin, y, COL_TEXT, FontSize::Small,
+        "Food %.1f   output %.1f", sim_.total_storage_food(), sim_.total_storage_output());
+    y += lh + 2;
+    fonts_.drawf(px + margin, y, COL_TEXT, FontSize::Small,
+        "Shipped %.1f   wear %.0f%%", sim_.total_food_shipped(),
+        (1.0f - sim_.factory_health()) * 100.0f);
+    y += lh + 2;
+    float density = static_cast<float>(sim_.alive_count())
+        / static_cast<float>(sim_.grid().width() * sim_.grid().height());
+    fonts_.drawf(px + margin, y, COL_TEXT, FontSize::Small,
+        "Population %d   density %.3f", sim_.alive_count(), density);
+    y += lh + 2;
+
+    int zoned = 0;
+    int priority_belts = 0;
+    for (int gy = 0; gy < sim_.grid().height(); gy++)
+        for (int gx = 0; gx < sim_.grid().width(); gx++) {
+            const auto& data = sim_.grid().data_at(gx, gy);
+            if (data.occupancy_capacity > 0) zoned++;
+            if (sim_.grid().at(gx, gy) == TileType::Conveyor
+                && data.maintenance_priority > 0) priority_belts++;
+        }
+    fonts_.drawf(px + margin, y, COL_TEXT, FontSize::Small,
+        "Zones %d   priority belts %d", zoned, priority_belts);
+    y += lh + 5;
+    fonts_.drawf(px + margin, y, COL_DIM, FontSize::Small,
+        "Recorded interventions: %zu", sim_.director_log().size());
+    y += lh + 6;
+
+    render_separator(px + 3, y, pw - 6); y += 6;
+    fonts_.draw(px + margin, y, "FACTUAL EVENTS", COL_WHITE, FontSize::Small);
+    y += lh + 3;
+    auto events = sim_.chronicle().last(16);
+    int max_chars = std::max(12, (pw - margin * 2) /
+        std::max(1, fonts_.text_width("m", FontSize::Small)));
+    int first = std::max(0, static_cast<int>(events.size())
+        - std::max(1, (wh - y - 8) / (lh + 2)));
+    for (int index = first; index < static_cast<int>(events.size()); index++) {
+        std::string line = events[index]->summary();
+        if (static_cast<int>(line.size()) > max_chars)
+            line = line.substr(0, max_chars - 3) + "...";
+        fonts_.draw(px + margin, y, line,
+            events[index]->agent_id < 0 ? COL_YELLOW : COL_DIM, FontSize::Small);
+        y += lh + 2;
+    }
 }
 
 // ============================================================
@@ -834,8 +1111,8 @@ void GraphicalView::render_tooltip() {
         case TileType::OpenSpace: tname = "OpenSpace"; break;
         case TileType::Machine: tname = d.built ? "Machine (built)" : "Machine (unbuilt)"; break;
         case TileType::Storage: tname = "Storage"; break;
-        case TileType::Entrance: tname = "Entrance"; break;
         case TileType::Exit: tname = "Exit"; break;
+        case TileType::Entrance: tname = "Entrance"; break;
         case TileType::ScrapPile: tname = "ScrapPile"; break;
         case TileType::Conveyor: tname = "Conveyor"; break;
         case TileType::EatingZone: tname = "EatingZone"; break;
@@ -844,14 +1121,44 @@ void GraphicalView::render_tooltip() {
         default: break;
     }
 
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
+    int window_x, window_y;
+    SDL_GetMouseState(&window_x, &window_y);
+    float logical_x, logical_y;
+    SDL_RenderWindowToLogical(renderer_, window_x, window_y, &logical_x, &logical_y);
+    int mx = static_cast<int>(logical_x);
+    int my = static_cast<int>(logical_y);
     int lh = fonts_.line_height(FontSize::Small);
 
+    std::vector<std::string> lines;
     std::snprintf(buf, sizeof(buf), "%s (%d,%d)", tname, hover_gx_, hover_gy_);
-    int tw = fonts_.text_width(buf, FontSize::Small) + 10;
-    int th = lh + 6;
-    if (ac > 0) th += lh + 2;
+    lines.emplace_back(buf);
+    if (ac > 0) lines.emplace_back("Occupants: " + std::to_string(ac));
+    if (d.occupancy_capacity > 0)
+        lines.emplace_back("Zone capacity: " + std::to_string(d.occupancy_capacity));
+    if (t == TileType::Storage) {
+        std::snprintf(buf, sizeof(buf), "food %.1f output %.1f / %.0f",
+            d.stored_food, d.stored_output, d.storage_capacity);
+        lines.emplace_back(buf);
+    } else if (t == TileType::Machine) {
+        std::snprintf(buf, sizeof(buf), "buffers %.1f  %.1f  %.1f",
+            d.stored_raw_food + d.stored_raw_material,
+            d.stored_construction_material, d.stored_output);
+        lines.emplace_back(buf);
+    } else if (t == TileType::Conveyor) {
+        std::snprintf(buf, sizeof(buf), "condition %.0f%% contents %.1f",
+            d.conveyor_condition * 100.0f, d.conveyor_contents);
+        lines.emplace_back(buf);
+        lines.emplace_back(std::string("Maintenance: ")
+            + (d.maintenance_priority > 0 ? "high" : "normal"));
+    }
+    if (director_edit_)
+        lines.emplace_back(std::string(director_tool_name()) + ": " + director_option_name());
+
+    int tw = 0;
+    for (const auto& line : lines)
+        tw = std::max(tw, fonts_.text_width(line.c_str(), FontSize::Small));
+    tw += 10;
+    int th = static_cast<int>(lines.size()) * (lh + 2) + 4;
 
     int tx = mx + 12, ty = my + 12;
     int ww, wh;
@@ -861,12 +1168,9 @@ void GraphicalView::render_tooltip() {
 
     render_rect(tx, ty, tw, th, COL_TOOLTIP_BG);
     render_rect_outline(tx, ty, tw, th, {100, 100, 140, 255});
-    fonts_.draw(tx + 5, ty + 3, buf, COL_TEXT, FontSize::Small);
-
-    if (ac > 0) {
-        std::snprintf(buf, sizeof(buf), "Agents: %d", ac);
-        fonts_.draw(tx + 5, ty + 3 + lh + 2, buf, COL_CYAN, FontSize::Small);
-    }
+    for (size_t index = 0; index < lines.size(); index++)
+        fonts_.draw(tx + 5, ty + 3 + static_cast<int>(index) * (lh + 2),
+            lines[index], index == 0 ? COL_TEXT : COL_CYAN, FontSize::Small);
 }
 
 // ============================================================
@@ -879,7 +1183,7 @@ void GraphicalView::render_help_overlay() {
     int lh = fonts_.line_height(FontSize::Small);
     int lh_n = fonts_.line_height(FontSize::Normal);
 
-    int ow = 380, oh = lh_n + 12 + (20 * (lh + 2));
+    int ow = 420, oh = lh_n + 12 + (37 * (lh + 2));
     int ox = (ww - ow) / 2, oy = (wh - oh) / 2;
 
     render_rect(ox, oy, ow, oh, {15, 15, 25, 240});
@@ -912,7 +1216,18 @@ void GraphicalView::render_help_overlay() {
     row("< / >", "Speed down / up");
     y += 4;
 
-    fonts_.draw(x, y, "Agents & Panel", COL_CYAN, FontSize::Small); y += lh + 2;
+    fonts_.draw(x, y, "Director", COL_CYAN, FontSize::Small); y += lh + 2;
+    row("E", "Open controls (pauses)");
+    row("1-5", "Quota/zone/place/remove/maint");
+    row("[ / ]", "Cycle tool option");
+    row("- / =", "Adjust pending quota");
+    row("Enter", "Apply quota");
+    row("LMB", "Apply tile intervention");
+    row("R", "Rotate selected conveyor");
+    row("F12", "Explicit debug view");
+    y += 4;
+
+    fonts_.draw(x, y, "Debug inspection", COL_CYAN, FontSize::Small); y += lh + 2;
     row("Tab / S-Tab", "Next / prev agent");
     row("[ / ]", "First / last agent");
     row("LMB", "Select agent on tile");

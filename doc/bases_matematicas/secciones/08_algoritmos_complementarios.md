@@ -16,7 +16,7 @@ Computation of the Voronoi diagram for $n$ points in 2D is $O(n \log n)$ via For
 
 ## L-Systems for Vegetation Modeling
 
-Lindenmayer systems (L-systems) are parallel rewriting grammars originally developed by botanist Aristid Lindenmayer in 1968 to model the growth patterns of filamentous organisms [@lindenmayer1968}. An L-system consists of:
+Lindenmayer systems (L-systems) are parallel rewriting grammars originally developed by @lindenmayer1968 to model the growth patterns of filamentous organisms. An L-system consists of:
 
 - An *alphabet* $\Sigma$ of symbols.
 - An *axiom* $\omega \in \Sigma^+$ (the initial string).
@@ -30,7 +30,7 @@ For community simulation, L-systems are used during world generation to produce 
 
 ## Boids: Reynolds' Flocking Model
 
-Reynolds (1987) [@reynolds1987} introduced the Boids model to generate realistic flocking behavior for computer animation. Each agent (boid) computes its velocity based on three local forces derived from nearby neighbors within a perception radius:
+@reynolds1987 introduced the Boids model to generate realistic flocking behavior for computer animation. Each agent (boid) computes its velocity based on three local forces derived from nearby neighbors within a perception radius:
 
 - **Separation**: steer to avoid crowding neighbors.
 
@@ -54,7 +54,7 @@ For community simulation, boids can control herd animal behavior, migration patt
 
 ## Turing Patterns
 
-Alan Turing proposed in 1952 that biological pattern formation (stripes, spots, spirals) can arise from the interaction of two chemical morphogens with different diffusion rates [@turing1952}:
+@turing1952 proposed that biological pattern formation (stripes, spots, spirals) can arise from the interaction of two chemical morphogens with different diffusion rates:
 
 $$\frac{\partial u}{\partial t} = D_u \nabla^2 u + f(u, v)$$ {#eq:turing-u}
 
@@ -90,7 +90,7 @@ For community simulation, opinion dynamics can model the spread of cultural trai
 
 ## Tropical Geometry: The Algebraic Shape of Decision, Search, and Utility {#sec:tropical}
 
-The preceding subsections present heterogeneous algorithms (spatial tessellation, generative grammars, flocking, reaction-diffusion, opinion averaging) that appear mathematically unrelated. A surprising unifying fact is that **three of the load-bearing computations in *La Vida Misma*** — action selection, pathfinding, and the utility functions themselves — **are computations over the tropical semiring**, whether or not they were designed with that framing in mind. This subsection makes the connection explicit, because doing so clarifies what each system is *actually* computing and yields formal tools (tropical convexity, tropical equilibration) that apply to all three at once.
+The preceding subsections present heterogeneous algorithms (spatial tessellation, generative grammars, flocking, reaction-diffusion, opinion averaging) that appear mathematically unrelated. Two load-bearing computations in *La Vida Misma* have a useful tropical interpretation: shortest-path search is min-plus, and greedy action selection is the zero-temperature limit of the implemented Boltzmann selector. Some min/max utility fragments can also be described tropically, but the complete nonlinear utility model cannot.
 
 ### The Tropical Semiring
 
@@ -102,7 +102,7 @@ where the tropical "addition" $\oplus$ is ordinary minimum and the tropical "mul
 
 ### Application 1: A* Pathfinding Is Min-Plus Linear Algebra
 
-The shortest-path problem is the canonical computation of the min-plus semiring [@mohri2002]. Pathfinding via A* (Section @sec:pathfinding) is a concrete instance: the total path cost is the tropical product (ordinary sum) of edge weights, and the optimal path is the tropical sum (ordinary minimum) over alternative paths.
+The shortest-path problem is the canonical computation of the min-plus semiring [@mohri2002]. Pathfinding via A* (@sec:pathfinding) is a concrete instance: the total path cost is the tropical product (ordinary sum) of edge weights, and the optimal path is the tropical sum (ordinary minimum) over alternative paths.
 
 The implementation in `pathfinding.h` makes this literal. The `f`-score is the tropical product of the accumulated cost and the heuristic:
 
@@ -122,52 +122,58 @@ if (ng < g_score[ni]) {              // tropical sum (min)
 
 The initial `g_score` seed of `999999` is the additive identity $\infty$ of the min-plus semiring. The min-heap keyed on `f` repeatedly extracts the $\min$ of the open set. This is a textbook fixpoint computation over $(\mathbb{R} \cup \{\infty\}, \min, +)$.
 
-### Application 2: Boltzmann Action Selection Is a Deformed Max-Plus Semiring
+### Application 2: Boltzmann Selection and the Max Limit
 
-The agent decision system (Section @sec:agentes) selects the highest-utility action each tick. The naive rule $a^* = \arg\max_{a} U(a)$ is exactly the $\oplus = \max$ operation of the max-plus semiring. The implementation in `sim_utility.cpp` replaces this hard argmax with a **Boltzmann softmax** controlled by a temperature $\tau$:
+The greedy limiting rule $a^* = \arg\max_{a} U(a)$ is exactly the $\oplus = \max$ operation of the max-plus semiring. The implemented agent selector in `sim_utility.cpp` instead uses a **Boltzmann softmax** over feasible positive-score actions, controlled by a temperature $\tau$:
 
 ```
 float tau = config_.selection_temperature;     // config.h: tau=0.4, "0=greedy"
 weights[i] = std::exp((u - max_u) / tau);      // sim_utility.cpp
 ```
 
-This is not an arbitrary smoothing. The softmax is the standard **LogSumExp** function, which is the unique optimal smooth approximation to the max function in a precise sense: every overestimating smoothing of $\max$ differs from it by at least as much as LogSumExp does. Formally:
+After normalization, these weights define softmax probabilities. The related
+scalar LogSumExp function is
 
-$$\mathrm{LSE}_{1/\tau}(\mathbf{u}) = \tau \log \sum_i e^{u_i / \tau} \xrightarrow{\tau \to 0^+} \max_i u_i$$
+$$\mathrm{LSE}_{\tau}(\mathbf{u}) = \tau \log \sum_i e^{u_i / \tau} \xrightarrow{\tau \to 0^+} \max_i u_i.$$
 
-In the zero-temperature limit, the softmax degenerates to the one-hot argmax, recovering the undeformed max-plus semiring exactly. The parameter `selection_temperature` is therefore a **deformation parameter** that interpolates between the tropical semiring ($\tau = 0$, greedy/deterministic) and the standard real semiring ($\tau \to \infty$, uniform/random). The same pattern governs the factory adversary's target selection (`simulation.cpp`, `restructure_temperature`), which is structurally identical: `std::exp((scores[i] - max_score) / tau)`. Both selection sites in the codebase are tropical deformations.
+Its gradient with respect to utilities is the softmax distribution. As temperature
+approaches zero, probability concentrates on maximizing actions; it becomes
+one-hot only when the maximum is unique, while ties retain mass across maximizers.
+At high temperature the implementation approaches a uniform distribution over
+positive-score feasible actions. These are limiting facts about stochastic choice,
+not an interpolation between semirings. A structurally similar target softmax
+survives only in historical `external.policy_variant = 0`; the canonical
+indifferent institution uses a deterministic physical maximum and must not be
+described as a second strategic selector.
 
-### Application 3: Utility Functions Are Tropical Rational Functions
+### Application 3: Limits of the Utility Analogy
 
-The composite utility $U(a) = \sum_i w_i f_i(\text{need}_i)$ (Eq. @eq:utility-composite) is piecewise-linear in the need variables once the threshold gates are accounted for. Three representative structures in `sim_utility.cpp` make this precise:
+A function assembled solely from finitely many affine pieces through `min`, `max`,
+and addition admits a tropical-polynomial or tropical-rational description. Some
+small utility fragments have that shape, such as clamped linear factors and maxima
+between action sub-scores. The implemented action utilities as a whole do not.
 
-1. **Thresholded multiplicative gates** (the "Maslow boost"):
-   ```
-   if (needs.hunger < 0.3 && needs.rest < 0.3) u_socialize *= 4.0;
-   ```
-   These produce kinks in the utility surface at each threshold.
-
-2. **Piecewise-quadratic spike** (`critical_spike`):
-   ```
-   if (need < 0.75) return 0.0;
-   return ((need - 0.75)/0.25) * ((need - 0.75)/0.25) * 5.0;
-   ```
-   Identically zero below $0.75$, polynomial above.
-
-3. **Bonabeau response threshold** (`bonabeau`, Bonabeau et al. 1996):
-   ```
-   return s2 / (s2 + t2 + 0.001f);
-   ```
-   Applied multiplicatively to every action utility (lines 868--875).
-
-A function built from finitely many affine pieces joined at thresholds is a **tropical polynomial**; a difference of two such functions is a **tropical rational function**. Zhang, Naitzat, and Lim (2018) [@zhang2018tropical] showed that the decision boundaries of piecewise-linear classifiers (such as ReLU neural networks) are exactly tropical hypersurfaces, and that the number of linear regions controls the classifier's expressiveness. The agent utilities in *La Vida Misma* inhabit the same class: the "number of behavioral regimes" an agent can express is bounded by the number of linear regions of its utility surface, which is a tropical-geometric quantity.
+Canonical survival urgency includes a sigmoid; retained variants include powers
+and quadratic spikes; Bonabeau response thresholds are rational functions; and
+many terms are multiplied together. Threshold branches may add kinks or jumps,
+but they do not turn these nonlinear expressions into affine pieces. Results for
+piecewise-linear classifiers and tropical hypersurfaces [@zhang2018tropical]
+therefore cannot be transferred to the full behavioral surface without first
+constructing and validating an explicit piecewise-linear approximation.
 
 ### Why This Unification Matters
 
-Treating action selection, search, and utility under one algebraic roof has three payoffs:
+Keeping exact tropical structure separate from limiting analogies has three payoffs:
 
-- **Consistency.** The deformation parameter `selection_temperature` and the pathfinding cost are not ad hoc: both live in the same semiring-theoretic framework, so results about one (e.g., convergence of tropical fixpoint iterations) transfer to the other.
-- **Equilibration.** Noel et al. (2013) [@noel2013] define *tropical equilibration* as the regime where two opposing monomials have equal magnitude — a rigorous version of Wolfram's "edge of chaos." The adversary-intensity dial that blends the factory's strategic score with uniform randomness (`adversary_intensity` in `config.h`) is operationally a tropical-equilibration knob: at $\alpha = 0$ the system is in the uniform (max-entropy) regime; at $\alpha = 1$ it is in the pure-best-response (zero-temperature tropical) regime; the interesting dynamics live between.
-- **Auditability.** Tropical geometry provides tools (Newton polytopes, tropical convexity) to count decision regions and measure robustness. A future diagnostic could report the number of linear regions an agent's utility surface exhibits, giving a formal measure of that agent's "behavioral complexity."
+- **Precision.** Path cost is genuinely min-plus, while temperature describes a
+  smooth approximation to max. The analogy relates their limiting operations but
+  does not transfer convergence theorems between search and stochastic choice.
+- **Historical comparison.** @noel2013 define *tropical equilibration* as the regime where two opposing monomials have equal magnitude. The retained legacy `adversary_intensity` and `restructure_temperature` controls can be studied through that lens, but they do not describe canonical `external.policy_variant = 1`.
+- **Auditability.** Tropical tools may analyze explicitly piecewise-linear
+  approximations or isolated min/max fragments. They do not currently provide a
+  count of behavioral regions for the nonlinear executable utility.
 
-This subsection is descriptive rather than prescriptive: it does not change the implementation. It documents that three systems already in the codebase are instances of one mathematical structure, and it names the structure so that future analysis can use its tools.
+This subsection is descriptive rather than prescriptive: it does not change the
+implementation. It identifies exact tropical structure in pathfinding, a limiting
+connection in action selection, and the boundary beyond which that framing no
+longer describes the executable utility.

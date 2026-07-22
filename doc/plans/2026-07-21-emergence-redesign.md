@@ -1,6 +1,10 @@
 # Emergence Redesign — From Scripted Heuristics to Simple Rules
 
-> **Status (2026-07-21):** Phases 1-4 complete and shipped. The emergence redesign is finished. This document is the retrospective record.
+> **Status (2026-07-22):** Historical/completed. Phases 1-4 were implemented
+> and verified; this document is a retrospective record, not a plan to resume.
+> Later ontology, social and lifecycle work is tracked in
+> `2026-07-21-alineacion-diseno-implementacion.md` and supersedes broad emergence
+> claims made during these experiments.
 
 ## Motivation: The Gap Between Doc and Code
 
@@ -34,10 +38,10 @@ The code did not honor this. Forensic findings:
 |---|---|---|
 | **1. De-duplication refactor** | ✅ Shipped (`cb0b186`) | 4 helpers extracted, 10/10 md5-identical verification |
 | **2.1 Survival urgency sigmoid** | ✅ Shipped (`c2c76a3`) | 2.5x survival, eliminates 3 patch mechanisms |
-| **2.2 Niche dampening removed** | ✅ Shipped (`14731f7`) | Diversification emerges from Bonabeau + personality |
+| **2.2 Niche dampening removed** | ✅ Shipped (`14731f7`) | Removed dampener; retained Bonabeau/personality mechanism passed the recorded regression, without a validated diversification claim |
 | **2.3 Compliance sigmoid** | ❌ Negative result (`c17e09b`) | Reverted — kink is load-bearing, not a patch |
-| **3. Stress FSM → continuous** | ✅ Shipped (this session) | Smoothstep modifiers replace 5-state FSM; enum becomes display label |
-| **4. Documentation sync** | ✅ Shipped (this session) | 14_inhabitants.md + 16_social_fabric.md corrected to match code |
+| **3. Stress FSM → continuous** | Completed (2026-07-21) | Smoothstep modifiers replace behavioral FSM branches; enum becomes a derived label |
+| **4. Documentation sync** | Completed (2026-07-21) | Contemporary inhabitant/social sections were corrected to match that redesign |
 
 ---
 
@@ -79,10 +83,14 @@ Sigmoid formula: `s = 1 / (1 + exp(-12 * (need - 0.7))); return s * 8.0;`
 
 ### Cascading effects (unanticipated but welcome)
 
-With the sigmoid, the colony now:
-- Recovers `factory_health` to 0.95+ (was 0.00 in legacy) — because agents eat better → less stress → less sabotage → less destruction. A local change to the urgency curve propagated systemically.
-- Reduces sabotages 2-5× (32-154 vs 173-339).
-- **Unlocks faction emergence** — the colony survives long enough to accumulate trust. This was blocked in the legacy regime.
+In the original sigmoid experiment, the colony:
+- Recovered the then-behavioral `factory_health` metric to 0.95+ (from 0.00 in
+  legacy) because agents ate better, accumulated less stress and sabotaged less.
+  Later alignment work replaced this canonical causal role with shipped-output
+  support; the historical result is not a description of current policy.
+- Reduced sabotages 2-5× (32-154 vs 173-339).
+- Extends the observation window for trust and social learning. This did not, by
+  itself, establish factions or any other canonical collective ontology.
 
 ### Phase 2.3 — negative result (valuable)
 
@@ -92,59 +100,42 @@ The kink encodes a real behavioral regime: "compliance stays HIGH until meaning 
 
 ---
 
-## Phase 3 — Stress FSM → continuous (deferred)
+## Phase 3 — Stress FSM → continuous (completed)
 
-**Goal:** Replace the 5 scripted qualitative states with continuous modifiers derived from `stress.value`, honoring `07_principios_diseno.md:7` ("a depressed dwarf is not a scripted state, it is a conjunction...").
+**Historical goal:** replace scripted qualitative behavior branches with
+continuous modifiers derived from `stress.value`, while preserving display labels
+and testing against the Phase 2 baseline.
 
-Current FSM (`components.h:212-218`):
-```
-NORMAL (0.0-0.4) → DISSOCIATED (0.4-0.7) → HOSTILE_EUPHORIA (0.7-0.9) → BROKEN (0.9+)
-                                                                ↘ REDEEMED (post-sabotage)
-```
+### Implemented result
 
-Transitions at `simulation.cpp:544-547`, behavioral multipliers scattered across `sim_utility.cpp:700-701, 728, 741, 784-786`.
-
-### Sub-tasks
-
-**3.1 — Replace the 4 numeric states with smoothstep modifiers.** E.g. `gregariousness_mult = 1.0 - smoothstep(0.4, 0.7, stress.value) * 0.3` instead of `if state == DISSOCIATED then 0.7`. Same effect, no FSM.
-
-**3.2 — REDEEMED is the hard case.** It rewrites personality (`compliance *= 0.5f`, `sim_execute.cpp:1142-1175`) and carries encoded narrative ("collectivist martyr"). Plan: move it to the existing `can_redeem` flag, treat redemption as a chronicle *event* not a stress *state*. This honors `03_agentes_ia.md:85` ("no event has a predetermined narrative interpretation").
-
-**3.3 — HOSTILE_EUPHORIA's artificial mood boost.** Model that chronic high stress *disconnects* mood from need-satisfaction. Can emerge from `update_mood` (social.h) if the lerp target is modified by stress, without an FSM state.
-
-### Risks
-- REDEEMED is narratively load-bearing; testers may notice if the redemption arc disappears. Preserve as event.
-- The FSM transitions are read in many places; grep `StressState::` across src/ before removing.
-- Apply the same A/B-test discipline as Phase 2: one state at a time, `vida_batch analysis 3000` between changes, revert on >30% alive-count regression in any seed.
-
-### Regression target
-Post-Phase-2 baseline captured at `/tmp/redesign_baseline_v3/analysis_seed{0,1,2,3,7}.txt` (md5s in commit `c2c76a3` message). Re-capture fresh at start of next session since `/tmp` does not persist across reboots.
+- `urgency.stress_model_variant = 1` is the canonical/default path. Variant `0`
+  retains the old discrete behavior only for explicit historical A/B comparison.
+- Gregariousness, creativity, noncompliance response, work suppression, mood and
+  breakdown risk use smoothstep functions of continuous stress. `StressState` is
+  derived from that value for GUI and Chronicle presentation rather than being
+  the canonical behavioral driver.
+- The behavioral `REDEEMED` state and its personality rewrite were removed. Later
+  alignment work retained only a factual post-sabotage pause event, without a
+  predetermined martyr or redemption ontology.
+- The established `0 1 2 3 7` regression guard was applied one mechanism at a
+  time. The temporary `/tmp` baseline mentioned during development is no longer
+  an instruction or prerequisite for resuming this completed plan.
 
 ---
 
-## Phase 4 — Documentation sync (deferred)
+## Phase 4 — Documentation sync (completed)
 
-**Goal:** Align docs with the post-redesign reality.
+The contemporary inhabitants and social-fabric sources were updated after the
+utility/stress experiments: action selection was described as softmax rather than
+argmax, unsupported leadership/`w_fear` claims were removed or qualified, and
+implementation status was separated from theory. The broader Phase 9
+consolidation in the alignment plan was completed later and did not reopen this
+completed redesign.
 
-- **`14_inhabitants.md`**: argmax formulation → softmax (already documented in §8.6 tropical); update skill-feedback claim if Phase 3 changes utility inputs.
-- **`16_social_fabric.md`**: leadership "centrality metrics" claim vs the actual `influence` formula in `social.h:163-166` — either implement real centrality or correct the doc.
-- **Implementation-status block** in each theoretical section: which emergence claims are delivered, which aspirational, which intentionally scripted.
-- **Remove `w_fear`** reference (`16_social_fabric.md:81`) — still does not exist in code.
-
----
-
-## How to Resume
-
-1. Re-capture the regression baseline (the `/tmp` md5s do not survive reboot):
-   ```
-   cd build
-   for seed in 0 1 2 3 7; do
-     ./vida_batch analysis 3000 $seed > /tmp/redesign_baseline_v3/analysis_seed${seed}.txt
-   done
-   ```
-2. Confirm `config/default.toml` has `curve_variant = 3` (the sigmoid default).
-3. Start Phase 3.1 (the 4 numeric stress states → smoothstep). Grep `StressState::` first to map all read sites.
-4. Use the A/B-test harness pattern from Phase 2: add a config knob, keep the legacy path, compare before committing.
+The durable lesson is experimental: preserve a legacy variant only while it
+answers a concrete A/B question, test one causal mechanism at a time, and retain
+negative findings such as the failed compliance-smoothing experiment instead of
+rewriting them as successes.
 
 ## Files touched (Phase 1 + 2)
 

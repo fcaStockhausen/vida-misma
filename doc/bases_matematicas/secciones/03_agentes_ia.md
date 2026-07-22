@@ -1,101 +1,200 @@
 # Agent-Based Modeling and Artificial Intelligence {#sec:agentes}
 
-With a world generated and dynamics established, the simulation requires inhabitants whose behavior is driven by internal state rather than scripted sequences. This section covers the formal frameworks for autonomous agent decision-making, from utility theory to agent-based modeling (ABM), which provides the mathematical and methodological foundations for simulating social systems.
+This section separates general agent-based modeling theory from the mechanisms
+implemented in *La Vida Misma*. A statement marked **Background** motivates the
+model but does not describe executable behavior. **Implemented** identifies a
+current mechanism, **Design objective** identifies a criterion used to evaluate
+it, and **Not established** identifies a hypothesis for which the present
+experiments do not provide sufficient evidence.
 
-## Agent-Based Modeling: Foundations
+## Agent-Based Modeling
 
-Agent-based modeling is a computational paradigm in which a population of autonomous agents interacts within an environment according to well-defined local rules. The defining properties of ABM, as formalized in the ODD (Overview, Design, Details) protocol [@grimm2020}, are:
+**Background.** Agent-based modeling (ABM) studies systems in which autonomous,
+heterogeneous entities interact with one another and with an environment. The ODD
+protocol organizes a model description into Overview, Design concepts, and
+Details, and asks the author to state explicitly what agents sense, how they
+adapt, where stochasticity enters, and which aggregate observations are measured
+[@grimm2020]. This is especially useful for distinguishing a programmed
+micro-mechanism from an observed macro-pattern.
 
-1. **Autonomy**: each agent maintains internal state and makes decisions independently.
-2. **Heterogeneity**: agents differ in their attributes, preferences, and history.
-3. **Locality**: agents interact with their local environment and neighbors, not with the global system state.
-4. **Path dependence**: the system's state depends on the sequence of events, not merely on initial conditions.
+Classic models such as Sugarscape show how resource distributions, bounded
+vision, metabolism, and local movement can generate aggregate distributions that
+are not stored as agent goals [@epstein1996]. Such results are theoretical
+precedents, not evidence that the same phenomena occur in this simulation.
 
-ABM emerged as a distinct methodology in the 1990s, driven by the recognition that many social, ecological, and economic phenomena cannot be adequately modeled by aggregate equations because they arise from the interaction of heterogeneous agents with local information.
+**Implemented.** An inhabitant stores individual needs, personality, stress,
+skills, inventory, spatial memory, lifecycle state, and a private random stream.
+Systems update those components in a fixed tick pipeline. No action is assigned
+by profession, community label, or `agent.id`; graph communities and founder
+archetypes are observational or initialization data rather than commands.[^agents-components]
 
-**Sugarscape** (Epstein and Axtell, 1996) [@epstein1996] is a canonical demonstration. Agents inhabit a 2D grid with a sugar resource distribution. Each agent has a metabolic rate, vision range, and movement rule (move to the visible cell with the most sugar, consume, and deplete). From these simple rules, complex macroscopic phenomena emerge: wealth inequality (Gini coefficient rises to $\sim 0.5$ without any inequality mechanism), cultural differentiation, combat, trade networks, and migration patterns. Sugarscape demonstrated that social phenomena need not be programmed at the macro level; they arise from micro-level agent interactions.
+## Feasible Utility and Stochastic Choice
 
-## Utility Theory for Agent Decision-Making
+**Background.** Utility AI assigns comparable scores to heterogeneous actions.
+A deterministic implementation would choose an argmax. A Boltzmann policy instead
+turns scores into probabilities and approaches greedy choice as its temperature
+approaches zero.
 
-The dominant approach to agent AI in simulation games is *utility-based decision-making*. Each agent evaluates a set of candidate actions $A = \{a_1, a_2, \ldots, a_n\}$ by assigning a scalar utility to each:
+The executable retains that deterministic limit when the configured temperature
+is effectively zero:
 
-$$a^* = \arg\max_{a \in A} U(a)$$ {#eq:utility-argmax}
+$$
+a_t^* = \arg\max_{a\in C_t} U_t(a).
+$$ {#eq:utility-argmax}
 
-where $U(a)$ is a composite utility function. In Dwarf Fortress, each action's utility is computed from the agent's current needs:
+This is a fallback, not the canonical policy at temperature $0.4$.
 
-$$U(a) = \sum_{i=1}^{k} w_i \cdot f_i(\text{need}_i)$$ {#eq:utility-composite}
+**Implemented.** At a decision tick, the simulation computes a score and a
+feasibility flag for each of thirteen actions. An action with no feasible target
+or effect receives no selection weight, and a score of zero also receives no
+weight. `IDLE` is always feasible and has the explicit positive score $0.02$.
+The recorded diagnostic decomposition is
 
-where $w_i$ are personality-modulated weights and $f_i$ are urgency curves. The urgency function for a need is typically a monotonically increasing function of deficit:
+$$
+U_t(a)=U_{\mathrm{self},t}(a)+U_{\mathrm{factory},t}(a)
+-U_{\mathrm{cost},t}(a)-U_{\mathrm{risk},t}(a).
+$$ {#eq:utility-composite}
 
-$$f(\text{need}) = \left(\frac{\text{need}}{\text{max\_need}}\right)^\alpha$$ {#eq:need-utility}
+At present, each action's fully shaped score is classified as either `self` or
+`factory`, and explicit cost and risk remain zero; the equation describes the
+implemented metrics contract, not four independently calibrated score models.
+For the resulting candidate set
 
-where $\alpha > 1$ produces a superlinear urgency (needs become increasingly pressing as they are neglected). This produces the behavioral pattern where agents occasionally attend to low-priority needs but become increasingly fixated on critical ones.
+$$
+C_t = \{a : \operatorname{feasible}_t(a) \land U_t(a) > 0\},
+$$
 
-Utility theory has the advantage of being *composable*: adding a new need or action requires only defining its utility contribution, not modifying the decision loop. The disadvantage is that the behavior is locally greedy---the agent selects the highest-utility action at each tick without planning ahead. In practice, this produces adequate behavior for community simulation because the rapid tick rate (many decisions per simulated unit time) compensates for the lack of lookahead.
+selection uses
 
-## Personality and Stress Systems
+$$
+\Pr(A_t=a) =
+\frac{\exp((U_t(a)-U_{\max})/\tau)}
+     {\sum_{b\in C_t}\exp((U_t(b)-U_{\max})/\tau)},
+\qquad a\in C_t,
+$$ {#eq:implemented-boltzmann}
 
-To produce behavioral heterogeneity, agents require personality models that modulate their responses to events. Dwarf Fortress uses a vector of personality facets:
+where $U_{\max}=\max_{b\in C_t}U_t(b)$ is a numerical-stability offset and the
+canonical temperature is `selection_temperature = 0.4`. If the temperature is
+effectively zero, the code uses a greedy argmax. Action commitment persists for
+several ticks, subject to feasibility and survival overrides, so choice is not an
+independent draw on every tick.[^agents-utility]
 
-$$P = (f_1, f_2, \ldots, f_k), \quad f_i \in [0, 100]$$ {#eq:personality}
+The score is not the simple quadratic expression used in earlier drafts. The
+canonical configuration selects urgency curve variant 3 for hunger and rest,
+continuous stress variant 1, personality-dependent response thresholds, mood,
+skill, local supply observations, social learning, and action-specific gates.
+Consequently, a compact universal equation for every action would be misleading;
+the executable definitions are in `src/sim_utility.cpp` and the effective tuning
+is in `config/default.toml`.
 
-where each $f_i$ represents a trait such as anxiety propensity, anger threshold, empathy, or diligence. These facets modify:
+For social, expression, and purpose, the implemented higher-need transform is
 
-- The weights $w_i$ in the utility function (anxious agents weight safety higher).
-- The rate of stress accumulation.
-- The probability of emotional reactions to events.
+$$
+u_{\mathrm{higher}}(n)=n^\alpha, \qquad \alpha=2
+$$ {#eq:need-utility}
 
-Stress is modeled as a cumulative process with three memory layers [@adams2014]:
+under the canonical configuration. Hunger and rest do **not** use this equation:
+canonical urgency variant 3 uses the scaled logistic
+$8/(1+e^{-12(n-0.7)})$.
 
-| Layer | Duration | Function |
-|---|---|---|
-| Short-term | Minutes to hours | Drives immediate behavioral responses |
-| Medium-term | Days to weeks | Modulates baseline emotional state |
-| Long-term | Months to years | Permanent personality shifts |
+## Local Information and Technical Pathfinding
 
-$$\text{stress}_t = \sigma\left(\sum_{e \in E_t} \text{impact}(e) \cdot \text{modulate}(e, P) - \text{recovery}(P)\right)$$ {#eq:stress}
+**Design objective.** Decisions should be explainable from individual state,
+observations, and bounded memory rather than colony-wide omniscience.
 
-where $E_t$ is the set of events at time $t$, $\text{impact}(e)$ is the inherent severity of event $e$, $\text{modulate}(e, P)$ adjusts impact based on personality, and $\sigma$ is a sigmoid that bounds stress to $[0, 1]$. Recovery is a personality-dependent decay term.
+**Implemented, with a limitation.** Most utility and target queries inspect a
+Manhattan radius of twelve tiles (`Simulation::OBSERVATION_RADIUS`). Food,
+materials, machines, storage, people, artifacts, and candidate places outside
+that radius do not enter ordinary choice. A remembered place may be revisited,
+but its current remote conditions are not read. Once a visible or remembered
+target has been chosen, cached A* may inspect the full grid as a technical routing
+service; that service does not choose the behavioral goal.
 
-This formulation produces stress trajectories that are path-dependent: two agents with identical personalities who experience events in different order will arrive at different stress levels. The three-layer memory structure captures the clinically observed phenomenon that recent and severe events dominate short-term behavior while cumulative history shapes long-term disposition.
+Conveyor construction is not fully local. `Grid::find_conveyor_build_site()`
+scans factory-wide machine, belt, storage, and Exit connectivity and runs a
+grid-wide breadth-first route planner before callers reject a returned build site
+farther than radius twelve. Parts of conveyor urgency also count factory-wide
+machine connections. Thus the defensible claim is **mostly local decision-making**,
+not complete epistemic locality. The counterfactual test changes distant food
+stock and verifies identical utility, action, and target, but there is not yet an
+equivalent proof for conveyor planning.[^agents-locality]
 
-## The Needs--Utility Feedback Loop
+## The Relationship Graph {#sec:relationship-graph}
 
-The combination of needs, utility evaluation, and personality creates a feedback structure:
+**Implemented.** Relationships form a directed graph over stable historical
+agent IDs. Each ordered edge stores two distinct variables:
 
-1. Needs decay over time (hunger increases, energy decreases).
-2. Rising needs increase the utility of need-satisfying actions.
-3. Personality weights determine *which* need an agent prioritizes.
-4. Completing an action reduces the corresponding need.
-5. Actions generate events that modify stress and relationships.
-6. Stress modulates personality weights, changing future priorities.
+$$
+R_{ij}=(f_{ij},t_{ij})\in[0,1]\times[-1,1],
+$$ {#eq:relationship}
 
-This loop is not scripted: no code specifies that "a hungry dwarf should eat." Instead, the eating behavior emerges from the interaction of need decay, utility maximization, and personality. The significance of this architectural choice is that adding new behaviors (e.g., a "creativity" need satisfied by crafting) requires no modification to the decision loop---only a new need curve, a set of satisfying actions, and appropriate utility weights.
+- `familiarity` in $[0,1]$, meaning accumulated evidence of contact;
+- `trust` in $[-1,1]$, meaning the observer's evaluation of the other person.
 
-## The Social Graph
+The distinction is causal. Copresence within two tiles increases familiarity in
+both directions without creating trust. Effective shared `BUILD`, `WORK`, or
+`CREATE` activity adds reciprocal familiarity and trust. `SOCIALIZE` is a stronger
+reciprocal positive interaction. Help is directional: the recipient gains trust
+in the helper, while the helper gains familiarity but not trust by fiat. A
+negative observation modifies only `observer -> actor`. Familiarity decays after
+inactivity and trust drifts toward neutral.[^agents-social]
 
-Inter-agent relationships are modeled as a weighted, directed graph $G = (V, E, w)$ where vertices $V$ are agents and each edge $e = (i, j)$ carries an affinity weight $w(i, j) \in [-100, 100]$. Events modify edge weights:
+Trust and familiarity affect social target scores, food sharing, collaboration,
+grief, opinion exchange, stress contagion, and an influence score. Every fifty
+ticks, reciprocal familiarity and trust can be used to derive connected graph
+components of at least three inhabitants. The resulting `community_id` is used
+for observation and metrics only; static policy tests prohibit utility,
+targeting, execution, and institutional policy from consuming it.
 
-$$w_{t+1}(i, j) = w_t(i, j) + \Delta w(e, i, j)$$ {#eq:relationship}
+The stress system is likewise stateful but does not implement the three memory
+layers described in older drafts. At the dedicated stress-update stage its
+scalar update can be written exactly as
 
-where $\Delta w$ depends on the event type, the agents' personalities, and their existing relationship. Stress contagion propagates through this graph: when agent $i$ experiences a stress event, neighboring agents $j$ receive a stress increment proportional to $w(i, j)$ and their own susceptibility.
+$$
+\sigma'=
+\max\!\left(0,
+\min(1,\sigma+I_t)-
+d_0[1+8(1-h)(1-r)]
+\right),
+\qquad d_0=0.005,
+$$ {#eq:stress}
 
-This structure means that the *history* of the community is encoded in the graph. Two agents who have shared many positive experiences develop a high-affinity edge, which causes them to be more affected by each other's emotional state. This produces emergent social phenomena: cliques form around agents with mutually positive edges, rivalries develop from accumulated negative interactions, and the loss of a central agent (high-degree vertex) can cascade through the community.
+where $I_t$ is the resilience-modulated input from critical hunger, critical
+rest, disease, and, only in legacy policy variant 0,
+noncompliance. Action effects, trauma, and later graph contagion are separate
+stages; @sec:stress-vida describes them.
 
-The distinction from scripted social systems is that no event has a predetermined narrative interpretation. The system records that agent $A$ witnessed agent $B$'s death at time $t$, and this modifies the relationship weights and stress levels accordingly. The player's interpretation of this data as a narrative ("Urist has been depressed since his friend died") is a projection onto the data, not something the system encodes.
+## Schelling as Background, Not a Model Claim
 
-## Schelling's Segregation Model
+**Background.** Schelling's segregation model assigns agents a same/different
+neighborhood preference and a tolerance threshold; relocation under that rule can
+produce segregation without a central segregating authority [@schelling1971].
 
-Schelling (1971) [@schelling1971] demonstrated that agents with a mild preference for similar neighbors---a threshold as low as 30%---spontaneously produce highly segregated neighborhoods on a 2D grid. Each agent evaluates the proportion of similar neighbors and moves if the proportion falls below the threshold. No central coordination is required, and no agent desires complete segregation. The result is robust across parameter variations and is one of the most widely cited examples of how individual micromotives produce collective outcomes that no individual intended.
+**Not implemented.** *La Vida Misma* has no same/different class, no Schelling
+tolerance threshold, and no rule that moves an inhabitant because neighbors are
+dissimilar. Place choice instead scores remembered outcomes and currently
+observable properties such as traffic, machinery noise, hazard, food access,
+known people, artifacts, and travel distance. It is therefore not formally a
+Schelling process.
 
-For community simulation, Schelling's model suggests that even simple preference structures embedded in the social graph can produce emergent spatial segregation, cultural differentiation, and neighborhood formation without explicit programming.
+**Not established.** The current paired experiments do not establish spatial
+segregation, subcultures, leadership, or free-riding. Those terms require a
+predeclared metric, a relevant disabled-mechanism or shuffled counterfactual,
+multiple seeds, and uncertainty over a sufficiently long horizon. The measured
+place-affinity result is narrower and is reported in @sec:spaces.
 
-## The ODD Protocol for Simulation Design
-
-Grimm et al. (2020) [@grimm2020] introduced the ODD (Overview, Design, Details) protocol as a standardized framework for describing agent-based models. While developed for scientific modeling, its structure is applicable to simulation engine design:
-
-1. **Overview**: purpose, entities, state variables, scale, process scheduling.
-2. **Design**: conceptual model, general principles, emergence, adaptation, sensing, interaction, stochasticity, observation.
-3. **Details**: initialization, input data, submodels (mathematical specification of each process).
-
-Adopting ODD as a design discipline forces explicit specification of what the simulation is intended to model, what its state variables are, and what mathematical rules govern each subsystem. This reduces the risk of ambiguous specifications that produce emergent behavior the designer cannot explain or control.
+[^agents-components]: Implementation references: `src/components.h`,
+    `src/simulation.cpp`, and `src/sim_lifecycle.cpp`. The identity-routing and
+    group-label boundaries are audited by `tests/verify_policy_audit.cmake`.
+[^agents-utility]: Implementation references: `src/sim_utility.cpp` and
+    `src/sim_targets.cpp`. `test_metrics_contract` and `test_build_can_be_disabled`
+    in `tests/simulation_tests.cpp` check explicit feasible `IDLE`, zero target
+    failures, and zero softmax weight for utility-zero actions.
+[^agents-locality]: Implementation references: `src/simulation.h`,
+    `src/sim_utility.cpp`, `src/sim_targets.cpp`, and `src/grid.h`. The distant
+    stock counterfactual is `test_unseen_stock_does_not_change_decision`; planner
+    purity is `test_conveyor_planning_is_pure` in `tests/simulation_tests.cpp`.
+[^agents-social]: Implementation reference: `src/social.h` and the social and
+    community systems in `src/simulation.cpp`. Directionality and label neutrality
+    are covered by `test_social_evidence_is_directional` and
+    `test_graph_labels_are_behavior_neutral`.

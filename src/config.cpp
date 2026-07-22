@@ -1,4 +1,5 @@
 #include "config.h"
+#include <algorithm>
 #include <toml++/toml.hpp>
 
 Config load_config(const std::string& path) {
@@ -16,7 +17,6 @@ Config load_config(const std::string& path) {
         cfg.initial_population = s->get_as<int64_t>("initial_population")->value_or(cfg.initial_population);
         cfg.max_population     = s->get_as<int64_t>("max_population")->value_or(cfg.max_population);
         cfg.seed               = s->get_as<int64_t>("seed")->value_or(cfg.seed);
-        cfg.use_wfc            = s->get_as<bool>("use_wfc")->value_or(cfg.use_wfc);
     }
 
     // Needs
@@ -38,6 +38,53 @@ Config load_config(const std::string& path) {
         cfg.create_satisfaction = a->get_as<double>("create_satisfaction")->value_or(cfg.create_satisfaction);
         cfg.explore_satisfaction= a->get_as<double>("explore_satisfaction")->value_or(cfg.explore_satisfaction);
         cfg.work_purpose_gain   = a->get_as<double>("work_purpose_gain")->value_or(cfg.work_purpose_gain);
+        cfg.allow_build         = a->get_as<bool>("allow_build")->value_or(cfg.allow_build);
+    }
+
+    if (auto culture = config["culture"].as_table()) {
+        cfg.social_learning_enabled = culture->get_as<bool>("social_learning_enabled")
+            ->value_or(cfg.social_learning_enabled);
+        cfg.spatial_affinity_enabled = culture->get_as<bool>("spatial_affinity_enabled")
+            ->value_or(cfg.spatial_affinity_enabled);
+        cfg.artifact_effects_enabled = culture->get_as<bool>("artifact_effects_enabled")
+            ->value_or(cfg.artifact_effects_enabled);
+        cfg.creative_work_ticks = culture->get_as<int64_t>("creative_work_ticks")
+            ->value_or(cfg.creative_work_ticks);
+    }
+
+    if (auto lifecycle = config["lifecycle"].as_table()) {
+        cfg.natural_mortality_enabled = lifecycle->get_as<bool>("natural_mortality_enabled")
+            ->value_or(cfg.natural_mortality_enabled);
+        cfg.life_expectancy_ticks = lifecycle->get_as<int64_t>("life_expectancy_ticks")
+            ->value_or(cfg.life_expectancy_ticks);
+        cfg.lifespan_spread = lifecycle->get_as<double>("lifespan_spread")
+            ->value_or(cfg.lifespan_spread);
+        cfg.maturity_age_ticks = lifecycle->get_as<int64_t>("maturity_age_ticks")
+            ->value_or(cfg.maturity_age_ticks);
+        cfg.founder_age_min_ticks = lifecycle->get_as<int64_t>("founder_age_min_ticks")
+            ->value_or(cfg.founder_age_min_ticks);
+        cfg.founder_age_max_ticks = lifecycle->get_as<int64_t>("founder_age_max_ticks")
+            ->value_or(cfg.founder_age_max_ticks);
+        cfg.arrivals_enabled = lifecycle->get_as<bool>("arrivals_enabled")
+            ->value_or(cfg.arrivals_enabled);
+        cfg.arrival_rate_per_1000_ticks = lifecycle->get_as<double>("arrival_rate_per_1000_ticks")
+            ->value_or(cfg.arrival_rate_per_1000_ticks);
+        cfg.arrival_age_min_ticks = lifecycle->get_as<int64_t>("arrival_age_min_ticks")
+            ->value_or(cfg.arrival_age_min_ticks);
+        cfg.arrival_age_max_ticks = lifecycle->get_as<int64_t>("arrival_age_max_ticks")
+            ->value_or(cfg.arrival_age_max_ticks);
+        cfg.reproduction_enabled = lifecycle->get_as<bool>("reproduction_enabled")
+            ->value_or(cfg.reproduction_enabled);
+        cfg.reproduction_check_interval_ticks = lifecycle->get_as<int64_t>("reproduction_check_interval_ticks")
+            ->value_or(cfg.reproduction_check_interval_ticks);
+        cfg.reproduction_rate_per_1000_ticks = lifecycle->get_as<double>("reproduction_rate_per_1000_ticks")
+            ->value_or(cfg.reproduction_rate_per_1000_ticks);
+        cfg.reproduction_cooldown_ticks = lifecycle->get_as<int64_t>("reproduction_cooldown_ticks")
+            ->value_or(cfg.reproduction_cooldown_ticks);
+        cfg.personality_mutation_amplitude = lifecycle->get_as<double>("personality_mutation_amplitude")
+            ->value_or(cfg.personality_mutation_amplitude);
+        cfg.cohort_width_ticks = lifecycle->get_as<int64_t>("cohort_width_ticks")
+            ->value_or(cfg.cohort_width_ticks);
     }
 
     // Production
@@ -48,12 +95,10 @@ Config load_config(const std::string& path) {
         cfg.machine_mat_output = p->get_as<double>("machine_mat_output")->value_or(cfg.machine_mat_output);
         cfg.machine_out_output = p->get_as<double>("machine_out_output")->value_or(cfg.machine_out_output);
         cfg.machine_input  = p->get_as<double>("machine_input")->value_or(cfg.machine_input);
-        cfg.portion_size   = p->get_as<double>("portion_size")->value_or(cfg.portion_size);
     }
 
     // Conveyor
     if (auto c = config["conveyor"].as_table()) {
-        cfg.conveyor_build_cost = c->get_as<double>("build_cost")->value_or(cfg.conveyor_build_cost);
         cfg.conveyor_decay_rate = c->get_as<double>("decay_rate")->value_or(cfg.conveyor_decay_rate);
         cfg.conveyor_throughput = c->get_as<double>("throughput")->value_or(cfg.conveyor_throughput);
         cfg.maintain_rate       = c->get_as<double>("maintain_rate")->value_or(cfg.maintain_rate);
@@ -88,7 +133,8 @@ Config load_config(const std::string& path) {
         cfg.trauma_accumulation_rate  = st->get_as<double>("trauma_accumulation_rate")->value_or(cfg.trauma_accumulation_rate);
         cfg.trauma_resilience_impact  = st->get_as<double>("trauma_resilience_impact")->value_or(cfg.trauma_resilience_impact);
         cfg.trauma_social_impact      = st->get_as<double>("trauma_social_impact")->value_or(cfg.trauma_social_impact);
-        cfg.redemption_chance         = st->get_as<double>("redemption_chance")->value_or(cfg.redemption_chance);
+        cfg.post_sabotage_pause_chance = st->get_as<double>("post_sabotage_pause_chance")
+            ->value_or(cfg.post_sabotage_pause_chance);
         cfg.suicide_chance            = st->get_as<double>("suicide_chance")->value_or(cfg.suicide_chance);
         cfg.selection_temperature     = st->get_as<double>("selection_temperature")->value_or(cfg.selection_temperature);
     }
@@ -101,33 +147,16 @@ Config load_config(const std::string& path) {
         cfg.disease_hunger_mult     = di->get_as<double>("hunger_mult")->value_or(cfg.disease_hunger_mult);
     }
 
-    // Personality
-    if (auto pr = config["personality"].as_table()) {
-        auto load_range = [&](const char* name, float (&arr)[2]) {
-            if (auto arr_node = pr->get_as<toml::array>(name)) {
-                if (arr_node->size() >= 2) {
-                    arr[0] = (float)arr_node->get(0)->value_or((double)arr[0]);
-                    arr[1] = (float)arr_node->get(1)->value_or((double)arr[1]);
-                }
-            }
-        };
-        load_range("compliance_range", cfg.compliance_range);
-        load_range("laziness_range", cfg.laziness_range);
-        load_range("artistry_range", cfg.artistry_range);
-        load_range("gregariousness_range", cfg.gregariousness_range);
-        load_range("resilience_range", cfg.resilience_range);
-        load_range("curiosity_range", cfg.curiosity_range);
-    }
-
-    // Movement
-    if (auto mv = config["movement"].as_table()) {
-        cfg.movement_noise = mv->get_as<double>("noise")->value_or(cfg.movement_noise);
-    }
-
     // External pressure
     if (auto ex = config["external"].as_table()) {
         cfg.quota_per_tick          = ex->get_as<double>("quota_per_tick")->value_or(cfg.quota_per_tick);
         cfg.quota_growth_rate       = ex->get_as<double>("quota_growth_rate")->value_or(cfg.quota_growth_rate);
+        cfg.external_supply_variant = ex->get_as<int64_t>("supply_variant")->value_or(cfg.external_supply_variant);
+        cfg.external_policy_variant = ex->get_as<int64_t>("policy_variant")->value_or(cfg.external_policy_variant);
+        cfg.external_supply_response_ticks = ex->get_as<double>("supply_response_ticks")->value_or(cfg.external_supply_response_ticks);
+        cfg.external_supply_floor   = ex->get_as<double>("supply_floor")->value_or(cfg.external_supply_floor);
+        cfg.external_supply_low     = ex->get_as<double>("supply_low")->value_or(cfg.external_supply_low);
+        cfg.external_supply_high    = ex->get_as<double>("supply_high")->value_or(cfg.external_supply_high);
         cfg.health_decay_per_miss   = ex->get_as<double>("health_decay_per_miss")->value_or(cfg.health_decay_per_miss);
         cfg.health_recovery_per_hit = ex->get_as<double>("health_recovery_per_hit")->value_or(cfg.health_recovery_per_hit);
         cfg.machine_break_threshold = ex->get_as<double>("machine_break_threshold")->value_or(cfg.machine_break_threshold);
@@ -140,13 +169,40 @@ Config load_config(const std::string& path) {
         cfg.adversary_intensity             = ex->get_as<double>("adversary_intensity")->value_or(cfg.adversary_intensity);
         cfg.restructure_temperature         = ex->get_as<double>("restructure_temperature")->value_or(cfg.restructure_temperature);
         cfg.strategic_weight                = ex->get_as<double>("strategic_weight")->value_or(cfg.strategic_weight);
-        cfg.faction_target_bonus            = ex->get_as<double>("faction_target_bonus")->value_or(cfg.faction_target_bonus);
         cfg.watcher_influence_threshold     = ex->get_as<double>("watcher_influence_threshold")->value_or(cfg.watcher_influence_threshold);
         cfg.watcher_compliance_threshold    = ex->get_as<double>("watcher_compliance_threshold")->value_or(cfg.watcher_compliance_threshold);
         cfg.watcher_radius                  = ex->get_as<int64_t>("watcher_radius")->value_or(cfg.watcher_radius);
         cfg.noncompliance_report_threshold  = ex->get_as<double>("noncompliance_report_threshold")->value_or(cfg.noncompliance_report_threshold);
         cfg.report_severity                 = ex->get_as<double>("report_severity")->value_or(cfg.report_severity);
     }
+    if (cfg.external_supply_variant != 0 && cfg.external_supply_variant != 1) {
+        cfg.external_supply_variant = 1;
+    }
+    if (cfg.external_policy_variant != 0 && cfg.external_policy_variant != 1) {
+        cfg.external_policy_variant = 1;
+    }
+    cfg.creative_work_ticks = std::max(1, cfg.creative_work_ticks);
+    cfg.life_expectancy_ticks = std::max(1, cfg.life_expectancy_ticks);
+    cfg.lifespan_spread = std::clamp(cfg.lifespan_spread, 0.0f, 0.95f);
+    cfg.maturity_age_ticks = std::max(0, cfg.maturity_age_ticks);
+    cfg.founder_age_min_ticks = std::max(0, cfg.founder_age_min_ticks);
+    cfg.founder_age_max_ticks = std::max(cfg.founder_age_min_ticks, cfg.founder_age_max_ticks);
+    cfg.arrival_rate_per_1000_ticks = std::max(0.0f, cfg.arrival_rate_per_1000_ticks);
+    cfg.arrival_age_min_ticks = std::max(0, cfg.arrival_age_min_ticks);
+    cfg.arrival_age_max_ticks = std::max(cfg.arrival_age_min_ticks, cfg.arrival_age_max_ticks);
+    cfg.reproduction_check_interval_ticks = std::max(1, cfg.reproduction_check_interval_ticks);
+    cfg.reproduction_rate_per_1000_ticks = std::max(0.0f, cfg.reproduction_rate_per_1000_ticks);
+    cfg.reproduction_cooldown_ticks = std::max(0, cfg.reproduction_cooldown_ticks);
+    cfg.personality_mutation_amplitude = std::clamp(
+        cfg.personality_mutation_amplitude, 0.0f, 0.5f);
+    cfg.cohort_width_ticks = std::max(1, cfg.cohort_width_ticks);
+    cfg.external_supply_response_ticks = std::max(1.0f, cfg.external_supply_response_ticks);
+    cfg.external_supply_floor = std::clamp(cfg.external_supply_floor, 0.0f, 1.0f);
+    cfg.external_supply_low = std::clamp(cfg.external_supply_low, 0.0f, 0.9999f);
+    cfg.external_supply_high = std::clamp(
+        cfg.external_supply_high, cfg.external_supply_low + 0.0001f, 1.0f);
+    cfg.restructure_interval = std::max(1, cfg.restructure_interval);
+    cfg.restructure_probability = std::clamp(cfg.restructure_probability, 0.0f, 1.0f);
 
     // Director
     if (auto dir = config["director"].as_table()) {

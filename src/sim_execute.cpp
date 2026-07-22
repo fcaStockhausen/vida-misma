@@ -14,12 +14,15 @@ void Simulation::system_execute_actions() {
         if (!registry_.get<AgentComponent>(e).alive) continue;
 
         auto& action = registry_.get<ActionComponent>(e);
+        action.effected_last_tick = false;
         auto& needs  = registry_.get<NeedsComponent>(e);
         auto& inv    = registry_.get<InventoryComponent>(e);
         auto& pos    = registry_.get<PositionComponent>(e);
         auto& agent  = registry_.get<AgentComponent>(e);
         auto& stress = registry_.get<StressComponent>(e);
         auto& personality = registry_.get<PersonalityComponent>(e);
+        if (agent.id >= 0 && agent.id < static_cast<int>(metrics_.agent_action_ticks.size()))
+            metrics_.agent_action_ticks[agent.id][metric_index(action.current)]++;
 
         // Passive social satisfaction: proximity to other agents slowly
         // satisfies social need. Being near a crowd is inherently social.
@@ -35,33 +38,38 @@ void Simulation::system_execute_actions() {
             }
             if (crowd >= 3) {
                 float passive = 0.0003f * crowd;
-                if (grid_.at(pos.x, pos.y) == TileType::EatingZone) passive *= 1.5f;
                 needs.social = std::max(0.0f, needs.social - passive);
             }
         }
 
         // Passive output deposit: if carrying output and near Exit-adjacent Storage, drop it off.
         // This is the agent hauling mechanism — agents carry output from OutputMachine to Exit.
-        if (inv.output > 0.01f) {
+        bool hauled_output = false;
+        if (inv.output > 0.01f && grid_.at(pos.x, pos.y) == TileType::Storage) {
             auto exits = grid_.find_all(TileType::Exit);
-            for (int pdy = -3; pdy <= 3 && inv.output > 0.01f; pdy++)
-                for (int pdx = -3; pdx <= 3 && inv.output > 0.01f; pdx++) {
-                    int psx = pos.x + pdx, psy = pos.y + pdy;
-                    if (psx < 0 || psx >= grid_.width() || psy < 0 || psy >= grid_.height()) continue;
-                    if (grid_.at(psx, psy) != TileType::Storage) continue;
-                    bool near_exit = false;
-                    for (auto& [ex, ey] : exits)
-                        if (std::abs(psx - ex) + std::abs(psy - ey) <= 3) { near_exit = true; break; }
-                    if (!near_exit) continue;
-                    auto& sd = grid_.data_at(psx, psy);
-                    float room = sd.storage_capacity - sd.stored_food - sd.stored_raw_food
-                               - sd.stored_raw_material - sd.stored_output - sd.stored_construction_material;
-                    float dep = std::min(inv.output, room);
-                    if (dep > 0.0f) {
-                        sd.stored_output += dep;
-                        inv.output -= dep;
-                    }
+            bool near_exit = false;
+            for (auto& [ex, ey] : exits) {
+                if (std::abs(pos.x - ex) + std::abs(pos.y - ey) <= 3) {
+                    near_exit = true;
+                    break;
                 }
+            }
+            if (near_exit) {
+                auto& sd = grid_.data_at(pos.x, pos.y);
+                float room = sd.storage_capacity - sd.total_stored();
+                float dep = std::min(inv.output, room);
+                if (dep > 0.0f) {
+                    sd.stored_output += dep;
+                    inv.output -= dep;
+                    metrics_.output_hauled += dep;
+                    hauled_output = true;
+                }
+            }
+        }
+        if (hauled_output && action.current == ActionType::WORK) {
+            metrics_.target_reached[metric_index(ActionType::WORK)]++;
+            metrics_.action_executed[metric_index(ActionType::WORK)]++;
+            continue;
         }
 
         // Passive output pickup: if near an Output machine with stuck stored_output,
@@ -89,15 +97,19 @@ void Simulation::system_execute_actions() {
 
         // Only execute if at target (or action doesn't need movement)
         if (!action.at_target) continue;
+        ActionType attempted_action = action.current;
+        metrics_.target_reached[metric_index(attempted_action)]++;
 
         // Spatial gate: positional actions need the right tile under the agent.
         TileType here = grid_.at(pos.x, pos.y);
         if (!is_valid_action_tile(action.current, here)) {
             emit_log(agent.id, std::string("tried ") + action_name(action.current) +
                      " on wrong tile at (" + std::to_string(pos.x) + "," +
-                     std::to_string(pos.y) + ")");
+                     std::to_string(pos.y) + ")", EventType::COUNT);
             continue;
         }
+
+        bool action_effected = false;
 
         switch (action.current) {
 
@@ -115,7 +127,9 @@ void Simulation::system_execute_actions() {
                             inv.raw_food += amount;
                             td.resource_amount -= amount;
                             total_raw_gathered_ += amount;
-                            skills.xp_domestic += 1.0f;
+                            metrics_.resources_produced[metric_index(ResourceType::RAW_FOOD)] += amount;
+                            action_effected = true;
+                            skills.xp_domestic += 0.1f;
                             skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
                             // No per-tick log for gathering — too spammy
                         }
@@ -124,7 +138,9 @@ void Simulation::system_execute_actions() {
                             inv.raw_material += amount;
                             td.resource_amount -= amount;
                             total_raw_gathered_ += amount;
-                            skills.xp_domestic += 1.0f;
+                            metrics_.resources_produced[metric_index(ResourceType::RAW_MATERIAL)] += amount;
+                            action_effected = true;
+                            skills.xp_domestic += 0.1f;
                             skills.domestic = SkillsComponent::xp_to_level(skills.xp_domestic);
                             // No per-tick log for salvaging — too spammy
                         }
@@ -134,6 +150,7 @@ void Simulation::system_execute_actions() {
             }
 
             case ActionType::BUILD: {
+                if (!config_.allow_build) break;
                 // Collaboration bonus: multiple agents building the same tile
                 // are more efficient. Diminishing returns: 1 agent = 1x, 2 = 1.6x, 3 = 2.0x, 4 = 2.3x
                 int builders_on_tile = 1;
@@ -164,6 +181,8 @@ void Simulation::system_execute_actions() {
                         float needed = 0.15f;
                         float use = std::min({effective_build_rate, needed, inv.raw_material});
                         inv.raw_material -= use;
+                        metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += use;
+                        action_effected = use > 0.0f;
                         grid_.set(pos.x, pos.y, TileType::Machine);
                         td.machine_type = MachineType::Food;
                         td.build_progress += use;
@@ -173,8 +192,11 @@ void Simulation::system_execute_actions() {
                             td.built = true;
                             td.build_progress = td.build_cost;
                             td.claimed_by = -1;  // release claim
+                            total_machines_built_++;
+                            metrics_.machines_built[metric_index(MachineType::Food)]++;
                             emit_log(agent.id, "BUILT FoodMachine on FoodSource at (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                     EventType::BUILT_MACHINE);
                         } else {
                             td.built = false;
                             // No per-tick building progress log
@@ -192,6 +214,8 @@ void Simulation::system_execute_actions() {
                         float needed = 0.15f;
                         float use = std::min({effective_build_rate, needed, inv.raw_material});
                         inv.raw_material -= use;
+                        metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += use;
+                        action_effected = use > 0.0f;
                         grid_.set(pos.x, pos.y, TileType::Machine);
                         td.machine_type = MachineType::Materials;
                         td.build_progress += use;
@@ -201,8 +225,11 @@ void Simulation::system_execute_actions() {
                             td.built = true;
                             td.build_progress = td.build_cost;
                             td.claimed_by = -1;  // release claim
+                            total_machines_built_++;
+                            metrics_.machines_built[metric_index(MachineType::Materials)]++;
                             emit_log(agent.id, "BUILT MaterialsMachine on ScrapPile at (" +
-                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                     std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                     EventType::BUILT_MACHINE);
                         } else {
                             td.built = false;
                             // No per-tick building progress log
@@ -214,21 +241,30 @@ void Simulation::system_execute_actions() {
                 // Unbuilt Machine frame (placed by WFC): complete it
                 if (here == TileType::Machine) {
                     auto& td = grid_.data_at(pos.x, pos.y);
-                    if (!td.built && inv.raw_material > 0.05f) {
+                    float& build_material = td.machine_type == MachineType::Output
+                        ? inv.construction_material : inv.raw_material;
+                    ResourceType build_resource = td.machine_type == MachineType::Output
+                        ? ResourceType::CONSTRUCTION_MATERIAL : ResourceType::RAW_MATERIAL;
+                    if (!td.built && build_material > 0.05f) {
                         float needed = td.build_cost > 0 ? td.build_cost : 0.15f;
                         float progress_needed = needed - td.build_progress;
                         if (progress_needed > 0.01f) {
-                            float use = std::min({effective_build_rate, progress_needed, inv.raw_material});
-                            inv.raw_material -= use;
+                            float use = std::min({effective_build_rate, progress_needed, build_material});
+                            build_material -= use;
+                            metrics_.resources_consumed[metric_index(build_resource)] += use;
+                            action_effected = use > 0.0f;
                             td.build_progress += use;
                             if (td.build_progress >= needed) {
                                 td.built = true;
                                 td.build_progress = needed;
                                 td.claimed_by = -1;
+                                total_machines_built_++;
+                                metrics_.machines_built[metric_index(td.machine_type)]++;
                                 const char* mtype = td.machine_type == MachineType::Food ? "Food" :
                                                     td.machine_type == MachineType::Materials ? "Materials" : "Output";
                                 emit_log(agent.id, std::string("COMPLETED ") + mtype + "Machine at (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                         EventType::BUILT_MACHINE);
                             } else {
                                 // No per-tick building progress log
                             }
@@ -244,14 +280,21 @@ void Simulation::system_execute_actions() {
                     // OutputMachine is tier 2 of the production chain — converts
                     // construction_material into output product (quota).
                     //
-                    // NOTE: find_output_machine_site (grid.h) and the colony blueprint
-                    // (production.h build_plan) exist as infrastructure but are NOT
-                    // wired here — see sim_targets.cpp for why. The agent builds at
-                    // its current position; strategic placement is a future enhancement
-                    // pending resolution of the c_mat build-vs-feed conflict.
                     if (inv.construction_material > 0.05f) {
-                        int n_out = count_built_machines(MachineType::Output);
-                        // Build Output if we don't have enough (target: ~2)
+                        int n_out = 0;
+                        for (int gy = std::max(0, pos.y - OBSERVATION_RADIUS);
+                             gy <= std::min(grid_.height() - 1,
+                                           pos.y + OBSERVATION_RADIUS); gy++)
+                            for (int gx = std::max(0, pos.x - OBSERVATION_RADIUS);
+                                 gx <= std::min(grid_.width() - 1,
+                                               pos.x + OBSERVATION_RADIUS); gx++)
+                                if (grid_.at(gx, gy) == TileType::Machine
+                                    && std::abs(gx - pos.x) + std::abs(gy - pos.y)
+                                       <= OBSERVATION_RADIUS
+                                    && grid_.data_at(gx, gy).machine_type == MachineType::Output) {
+                                    n_out++;
+                                }
+                        // Build Output if the observable area has fewer than two.
                         if (n_out < 2) {
                             // Place an unbuilt OutputMachine frame here
                             grid_.set(pos.x, pos.y, TileType::Machine);
@@ -263,12 +306,17 @@ void Simulation::system_execute_actions() {
                             // Consume construction_material to build
                             float use = std::min({effective_build_rate, td.build_cost, inv.construction_material});
                             inv.construction_material -= use;
+                            metrics_.resources_consumed[metric_index(ResourceType::CONSTRUCTION_MATERIAL)] += use;
+                            action_effected = use > 0.0f;
                             td.build_progress += use;
                             if (td.build_progress >= td.build_cost) {
                                 td.built = true;
                                 td.build_progress = td.build_cost;
+                                total_machines_built_++;
+                                metrics_.machines_built[metric_index(MachineType::Output)]++;
                                 emit_log(agent.id, "BUILT OutputMachine at (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                         EventType::BUILT_MACHINE);
                             } else {
                                 td.built = false;
                                 // No per-tick building progress log
@@ -297,8 +345,10 @@ void Simulation::system_execute_actions() {
                                     sd.stored_raw_material = 0.0f;
                                     sd.stored_output = 0.0f;
                                     sd.built = true;
+                                    action_effected = true;
                                     emit_log(agent.id, "BUILT storage at (" +
-                                             std::to_string(sx) + "," + std::to_string(sy) + ")");
+                                             std::to_string(sx) + "," + std::to_string(sy) + ")",
+                                             EventType::BUILT_STORAGE);
                                     break;
                                 } else {
                                     // Move toward it next tick, for now contribute if we have material
@@ -329,11 +379,14 @@ void Simulation::system_execute_actions() {
                         float use = std::min({effective_build_rate, needed, inv.raw_material});
                         if (use > 0.0f) {
                             inv.raw_material -= use;
+                            metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += use;
+                            action_effected = true;
                             td.build_progress += use;
                             if (td.build_progress >= td.build_cost) {
                                 td.built = true;
                                 emit_log(agent.id, "BUILT a conveyor at (" +
-                                         std::to_string(conv_x) + "," + std::to_string(conv_y) + ")");
+                                         std::to_string(conv_x) + "," + std::to_string(conv_y) + ")",
+                                         EventType::BUILT_CONVEYOR);
                             } else {
                                 // No per-tick building progress log
                             }
@@ -349,15 +402,18 @@ void Simulation::system_execute_actions() {
                             int d = std::abs(site.x - pos.x) + std::abs(site.y - pos.y);
                             if (d <= 1) {
                                 grid_.place_new_conveyor(site.x, site.y, site.dir, 0.5f);
+                                action_effected = true;
                                 auto& td = grid_.data_at(site.x, site.y);
                                 // Immediately contribute some build progress
                                 float use = std::min(effective_build_rate, inv.raw_material);
                                 if (use > 0.0f) {
                                     inv.raw_material -= use;
+                                    metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += use;
                                     td.build_progress += use;
                                     emit_log(agent.id, "PLACED conveyor frame at (" +
                                              std::to_string(site.x) + "," + std::to_string(site.y) +
-                                             ") dir=" + std::to_string((int)site.dir));
+                                             ") dir=" + std::to_string((int)site.dir),
+                                             EventType::CONVEYOR_FRAME_PLACED);
                                 }
                                 break;
                             }
@@ -366,12 +422,13 @@ void Simulation::system_execute_actions() {
 
                     // Priority 3: Start a new EatingZone (max 1)
                     if (grid_.built_eatingzone_count() >= 1) {
-                        emit_log(agent.id, "no need for another eating zone");
+                        emit_log(agent.id, "no need for another eating zone", EventType::COUNT);
                         break;
                     }
                     if (grid_.min_distance_to_any_machine(pos.x, pos.y)
                             < config_.eatingzone_min_dist_machine) {
-                        emit_log(agent.id, "rejected eating-zone site (too close to a machine)");
+                        emit_log(agent.id, "rejected eating-zone site (too close to a machine)",
+                                 EventType::COUNT);
                         break;
                     }
                     grid_.set(pos.x, pos.y, TileType::EatingZone);
@@ -379,8 +436,10 @@ void Simulation::system_execute_actions() {
                     nd.built          = false;
                     nd.build_progress = 0.0f;
                     nd.build_cost     = config_.eatingzone_build_cost;
+                    action_effected = true;
                     emit_log(agent.id, "started an eating zone at (" +
-                             std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                             std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                             EventType::EATING_ZONE_STARTED);
                     // Fall through into the regular BUILD-progress block below.
                 }
 
@@ -415,20 +474,26 @@ void Simulation::system_execute_actions() {
                     float use = std::min({collab_rate, needed, inv.raw_material});
                     if (use > 0.0f) {
                         inv.raw_material -= use;
+                        metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += use;
+                        action_effected = true;
                         td.build_progress += use;
                         if (td.build_progress >= td.build_cost) {
                             td.built = true;
                             TileType t_after = grid_.at(pos.x, pos.y);
                             if (t_after == TileType::Machine) {
                                 total_machines_built_++;
+                                metrics_.machines_built[metric_index(td.machine_type)]++;
                                 emit_log(agent.id, "BUILT a machine at (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")!");
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")!",
+                                         EventType::BUILT_MACHINE);
                             } else if (t_after == TileType::Conveyor) {
                                 emit_log(agent.id, "BUILT a conveyor at (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                         EventType::BUILT_CONVEYOR);
                             } else {
                                 emit_log(agent.id, "BUILT an eating zone at (" +
-                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")");
+                                         std::to_string(pos.x) + "," + std::to_string(pos.y) + ")",
+                                         EventType::BUILT_EATING_ZONE);
                             }
                         }
                     }
@@ -449,10 +514,6 @@ void Simulation::system_execute_actions() {
                         SkillsComponent::xp_to_level(skills.xp_factory));
                     collab *= work_mult;
 
-                    // XP gain: every WORK tick adds factory XP
-                    skills.xp_factory += 1.0f;
-                    skills.factory_work = SkillsComponent::xp_to_level(skills.xp_factory);
-
                     std::string log_detail;
 
                     switch (td.machine_type) {
@@ -460,7 +521,11 @@ void Simulation::system_execute_actions() {
                             // FoodMachine: raw_food → processed_food
                             // Sources (in order): own tile (auto-gathered), agent inventory, adjacent storage
                             // Mild health effect: 80-100% efficiency based on factory health
-                            float health_eff = 0.8f + 0.2f * factory_health_;
+                            bool legacy_health = config_.external_supply_variant == 0
+                                || (config_.external_policy_variant == 0
+                                    && config_.director_mode == DirectorMode::CALM);
+                            float health_eff = legacy_health
+                                ? 0.8f + 0.2f * factory_health_ : 1.0f;
                             float raw_needed = config_.machine_input;
 
                             // Source 1: machine's own auto-gathered raw_food (from FoodSource underneath)
@@ -487,13 +552,16 @@ void Simulation::system_execute_actions() {
                                 log_detail = "no raw_food";
                                 break;
                             }
+                            metrics_.resources_consumed[metric_index(ResourceType::RAW_FOOD)] += total_consumed;
                             float efficiency = total_consumed / raw_needed;
                             float food_produced = config_.machine_output * efficiency * collab * health_eff;
                             // Worker keeps 40% for self-sustenance,
                             // rest goes to storage for the community.
                             float worker_keep = food_produced * 0.4f;
-                            inv.food = std::min(config_.inv_food_cap, inv.food + worker_keep);
-                            float to_store = food_produced - worker_keep;
+                            float worker_food_added = std::min(worker_keep,
+                                std::max(0.0f, config_.inv_food_cap - inv.food));
+                            inv.food += worker_food_added;
+                            float to_store = food_produced - worker_food_added;
                             float food_dep = deposit_to_adjacent_storage(pos.x, pos.y,
                                 ResourceType::FOOD, to_store);
                             float food_left = to_store - food_dep;
@@ -502,8 +570,12 @@ void Simulation::system_execute_actions() {
                                     ResourceType::FOOD, food_left);
                             }
                             total_food_produced_ += food_produced;
+                            metrics_.resources_produced[metric_index(ResourceType::FOOD)] +=
+                                worker_food_added + food_dep;
+                            action_effected = true;
                             // FoodMachine work also recovers factory health (productive labor)
-                            factory_health_ = std::min(1.0f, factory_health_ + food_dep * 0.02f);
+                            if (legacy_health)
+                                factory_health_ = std::min(1.0f, factory_health_ + food_dep * 0.02f);
                             log_detail = "+" + ff2(food_produced) + " food (ate " + ff2(total_consumed) + " raw, kept " + ff2(worker_keep) + ")";
                             break;
                         }
@@ -542,6 +614,7 @@ void Simulation::system_execute_actions() {
                                 log_detail = "no raw_material";
                                 break;
                             }
+                            metrics_.resources_consumed[metric_index(ResourceType::RAW_MATERIAL)] += total_consumed;
                             float efficiency = total_consumed / raw_needed;
                             float mat_produced = config_.machine_mat_output * efficiency * collab;
                             // Deposit to adjacent conveyors whose chain reaches a built
@@ -559,6 +632,10 @@ void Simulation::system_execute_actions() {
                                     auto& cd = grid_.data_at(nx, ny);
                                     if (!cd.built || cd.conveyor_condition < 0.2f) continue;
                                     if (!grid_.conveyor_reaches_output(nx, ny)) continue;
+                                    if (cd.conveyor_contents > 0.001f
+                                        && cd.conveyor_contents_type != ResourceType::CONSTRUCTION_MATERIAL) {
+                                        continue;
+                                    }
                                     float space = config_.conveyor_throughput - cd.conveyor_contents;
                                     if (space <= 0.01f) continue;
                                     float deposit = std::min(mat_produced - cmat_to_belt, space);
@@ -567,9 +644,13 @@ void Simulation::system_execute_actions() {
                                     cmat_to_belt += deposit;
                                 }
                             inv.construction_material += (mat_produced - cmat_to_belt);
+                            metrics_.resources_produced[metric_index(ResourceType::CONSTRUCTION_MATERIAL)] +=
+                                mat_produced;
+                            action_effected = true;
 
                             // Scrap byproduct: feed back into nearby ScrapPile (recycling loop)
                             float scrap = config_.machine_mat_output * 0.3f * efficiency * collab;
+                            float recycled = 0.0f;
                             for (int dy = -3; dy <= 3; dy++)
                                 for (int dx = -3; dx <= 3; dx++) {
                                     int nx = pos.x + dx, ny = pos.y + dy;
@@ -578,10 +659,13 @@ void Simulation::system_execute_actions() {
                                         float add = std::min(scrap, sd.resource_max - sd.resource_amount);
                                         sd.resource_amount += add;
                                         scrap -= add;
+                                        recycled += add;
                                         if (scrap < 0.001f) break;
                                     }
                                     if (scrap < 0.001f) break;
                                 }
+                            metrics_.resources_produced[metric_index(ResourceType::RAW_MATERIAL)] +=
+                                recycled;
 
                             log_detail = "+" + ff2(mat_produced) + " constr_mat (ate " + ff2(total_consumed) + " scrap)";
                             break;
@@ -593,9 +677,12 @@ void Simulation::system_execute_actions() {
                             //           (deposited by a conveyor belt — the Machine→Machine leg)
                             // Source 2: construction_material from nearby Storage (radius 3)
                             // Source 3: construction_material from agent inventory
-                            // Source 4: construction_material from ANY Storage (simulates hauling)
                             // NO auto-gather — OutputMachine does not sit on resource tiles.
-                            float health_eff = 0.5f + 0.5f * factory_health_;
+                            bool legacy_health = config_.external_supply_variant == 0
+                                || (config_.external_policy_variant == 0
+                                    && config_.director_mode == DirectorMode::CALM);
+                            float health_eff = legacy_health
+                                ? 0.5f + 0.5f * factory_health_ : 1.0f;
 
                             float want = config_.machine_out_output;
                             float total_consumed = 0.0f;
@@ -625,23 +712,9 @@ void Simulation::system_execute_actions() {
                                 remaining = want - total_consumed;
                             }
 
-                            // Source 4: global pull (simulates hauling from distant Storage)
-                            // Only if local sources are empty — represents agents hauling material.
-                            if (remaining > 0.01f) {
-                                auto all_storage = grid_.find_all(TileType::Storage);
-                                for (auto [sx, sy] : all_storage) {
-                                    if (remaining <= 0.01f) break;
-                                    auto& sd = grid_.data_at(sx, sy);
-                                    float take = std::min(remaining, sd.stored_construction_material);
-                                    if (take > 0.0f) {
-                                        sd.stored_construction_material -= take;
-                                        total_consumed += take;
-                                        remaining -= take;
-                                    }
-                                }
-                            }
-
                             if (total_consumed > 0.001f) {
+                                metrics_.resources_consumed[metric_index(ResourceType::CONSTRUCTION_MATERIAL)] +=
+                                    total_consumed;
                                 float output_produced = total_consumed * 2.0f * health_eff;
                                 // Priority 1: conveyor (for machines with Exit-connected chains)
                                 float out_dep = deposit_to_adjacent_conveyor(pos.x, pos.y,
@@ -669,7 +742,10 @@ void Simulation::system_execute_actions() {
                                     out_dep += out_left;
                                 }
                                 total_output_produced_ += out_dep;
-                                factory_health_ = std::min(1.0f, factory_health_ + out_dep * 0.03f);
+                                metrics_.resources_produced[metric_index(ResourceType::OUTPUT)] += out_dep;
+                                action_effected = true;
+                                if (legacy_health)
+                                    factory_health_ = std::min(1.0f, factory_health_ + out_dep * 0.03f);
 
                                 log_detail = "+" + ff2(out_dep) + " output (ate " + ff2(total_consumed) + " constr_mat, eff " + ff2(health_eff) + ")";
                             } else {
@@ -679,14 +755,20 @@ void Simulation::system_execute_actions() {
                         }
                     }
 
+                    if (action_effected) {
+                        skills.xp_factory += 0.1f;
+                        skills.factory_work = SkillsComponent::xp_to_level(skills.xp_factory);
+                    }
+
                     // No per-tick work log — only log significant events
                     // (handled by chronicle milestones, not every tick)
 
-                    // Work satisfies purpose slightly and tires the worker.
-                    needs.purpose = std::max(0.0f,
-                        needs.purpose - config_.work_purpose_gain);
-                    needs.hunger = std::min(1.0f, needs.hunger + 0.001f);
-                    needs.rest   = std::min(1.0f, needs.rest   + 0.001f);
+                    if (action_effected) {
+                        needs.purpose = std::max(0.0f,
+                            needs.purpose - config_.work_purpose_gain);
+                        needs.hunger = std::min(1.0f, needs.hunger + 0.001f);
+                        needs.rest   = std::min(1.0f, needs.rest   + 0.001f);
+                    }
                 }
                 break;
             }
@@ -700,6 +782,8 @@ void Simulation::system_execute_actions() {
 
                 if (inv.food >= config_.eat_food_per_tick) {
                     inv.food -= config_.eat_food_per_tick;
+                    metrics_.resources_consumed[metric_index(ResourceType::FOOD)] +=
+                        config_.eat_food_per_tick;
                     satisfaction_mul = 1.0f;
                     ate = true;
                     // Processed food helps fight disease (better nutrition)
@@ -707,20 +791,25 @@ void Simulation::system_execute_actions() {
                 } else if (inv.food > 0.01f) {
                     // Partial portion: eat what's available, proportional satisfaction
                     satisfaction_mul = inv.food / config_.eat_food_per_tick;
+                    metrics_.resources_consumed[metric_index(ResourceType::FOOD)] += inv.food;
                     inv.food = 0.0f;
                     ate = true;
                 } else if (inv.raw_food >= config_.eat_food_per_tick) {
                     // Eat raw food from inventory (reduced efficiency, disease risk)
                     // P(disease) per raw meal. Processed food from machines is disease-free.
                     inv.raw_food -= config_.eat_food_per_tick;
+                    metrics_.resources_consumed[metric_index(ResourceType::RAW_FOOD)] +=
+                        config_.eat_food_per_tick;
                     satisfaction_mul = config_.eat_raw_efficiency;
                     ate = true;
                     // Disease mechanic: raw food has per-unit disease probability
                     // P(disease) = 1 - (1 - p_d)^q, simplified for single-tick consumption
                     std::uniform_real_distribution<float> roll(0.0f, 1.0f);
-                    if (roll(rng_) < config_.raw_food_disease_chance) {
+                    if (roll(registry_.get<RandomComponent>(e).engine)
+                        < config_.raw_food_disease_chance) {
                         needs.disease = std::min(1.0f, needs.disease + config_.disease_severity);
-                        emit_log(agent.id, "got SICK from raw food (disease=" + ff2(needs.disease) + ")");
+                        emit_log(agent.id, "got SICK from raw food (disease=" + ff2(needs.disease) + ")",
+                                 EventType::DISEASE_CONTRACTED);
                     }
                 } else {
                     float taken_mul = take_from_adjacent_storage(pos.x, pos.y);
@@ -732,24 +821,26 @@ void Simulation::system_execute_actions() {
                 }
 
                 if (ate) {
+                    action_effected = true;
+                    if (agent.id >= 0 && agent.id < static_cast<int>(metrics_.agent_food_consumed.size()))
+                        metrics_.agent_food_consumed[agent.id] +=
+                            config_.eat_food_per_tick * satisfaction_mul;
                     needs.hunger = std::max(0.0f,
                         needs.hunger - config_.eat_satisfaction * satisfaction_mul);
 
-                    // Communal eating: eating at EatingZone with 3+ others nearby
-                    // gives social satisfaction — meals are a social ritual.
-                    if (grid_.at(pos.x, pos.y) == TileType::EatingZone) {
-                        int eat_neighbors = 0;
-                        auto agents_alive = alive_agents();
-                        for (auto other : agents_alive) {
-                            if (other == e) continue;
-                            auto& opos = registry_.get<PositionComponent>(other);
-                            int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                            if (d <= 5) eat_neighbors++;
-                        }
-                        if (eat_neighbors >= 2) {
-                            float communal_bonus = 0.008f * (eat_neighbors >= 3 ? 1.5f : 1.0f);
-                            needs.social = std::max(0.0f, needs.social - communal_bonus);
-                        }
+                    // A meal can become social through actual copresence at any
+                    // place; no semantic zone creates the effect.
+                    int eat_neighbors = 0;
+                    auto agents_alive = alive_agents();
+                    for (auto other : agents_alive) {
+                        if (other == e) continue;
+                        auto& opos = registry_.get<PositionComponent>(other);
+                        int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                        if (d <= 5) eat_neighbors++;
+                    }
+                    if (eat_neighbors >= 2) {
+                        float communal_bonus = 0.008f * (eat_neighbors >= 3 ? 1.5f : 1.0f);
+                        needs.social = std::max(0.0f, needs.social - communal_bonus);
                     }
 
                     // P5(c): eating at Storage also tops up the snack for to-go.
@@ -761,30 +852,59 @@ void Simulation::system_execute_actions() {
                         }
                     }
 
-                    // Social penalty: "eating at work" hurts the factory and the transgressor,
-                    // BUT only fires when another agent is close enough to witness/report it.
-                    // No witness, no penalty — the agent gets away with it.
+                    // Legacy policy treats witnessed eating as institutional misconduct.
+                    // Canonical policy permits only opinion-driven local disapproval.
                     if (is_near_machine(pos.x, pos.y)) {
-                        int witness_id = -1;
                         int r = config_.eat_at_work_witness_radius;
                         auto agents_alive = alive_agents();
-                        for (auto other : agents_alive) {
-                            if (other == e) continue;
-                            auto& opos = registry_.get<PositionComponent>(other);
-                            int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
-                            if (d <= r) {
-                                witness_id = registry_.get<AgentComponent>(other).id;
-                                break;
+                        if (config_.external_policy_variant == 0) {
+                            int witness_id = -1;
+                            for (auto other : agents_alive) {
+                                if (other == e) continue;
+                                auto& opos = registry_.get<PositionComponent>(other);
+                                int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                                if (d <= r) {
+                                    witness_id = registry_.get<AgentComponent>(other).id;
+                                    break;
+                                }
                             }
-                        }
-                        if (witness_id >= 0) {
-                            factory_health_ = std::max(0.0f,
-                                factory_health_ - config_.eat_at_work_health_decay);
-                            auto& st = registry_.get<StressComponent>(e);
-                            st.value = std::min(1.0f, st.value + config_.eat_at_work_stress);
-                            // No log — too spammy. The trust penalty still fires.
-                            // Witness loses trust in transgressor (antagonism mechanic)
-                            social_.negative_interaction(witness_id, agent.id, tick_, 0.05f);
+                            if (witness_id >= 0) {
+                                if (config_.external_supply_variant == 0
+                                    || config_.director_mode == DirectorMode::CALM) {
+                                    factory_health_ = std::max(0.0f,
+                                        factory_health_ - config_.eat_at_work_health_decay);
+                                }
+                                auto& st = registry_.get<StressComponent>(e);
+                                st.value = std::min(1.0f,
+                                    st.value + config_.eat_at_work_stress);
+                                social_.record_negative_observation(
+                                    witness_id, agent.id, tick_, 0.05f);
+                            }
+                        } else {
+                            int witness_id = -1;
+                            float strongest_disapproval = 0.0f;
+                            for (auto other : agents_alive) {
+                                if (other == e) continue;
+                                const auto& opos = registry_.get<PositionComponent>(other);
+                                int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
+                                if (d > r) continue;
+                                const auto& opinion = registry_.get<OpinionComponent>(other);
+                                float disapproval = std::max(0.0f,
+                                    opinion.values[0] - 0.65f);
+                                int candidate_id = registry_.get<AgentComponent>(other).id;
+                                if (disapproval > strongest_disapproval
+                                    || (disapproval == strongest_disapproval
+                                        && disapproval > 0.0f
+                                        && (witness_id < 0 || candidate_id < witness_id))) {
+                                    strongest_disapproval = disapproval;
+                                    witness_id = candidate_id;
+                                }
+                            }
+                            if (witness_id >= 0) {
+                                social_.record_negative_observation(
+                                    witness_id, agent.id, tick_,
+                                    strongest_disapproval * 0.1f);
+                            }
                         }
                     }
                 }
@@ -793,11 +913,13 @@ void Simulation::system_execute_actions() {
 
             case ActionType::GET_FOOD: {
                 // Grab food and/or raw_material from 8-adjacent Storage.
+                bool pulled_any = false;
                 float room = config_.inv_food_cap - inv.food;
                 if (room > 0.001f) {
                     float pulled = pull_food_from_adjacent_storage(pos.x, pos.y, room);
                     if (pulled > 0.0f) {
                         inv.food += pulled;
+                        pulled_any = true;
                         // No per-tick snack log
                     }
                 }
@@ -809,15 +931,20 @@ void Simulation::system_execute_actions() {
                             pos.x, pos.y, std::min(mat_room, 2.0f));
                         if (mat_pulled > 0.0f) {
                             inv.raw_material += mat_pulled;
+                            pulled_any = true;
                         }
                     }
                 }
+                action_effected = pulled_any;
                 break;
             }
 
-            case ActionType::REST:
+            case ActionType::REST: {
+                float rest_before = needs.rest;
                 needs.rest = std::max(0.0f, needs.rest - config_.rest_recovery);
+                action_effected = needs.rest < rest_before;
                 break;
+            }
 
             case ActionType::SOCIALIZE: {
                 auto& personality = registry_.get<PersonalityComponent>(e);
@@ -825,6 +952,7 @@ void Simulation::system_execute_actions() {
                 entt::entity neighbor = entt::null;
                 int neighbor_id = -1;
                 int nearby_count = 0;
+                float best_neighbor_score = -1000000.0f;
                 auto agents = alive_agents();
                 for (auto other : agents) {
                     if (other == e) continue;
@@ -832,55 +960,70 @@ void Simulation::system_execute_actions() {
                     int d = std::abs(opos.x - pos.x) + std::abs(opos.y - pos.y);
                     if (d <= 6) {  // C: radius 6 for socialization
                         nearby_count++;
-                        if (!has_neighbor) {
+                        int other_id = registry_.get<AgentComponent>(other).id;
+                        const auto& rel = social_.get_rel(agent.id, other_id);
+                        float candidate_score = rel.familiarity
+                            + std::max(0.0f, rel.trust) - d * 0.10f;
+                        if (!has_neighbor || candidate_score > best_neighbor_score
+                            || (candidate_score == best_neighbor_score
+                                && other_id < neighbor_id)) {
                             has_neighbor = true;
                             neighbor = other;
-                            neighbor_id = registry_.get<AgentComponent>(other).id;
+                            neighbor_id = other_id;
+                            best_neighbor_score = candidate_score;
                         }
                     }
                 }
                 if (has_neighbor) {
+                    action_effected = true;
                     // Satisfaction weighted by gregariousness (doc §15/§17)
                     float satisfaction = config_.social_satisfaction
                                        * (0.5f + 0.5f * personality.gregariousness);
+                    auto& skills = registry_.get<SkillsComponent>(e);
+                    satisfaction *= SkillsComponent::level_bonus(skills.social_skill);
                     // Congregation bonus: more agents nearby = richer social experience.
                     if (nearby_count >= 3) satisfaction *= 2.0f;
                     else if (nearby_count >= 2) satisfaction *= 1.5f;
-                    // Eating at a congregation point gives extra social value
-                    if (grid_.at(pos.x, pos.y) == TileType::EatingZone)
-                        satisfaction *= 1.5f;
                     needs.social = std::max(0.0f, needs.social - satisfaction);
                     // Process social interaction
                     social_.process_interaction(agent.id, neighbor_id, tick_);
 
-                    // FOOD SHARING: if this agent has excess food and the neighbor is hungry,
-                    // share some. Trust grows from generosity.
+                    // Food sharing follows continuous need, surplus, proximity,
+                    // personality and directed trust rather than group labels.
                     {
                         auto& oinv = registry_.get<InventoryComponent>(neighbor);
                         auto& oneeds = registry_.get<NeedsComponent>(neighbor);
-                        float excess = inv.food - 0.5f;  // keep at least 0.5 for self
                         float neighbor_need = config_.inv_food_cap - oinv.food;
-                        // Faction members share more generously
-                        float share_threshold = 0.3f;
-                        if (agent.faction_id >= 0 &&
-                            registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id)
-                            share_threshold = 0.1f;
-                        if (excess > share_threshold && neighbor_need > 0.3f && oneeds.hunger > 0.4f) {
-                            float share = std::min({excess * 0.5f, neighbor_need, 1.0f});
+                        float trust = std::max(0.0f,
+                            social_.get_rel(agent.id, neighbor_id).trust);
+                        float proximity = 1.0f - std::min(6, std::abs(
+                            registry_.get<PositionComponent>(neighbor).x - pos.x)
+                            + std::abs(registry_.get<PositionComponent>(neighbor).y - pos.y)) / 6.0f;
+                        float willingness = 0.15f
+                            + personality.gregariousness * 0.30f
+                            + trust * 0.30f
+                            + registry_.get<SocialComponent>(e).influence * 0.15f
+                            + proximity * 0.10f;
+                        float reserve = 0.8f - willingness * 0.3f;
+                        float excess = std::max(0.0f, inv.food - reserve);
+                        float need_signal = std::clamp(oneeds.hunger, 0.0f, 1.0f)
+                            * std::clamp(neighbor_need / std::max(0.1f, config_.inv_food_cap),
+                                         0.0f, 1.0f);
+                        float share = std::min({excess * willingness * need_signal,
+                                                neighbor_need, 1.0f});
+                        if (share > 0.01f) {
                             inv.food -= share;
                             oinv.food += share;
-                            // Generosity builds trust
-                            social_.process_interaction(agent.id, neighbor_id, tick_);
+                            if (agent.id >= 0 && agent.id < static_cast<int>(metrics_.agent_food_shared_given.size()))
+                                metrics_.agent_food_shared_given[agent.id] += share;
+                            if (neighbor_id >= 0 && neighbor_id < static_cast<int>(metrics_.agent_food_received.size()))
+                                metrics_.agent_food_received[neighbor_id] += share;
+                            social_.record_help(agent.id, neighbor_id, tick_, share);
                             emit_log(agent.id, "shared " + ff2(share) + " food with A" +
-                                     std::to_string(neighbor_id));
+                                     std::to_string(neighbor_id), EventType::FOOD_SHARED);
                         }
                     }
 
-                    // B4: Faction interaction satisfies meaning
-                    if (agent.faction_id >= 0 &&
-                        registry_.get<AgentComponent>(neighbor).faction_id == agent.faction_id) {
-                        needs.meaning = std::max(0.0f, needs.meaning - 0.02f);
-                    }
                     // Social contact satisfies purpose — belonging is meaning.
                     needs.purpose = std::max(0.0f, needs.purpose - 0.003f);
                     // Opinion exchange: bounded confidence (Hegselmann-Krause, doc §8.5)
@@ -894,58 +1037,60 @@ void Simulation::system_execute_actions() {
                             my_op, their_op,
                             my_soc.influence, their_soc.influence);
                     }
-                    // Faction trust modulation
-                    social_.apply_faction_trust_modulation(
-                        agent.id, neighbor_id, tick_,
-                        agent.faction_id,
-                        registry_.get<AgentComponent>(neighbor).faction_id);
                     // S5: High-trust social contact reduces stress
                     float trust = social_.get_rel(agent.id, neighbor_id).trust;
                     stress.value = std::max(0.0f, stress.value - std::max(0.0f, trust) * 0.003f);
-                    // Redeemed agents provide extra stress relief to neighbors
-                    if (stress.state == StressState::REDEEMED) {
-                        if (registry_.all_of<StressComponent>(neighbor)) {
-                            auto& ns = registry_.get<StressComponent>(neighbor);
-                            ns.value = std::max(0.0f, ns.value - 0.004f);
-                        }
-                    }
+                    skills.xp_social += 0.1f;
+                    skills.social_skill = SkillsComponent::xp_to_level(skills.xp_social);
                 } else {
                     needs.social = std::max(0.0f, needs.social - 0.002f);
                 }
                 // Record social milestone occasionally
                 if (has_neighbor && nearby_count >= 3) {
-                    chronicle(agent.id, EventType::FOOD_SHARED,
+                    chronicle(agent.id, EventType::COUNT,
                         "gathered with " + std::to_string(nearby_count) + " others", pos.x, pos.y);
                 }
                 break;
             }
 
-            case ActionType::CREATE:
-                needs.expression = std::max(0.0f,
-                    needs.expression - config_.create_satisfaction);
-                // B1: Spawn a cultural artifact at this location
-                {
+            case ActionType::CREATE: {
+                auto& skills = registry_.get<SkillsComponent>(e);
+                auto& creative = registry_.get<CreativeWorkComponent>(e);
+                float effective_rate = SkillsComponent::level_bonus(skills.artistic);
+                float before = needs.expression;
+                needs.expression = std::max(0.0f, before
+                    - config_.create_satisfaction * effective_rate);
+                if (needs.expression < before) {
+                    action_effected = true;
+                    skills.xp_art += 0.1f;
+                    skills.artistic = SkillsComponent::xp_to_level(skills.xp_art);
+                    creative.progress += effective_rate / config_.creative_work_ticks;
+                    stress.value = std::max(0.0f, stress.value - 0.002f);
+                }
+
+                if (creative.progress >= 1.0f) {
+                    creative.progress -= 1.0f;
+                    creative.completed_units++;
                     auto artifact = registry_.create();
                     registry_.emplace<PositionComponent>(artifact, pos.x, pos.y);
                     registry_.emplace<ArtifactComponent>(artifact, agent.id, 1.0f, 0);
                     artifacts_created_++;
                     artifacts_active_++;
+                    needs.meaning = std::max(0.0f, needs.meaning - 0.03f);
+                    needs.purpose = std::max(0.0f, needs.purpose - 0.006f);
+                    chronicle(agent.id, EventType::ARTIFACT_CREATED,
+                        "completed an artifact", pos.x, pos.y);
                 }
-                // B4: CREATE satisfies meaning and purpose — art is self-actualization.
-                needs.meaning = std::max(0.0f, needs.meaning - 0.03f);
-                needs.purpose = std::max(0.0f, needs.purpose - 0.006f);
-                // S5: CREATE reduces stress — the only real cure
-                stress.value = std::max(0.0f, stress.value - 0.008f);
-                chronicle(agent.id, EventType::ARTIFACT_CREATED,
-                    "created art", pos.x, pos.y);
                 break;
+            }
 
             case ActionType::EXPLORE:
+                action_effected = true;
                 needs.purpose = std::max(0.0f,
                     needs.purpose - config_.explore_satisfaction);
                 // S5: EXPLORE reduces stress — escape is a form of relief
                 stress.value = std::max(0.0f, stress.value - 0.005f);
-                random_move(pos);
+                random_move(pos, registry_.get<RandomComponent>(e).engine);
                 // B2: Chance to discover a hidden space
                 {
                     auto& personality = registry_.get<PersonalityComponent>(e);
@@ -956,11 +1101,15 @@ void Simulation::system_execute_actions() {
                     for (auto [px, py] : {std::make_pair(pos.x, pos.y)}) {
                         if (grid_.at(px, py) == TileType::OpenSpace ||
                             grid_.at(px, py) == TileType::Floor) {
-                            if (roll(rng_) < discovery_chance) {
+                            if (roll(registry_.get<RandomComponent>(e).engine)
+                                < discovery_chance) {
                                 grid_.set(px, py, TileType::HiddenSpace);
                                 grid_.data_at(px, py).hidden_space_occupancy = 0;
+                                grid_.data_at(px, py).occupancy_capacity = 2;
+                                grid_.data_at(px, py).overcapacity_ticks = 0;
                                 hidden_spaces_found_++;
-                                emit_log(agent.id, "discovered a hidden space");
+                                emit_log(agent.id, "discovered a hidden space",
+                                         EventType::HIDDEN_SPACE_FOUND);
                                 needs.meaning = std::max(0.0f, needs.meaning - 0.15f);
                                 break;
                             }
@@ -974,13 +1123,19 @@ void Simulation::system_execute_actions() {
                 // Scan 8-neighborhood for a built conveyor needing maintenance.
                 int maint_x = -1, maint_y = -1;
                 float worst_condition = 1.0f;
+                int best_priority = -1;
                 for (int dy = -1; dy <= 1; dy++)
                     for (int dx = -1; dx <= 1; dx++) {
                         if (dx == 0 && dy == 0) continue;
                         int nx = pos.x + dx, ny = pos.y + dy;
                         if (grid_.at(nx, ny) == TileType::Conveyor) {
                             const auto& cd = grid_.data_at(nx, ny);
-                            if (cd.built && cd.conveyor_condition < worst_condition) {
+                            int priority = static_cast<int>(cd.maintenance_priority);
+                            if (cd.built && cd.conveyor_condition < 0.9f
+                                && (priority > best_priority
+                                    || (priority == best_priority
+                                        && cd.conveyor_condition < worst_condition))) {
+                                best_priority = priority;
                                 worst_condition = cd.conveyor_condition;
                                 maint_x = nx; maint_y = ny;
                             }
@@ -993,6 +1148,7 @@ void Simulation::system_execute_actions() {
                     needs.purpose = std::max(0.0f,
                         needs.purpose - config_.work_purpose_gain * 0.5f);
                     if (restored > 0.001f) {
+                        action_effected = true;
                         // No per-tick maintain log
                     }
                 }
@@ -1049,12 +1205,20 @@ void Simulation::system_execute_actions() {
                         }
                     }
                 if (dism_x >= 0 && best_score > 0.0f) {
+                    const auto& before = grid_.data_at(dism_x, dism_y);
+                    ResourceType lost_type = before.conveyor_contents_type;
+                    float lost_contents = before.conveyor_contents;
                     float cost = grid_.dismantle_conveyor(dism_x, dism_y);
                     if (cost > 0.0f) {
+                        metrics_.resources_lost[metric_index(lost_type)] += lost_contents;
                         // Return partial material
                         float refund = cost * config_.dismantle_return;
+                        float raw_before = inv.raw_material;
                         inv.raw_material = std::min(10.0f,
                                                     inv.raw_material + refund);
+                        metrics_.resources_produced[metric_index(ResourceType::RAW_MATERIAL)] +=
+                            inv.raw_material - raw_before;
+                        action_effected = true;
                         // Record who dismantled and when
                         auto& td = grid_.data_at(dism_x, dism_y);
                         td.dismantled_by = agent.id;
@@ -1065,7 +1229,7 @@ void Simulation::system_execute_actions() {
                             needs.purpose - config_.work_purpose_gain * 0.3f);
                         emit_log(agent.id, "DISMANTLED conveyor at (" +
                                  std::to_string(dism_x) + "," + std::to_string(dism_y) +
-                                 ") refund=" + ff2(refund));
+                                 ") refund=" + ff2(refund), EventType::DISMANTLED);
                     }
                 }
                 break;
@@ -1074,7 +1238,7 @@ void Simulation::system_execute_actions() {
             case ActionType::SABOTAGE: {
                 // S3+S4: Irrational destruction driven by stress.
                 // Find nearest built infrastructure and damage it.
-                // On each tick of sabotage, roll for redemption or suicide.
+                // On each sabotage tick, independently sample a pause and suicide.
                 int sab_x = -1, sab_y = -1;
                 // Priority: conveyors > machines
                 for (int dy = -1; dy <= 1; dy++)
@@ -1092,12 +1256,15 @@ void Simulation::system_execute_actions() {
                     }
 
                 if (sab_x >= 0) {
+                    action_effected = true;
                     auto& td = grid_.data_at(sab_x, sab_y);
                     if (grid_.at(sab_x, sab_y) == TileType::Conveyor) {
                         // Damage conveyor condition
                         td.conveyor_condition = std::max(0.0f, td.conveyor_condition - 0.15f);
                         if (td.conveyor_condition < 0.1f && td.built) {
                             td.built = false;
+                            metrics_.resources_lost[metric_index(td.conveyor_contents_type)] +=
+                                td.conveyor_contents;
                             td.conveyor_contents = 0.0f;
                         }
                     } else if (grid_.at(sab_x, sab_y) == TileType::Machine) {
@@ -1120,7 +1287,8 @@ void Simulation::system_execute_actions() {
                         auto& np = registry_.get<PositionComponent>(ne);
                         int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
                         if (d <= 3) {
-                            social_.negative_interaction(agent.id, na.id, tick_);
+                            social_.record_negative_observation(
+                                na.id, agent.id, tick_);
                             // Witness stress contagion: seeing sabotage is disturbing
                             if (registry_.all_of<StressComponent>(ne)) {
                                 auto& ns = registry_.get<StressComponent>(ne);
@@ -1130,48 +1298,38 @@ void Simulation::system_execute_actions() {
                     }
 
                     emit_log(agent.id, "SABOTAGED infrastructure at (" +
-                             std::to_string(sab_x) + "," + std::to_string(sab_y) + ")");
+                             std::to_string(sab_x) + "," + std::to_string(sab_y) + ")",
+                             EventType::SABOTAGE);
 
-                    // S4: Redemption roll — the epiphany
-                    // "In the act of destruction, they see the collective suffering."
-                    stress.can_redeem = true;
                     std::uniform_real_distribution<float> roll(0.0f, 1.0f);
-                    float redemption_roll = roll(rng_);
-                    float suicide_roll = roll(rng_);
+                    auto& agent_rng = registry_.get<RandomComponent>(e).engine;
+                    float pause_roll = roll(agent_rng);
+                    float suicide_roll = roll(agent_rng);
 
-                    if (redemption_roll < config_.redemption_chance) {
-                        // REDEMPTION — the agent is transformed
-                        stress.state = StressState::REDEEMED;
-                        stress.value = std::max(0.0f, stress.value - 0.5f);
-                        // Permanent personality shift: high collectivism, low compliance
-                        // They help others selflessly but don't serve the factory
-                        personality.compliance *= 0.5f;
-                        personality.gregariousness = std::min(1.0f, personality.gregariousness + 0.3f);
-                        // Meaning burst — they found purpose in the collective
-                        needs.meaning = std::max(0.0f, needs.meaning - 0.5f);
-                        redemptions_total_++;
-                        emit_log(agent.id, "REDEEMED — saw collective suffering, became a martyr");
+                    if (pause_roll < config_.post_sabotage_pause_chance) {
+                        post_sabotage_pauses_++;
+                        emit_log(agent.id, "paused after seeing the damage caused by sabotage",
+                                 EventType::POST_SABOTAGE_PAUSE);
                     } else if (suicide_roll < config_.suicide_chance) {
-                        // SUICIDE — the agent self-destructs
-                        // Their death impacts nearby agents deeply
-                        agent.alive = false;
-                        agent.cause_of_death = "suicide";
-                        suicides_total_++;
-                        // Nearby agents are traumatized by witnessing it
-                        for (auto ne : nearby) {
-                            if (ne == e) continue;
-                            auto& na = registry_.get<AgentComponent>(ne);
-                            if (!na.alive) continue;
-                            auto& np = registry_.get<PositionComponent>(ne);
-                            int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
-                            if (d <= 3 && registry_.all_of<StressComponent>(ne)) {
-                                auto& ns = registry_.get<StressComponent>(ne);
-                                ns.trauma = std::min(1.0f, ns.trauma + 0.05f);
-                                ns.value = std::min(1.0f, ns.value + 0.1f);
-                                social_.negative_interaction(agent.id, na.id, tick_);
+                        if (kill_agent(e, EventType::DIED_SUICIDE,
+                                       "died by suicide after sabotaging infrastructure")) {
+                            // Nearby witnesses receive cause-specific trauma in addition
+                            // to the generic relationship-based grief applied later.
+                            for (auto ne : nearby) {
+                                if (ne == e) continue;
+                                auto& na = registry_.get<AgentComponent>(ne);
+                                if (!na.alive) continue;
+                                auto& np = registry_.get<PositionComponent>(ne);
+                                int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
+                                if (d <= 3 && registry_.all_of<StressComponent>(ne)) {
+                                    auto& ns = registry_.get<StressComponent>(ne);
+                                    ns.trauma = std::min(1.0f, ns.trauma + 0.05f);
+                                    ns.value = std::min(1.0f, ns.value + 0.1f);
+                                    social_.record_negative_observation(
+                                        na.id, agent.id, tick_);
+                                }
                             }
                         }
-                        emit_log(agent.id, "SUICIDE — destroyed by the machine");
                     }
                 }
                 break;
@@ -1182,7 +1340,22 @@ void Simulation::system_execute_actions() {
                 break;
         }
 
-        // A3: Noncompliance tracking — the factory watches.
+        if (action_effected) {
+            action.effected_last_tick = true;
+            metrics_.action_executed[metric_index(attempted_action)]++;
+            if (agent.id >= 0
+                && agent.id < static_cast<int>(metrics_.agent_productive_effect_ticks.size())
+                && (attempted_action == ActionType::GATHER
+                    || attempted_action == ActionType::BUILD
+                    || attempted_action == ActionType::WORK
+                    || attempted_action == ActionType::MAINTAIN)) {
+                metrics_.agent_productive_effect_ticks[agent.id]++;
+            }
+        }
+        if (!agent.alive) continue;
+
+        if (config_.external_policy_variant == 0) {
+        // A3: Noncompliance tracking — the legacy factory watches.
         // Productive actions reduce noncompliance; everything else increases it.
         // HiddenSpace tiles are sanctuaries: noncompliance doesn't accumulate there.
         bool on_hidden_space = (grid_.at(pos.x, pos.y) == TileType::HiddenSpace);
@@ -1194,27 +1367,10 @@ void Simulation::system_execute_actions() {
             if (productive) {
                 agent.noncompliance = std::max(0.0f, agent.noncompliance - 0.02f);
             } else {
-                // Faction members near other faction members get a shield
-                bool faction_shield = false;
-                if (agent.faction_id >= 0) {
-                    auto nearby = registry_.view<PositionComponent, const AgentComponent>();
-                    int faction_neighbors = 0;
-                    for (auto ne : nearby) {
-                        if (ne == e) continue;
-                        auto& na = registry_.get<AgentComponent>(ne);
-                        if (!na.alive || na.faction_id != agent.faction_id) continue;
-                        auto& np = registry_.get<PositionComponent>(ne);
-                        if (std::abs(np.x - pos.x) + std::abs(np.y - pos.y) <= 2)
-                            faction_neighbors++;
-                    }
-                    if (faction_neighbors >= 2) faction_shield = true;
-                }
-                if (!faction_shield) {
-                    float nc_increase = 0.01f;
-                    // SABOTAGE is explicitly anti-factory — heavy noncompliance
-                    if (action.current == ActionType::SABOTAGE) nc_increase = 0.05f;
-                    agent.noncompliance = std::min(1.0f, agent.noncompliance + nc_increase);
-                }
+                float nc_increase = 0.01f;
+                // SABOTAGE is explicitly anti-factory — heavy noncompliance
+                if (action.current == ActionType::SABOTAGE) nc_increase = 0.05f;
+                agent.noncompliance = std::min(1.0f, agent.noncompliance + nc_increase);
             }
         }
 
@@ -1227,17 +1383,17 @@ void Simulation::system_execute_actions() {
         // factory's eyes: when it sees a neighbor with high noncompliance, its
         // trust toward that dissident drops. The factory thus acts THROUGH
         // loyal agents, eroding the dissident's social network — not as ambient
-        // damage. Direction: negative_interaction(victim, offender) lowers
-        // trust on victim→offender; here the reporter is the (informed) victim.
+        // damage. The reporter updates only its own trust toward the observed
+        // dissident through record_negative_observation(observer, actor).
         // ============================================================
-        if (agent.noncompliance < config_.noncompliance_report_threshold) {
+        if (config_.director_mode != DirectorMode::CALM &&
+            agent.noncompliance < config_.noncompliance_report_threshold) {
             // Only loyal, influential agents report. Stress and trauma erode
             // willingness to enforce (broken/redeemed agents don't police).
             auto& soc = registry_.get<SocialComponent>(e);
             bool willing = soc.influence >= config_.watcher_influence_threshold
                         && personality.compliance >= config_.watcher_compliance_threshold
-                        && stress.state != StressState::BROKEN
-                        && stress.state != StressState::REDEEMED;
+                        && stress.state != StressState::BROKEN;
             if (willing) {
                 auto nearby = registry_.view<PositionComponent, const AgentComponent>();
                 for (auto ne : nearby) {
@@ -1245,9 +1401,6 @@ void Simulation::system_execute_actions() {
                     auto& na = registry_.get<AgentComponent>(ne);
                     if (!na.alive) continue;
                     if (na.noncompliance < config_.noncompliance_report_threshold) continue;
-                    // Don't report members of your own faction — solidarity first.
-                    if (agent.faction_id >= 0 && na.faction_id == agent.faction_id) continue;
-
                     auto& np = registry_.get<PositionComponent>(ne);
                     int d = std::abs(np.x - pos.x) + std::abs(np.y - pos.y);
                     if (d > config_.watcher_radius) continue;
@@ -1258,7 +1411,8 @@ void Simulation::system_execute_actions() {
                                     / std::max(0.001f, 1.0f - config_.noncompliance_report_threshold);
                     float prox = 1.0f - (float)d / (float)config_.watcher_radius;
                     float severity = config_.report_severity * (0.5f + 0.5f * intensity) * (0.5f + 0.5f * prox);
-                    social_.negative_interaction(agent.id, na.id, tick_, severity);
+                    social_.record_negative_observation(
+                        agent.id, na.id, tick_, severity);
                     foreman_reports_++;
 
                     char buf[96];
@@ -1269,6 +1423,7 @@ void Simulation::system_execute_actions() {
                 }
             }
         }
+        }
     }
 }
 
@@ -1278,13 +1433,14 @@ void Simulation::system_execute_actions() {
 
 bool Simulation::has_adjacent_storage_with_food(entt::entity e) const {
     auto& pos = registry_.get<PositionComponent>(e);
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
+    for (int dy = -3; dy <= 3; dy++)
+        for (int dx = -3; dx <= 3; dx++) {
             if (dx == 0 && dy == 0) continue;
             int nx = pos.x + dx, ny = pos.y + dy;
             if (grid_.at(nx, ny) == TileType::Storage) {
                 const auto& d = grid_.data_at(nx, ny);
-                if (d.stored_food > 0.01f || d.stored_raw_food > 0.01f)
+                if (d.stored_food >= config_.eat_food_per_tick
+                    || d.stored_raw_food >= config_.eat_food_per_tick)
                     return true;
             }
         }
@@ -1365,6 +1521,7 @@ float Simulation::deposit_to_adjacent_conveyor(int px, int py, ResourceType type
             if (grid_.at(nx, ny) == TileType::Conveyor) {
                 auto& d = grid_.data_at(nx, ny);
                 if (!d.built || d.conveyor_condition < 0.2f) continue;
+                if (d.conveyor_contents > 0.001f && d.conveyor_contents_type != type) continue;
                 float space = config_.conveyor_throughput - d.conveyor_contents;
                 if (space > 0.001f) {
                     float deposit = std::min(remaining, space);
@@ -1388,10 +1545,14 @@ float Simulation::take_from_adjacent_storage(int px, int py) {
                 auto& d = grid_.data_at(nx, ny);
                 if (d.stored_food >= config_.eat_food_per_tick) {
                     d.stored_food -= config_.eat_food_per_tick;
+                    metrics_.resources_consumed[metric_index(ResourceType::FOOD)] +=
+                        config_.eat_food_per_tick;
                     return 1.0f;
                 }
                 if (d.stored_raw_food >= config_.eat_food_per_tick) {
                     d.stored_raw_food -= config_.eat_food_per_tick;
+                    metrics_.resources_consumed[metric_index(ResourceType::RAW_FOOD)] +=
+                        config_.eat_food_per_tick;
                     return config_.eat_raw_efficiency;
                 }
             }

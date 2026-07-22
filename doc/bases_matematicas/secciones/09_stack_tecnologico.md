@@ -1,32 +1,42 @@
-# Implementation Roadmap {#sec:stack}
+# Reference Technology Roadmap (Non-Executable) {#sec:stack}
 
-This section provides a concrete, phased approach to building a community simulation engine. The roadmap is ordered by dependency: each phase produces a testable system, and each subsequent phase depends on the previous one while introducing emergent behavior that was not possible before.
+> **Maturity:** This section is a general reference architecture assembled from
+> the literature, not the implementation roadmap or current feature list for
+> *La Vida Misma*. The executable source of truth is @sec:tick-loop and
+> `doc/design_spec.md`; the active project roadmap is `ROADMAP.md`. The phases and
+> deliverables below are design possibilities and must not be read as present-tense
+> claims about the repository.
+
+This section provides a hypothetical phased approach to building a broader
+community simulation engine. The roadmap is ordered by dependency: each phase
+would produce a testable system, and each subsequent phase would depend on the
+previous one.
 
 ## Component Summary
 
 | Component | Algorithm | Key equations | Complexity per tick |
 |---|---|---|---|
-| Terrain | Perlin/Simplex + fBm | Eq. @eq:fbm | $O(M)$ at generation; $O(1)$ per query |
+| Terrain | Perlin/Simplex + fBm | @eq:fbm | $O(M)$ at generation; $O(1)$ per query |
 | Biomes | Multi-field thresholds | Classification rules | $O(M)$ at generation |
-| Regions | Voronoi + Lloyd relaxation | Eq. @eq:voronoi | $O(n \log n)$ at generation |
+| Regions | Voronoi + Lloyd relaxation | @eq:voronoi | $O(n \log n)$ at generation |
 | Rivers | Gradient descent on elevation | Optimization | $O(\text{river cells})$ at generation |
-| Fluids | 3D cellular automaton | Eqs. @eq:fluid-gravity, @eq:fluid-spread | $O(F)$ where $F$ = fluid tiles |
-| Pathfinding | A* + connected components + cache | Eq. @eq:astar | $O(b^d)$ per query; amortized $O(1)$ with cache |
-| Agent AI | Utility theory + needs | Eqs. @eq:utility-argmax, @eq:need-utility | $O(|A| \cdot |a|)$ per agent |
-| Personality | Facet vector + stress layers | Eq. @eq:stress | $O(|\text{events}|)$ |
-| Storyteller | Temporal distribution | Eq. @eq:storyteller | $O(1)$ per evaluation |
-| Social graph | Weighted edges + contagion | Eqs. @eq:relationship, @eq:stress-contagion | $O(V + E)$ |
+| Fluids | 3D cellular automaton | @eq:fluid-gravity, @eq:fluid-spread | $O(F)$ where $F$ = fluid tiles |
+| Pathfinding | A* + connected components + cache | @eq:astar | $O(b^d)$ per query; amortized $O(1)$ with cache |
+| Agent AI | Utility theory + needs | @eq:utility-argmax, @eq:need-utility | $O(|A| \cdot |a|)$ per agent |
+| Personality | Facet vector + stress layers | @eq:stress | $O(|\text{events}|)$ |
+| Storyteller | Temporal distribution | @eq:storyteller | $O(1)$ per evaluation |
+| Social graph | Weighted edges + contagion | @eq:relationship, @eq:stress-contagion | $O(V + E)$ |
 | Spatial games | Grid-based game theory | [@nowak1992; @schelling1971] | $O(|\text{agents}|)$ |
-| Structures | WFC or graph grammar | Eq. @eq:shannon-entropy | $O(|\text{tiles}| \cdot |\Sigma|)$ |
+| Structures | WFC or graph grammar | @eq:shannon-entropy | $O(|\text{tiles}| \cdot |\Sigma|)$ |
 | Vegetation | L-systems | Rewrite grammar | $O(k^n)$ at generation |
-| Heat | Diffusion on grid | Eq. @eq:heat-diffusion | $O(M)$ |
+| Heat | Diffusion on grid | @eq:heat-diffusion | $O(M)$ |
 | Opinion dynamics | DeGroot / bounded confidence | Weighted averaging | $O(V + E)$ |
 
 Note: $M$ = total map tiles, $F$ = fluid tiles, $|A|$ = number of agents, $|a|$ = number of actions per agent, $V$ = vertices, $E$ = edges in social graph, $\Sigma$ = tile state set.
 
 ## Phase 1: Terrain and Biome Generation
 
-Implement Perlin/Simplex noise with multi-octave fBm (Eq. @eq:fbm). Generate an elevation map. Add temperature (function of latitude + elevation), rainfall (noise + orographic shadow), and drainage (separate fractal). Classify biomes via threshold intersection of all layers. Generate rivers via gradient descent on the elevation map. Delimit regions via relaxed Voronoi.
+Implement Perlin/Simplex noise with multi-octave fBm (@eq:fbm). Generate an elevation map. Add temperature (function of latitude + elevation), rainfall (noise + orographic shadow), and drainage (separate fractal). Classify biomes via threshold intersection of all layers. Generate rivers via gradient descent on the elevation map. Delimit regions via relaxed Voronoi.
 
 **Deliverable**: A reproducible world map with internally consistent geography. The biomes form at the intersection of independent layers, and the geography is deterministic given the random seed.
 
@@ -36,7 +46,7 @@ Implement Perlin/Simplex noise with multi-octave fBm (Eq. @eq:fbm). Generate an 
 
 ## Phase 2: Agents, Needs, and Utility AI
 
-Implement ECS architecture. Create agents with: Position component, Needs component (hunger, rest, social, safety), Personality component (facet vector), and a UtilityAI system that evaluates available actions. Actions include: move to location, eat, sleep, socialize, work. Implement need decay (linear or exponential) and urgency curves (Eq. @eq:need-utility with $\alpha = 1.5$ as a starting point).
+Implement ECS architecture. Create agents with: Position component, Needs component (hunger, rest, social, safety), Personality component (facet vector), and a UtilityAI system that evaluates available actions. Actions include: move to location, eat, sleep, socialize, work. Implement need decay (linear or exponential) and urgency curves (@eq:need-utility with $\alpha = 1.5$ as a starting point).
 
 **Deliverable**: Agents that autonomously prioritize actions based on their internal state, with personality variation producing different behavioral patterns across agents.
 
@@ -56,7 +66,7 @@ Implement A* with an appropriate heuristic for the terrain grid. Add connected c
 
 ## Phase 4: Physical Systems (Fluids, Heat, Collapse)
 
-Implement 3D CA fluids (7-level system per Eqs. @eq:fluid-gravity, @eq:fluid-spread, plus pressure via flood-fill). Implement heat diffusion (Eq. @eq:heat-diffusion with per-material conductivity). Implement structural collapse (connected-to-surface check via flood-fill).
+Implement 3D CA fluids (7-level system per @eq:fluid-gravity and @eq:fluid-spread, plus pressure via flood-fill). Implement heat diffusion (@eq:heat-diffusion with per-material conductivity). Implement structural collapse (connected-to-surface check via flood-fill).
 
 **Deliverable**: Water flows, heat spreads, unsupported structures collapse. These systems interact through the shared tile grid.
 
@@ -66,7 +76,7 @@ Implement 3D CA fluids (7-level system per Eqs. @eq:fluid-gravity, @eq:fluid-spr
 
 ## Phase 5: Economy (Production Chains and Skills)
 
-Implement a production graph: raw resources enter as inputs to workshops, which produce intermediate goods and final products. Agents gain XP for completed tasks (Eq. @eq:skill-xp). Skill level affects output quality via quality tier probabilities. Distance reduces task utility (Eq. @eq:task-distance), creating natural industrial organization.
+Implement a production graph: raw resources enter as inputs to workshops, which produce intermediate goods and final products. Agents gain XP for completed tasks (@eq:skill-xp). Skill level affects output quality via quality tier probabilities. Distance reduces task utility (@eq:task-distance), creating natural industrial organization.
 
 **Deliverable**: A self-organizing economy where agents specialize through practice, workshops cluster around resource sources, and resource scarcity drives behavioral adaptation.
 
@@ -76,7 +86,7 @@ Implement a production graph: raw resources enter as inputs to workshops, which 
 
 ## Phase 6: Society (Social Graph, Stress, Spatial Games)
 
-Implement a relationship graph with affinity edges in $[-100, 100]$. Events modify edges (Eq. @eq:relationship). Stress accumulates (Eq. @eq:stress) with personality modifiers and three-layer memory. Stress contagion propagates through the relationship graph (Eq. @eq:stress-contagion). Implement spatial game-theoretic interactions: agents compete for resources based on spatial proximity, and cooperation clusters form naturally per the Nowak-May model [@nowak1992}.
+Implement a relationship graph with affinity edges in $[-100, 100]$. Events modify edges (@eq:relationship). Stress accumulates (@eq:stress) with personality modifiers and three-layer memory. Stress contagion propagates through the relationship graph (@eq:stress-contagion). Implement spatial game-theoretic interactions: agents compete for resources based on spatial proximity, and cooperation clusters form naturally per the Nowak-May model [@nowak1992].
 
 **Deliverable**: Communities with internal politics, friendships, rivalries, and cascading stress events. Two agents who experience the same event react differently based on personality and relationship history.
 
@@ -86,7 +96,7 @@ Implement a relationship graph with affinity edges in $[-100, 100]$. Events modi
 
 ## Phase 7: Meta-Agent and Opinion Dynamics
 
-Implement a Storyteller meta-agent that calibrates external pressure (threats, events, resource scarcity) based on colony wealth and elapsed time (Eq. @eq:storyteller). Implement opinion dynamics (DeGroot or bounded confidence models) so cultural traits and beliefs evolve through agent interaction.
+Implement a Storyteller meta-agent that calibrates external pressure (threats, events, resource scarcity) based on colony wealth and elapsed time (@eq:storyteller). Implement opinion dynamics (DeGroot or bounded confidence models) so cultural traits and beliefs evolve through agent interaction.
 
 **Deliverable**: A simulation that generates narrative rhythm (calm periods followed by pressure) and evolving cultural landscapes.
 

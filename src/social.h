@@ -34,9 +34,10 @@ struct SocialComponent {
 
 class SocialFabric {
 public:
-    SocialFabric(int max_agents)
+    SocialFabric(int max_agents, bool learning_enabled = true)
         : max_agents_(max_agents),
-          rels_(max_agents * max_agents) {}
+          rels_(max_agents * max_agents),
+          learning_enabled_(learning_enabled) {}
 
     RelationshipEntry& get_rel(int a, int b) {
         return rels_[a * max_agents_ + b];
@@ -45,25 +46,53 @@ public:
         return rels_[a * max_agents_ + b];
     }
 
-    // --- 1. Process social interaction ---
-    // Positive interactions increase trust. Mood of both parties modulates.
+    void ensure_agent_id(int id) {
+        if (id < max_agents_) return;
+        int new_size = std::max(id + 1, std::max(1, max_agents_ * 2));
+        std::vector<RelationshipEntry> expanded(new_size * new_size);
+        for (int a = 0; a < max_agents_; a++)
+            for (int b = 0; b < max_agents_; b++)
+                expanded[a * new_size + b] = rels_[a * max_agents_ + b];
+        rels_ = std::move(expanded);
+        max_agents_ = new_size;
+    }
+
+    // Positive interaction observed by both participants.
     void process_interaction(int agent_a, int agent_b, int tick) {
+        if (!learning_enabled_) return;
         auto& rel_ab = get_rel(agent_a, agent_b);
         auto& rel_ba = get_rel(agent_b, agent_a);
+        reinforce(rel_ab, tick, 0.05f, 0.03f);
+        reinforce(rel_ba, tick, 0.05f, 0.03f);
+    }
 
-        // Familiarity grows with interaction (diminishing returns)
-        float fam_gain = 0.05f * (1.0f - rel_ab.familiarity);
-        rel_ab.familiarity = std::min(1.0f, rel_ab.familiarity + fam_gain);
-        rel_ba.familiarity = std::min(1.0f, rel_ba.familiarity + fam_gain);
+    // Repeated proximity makes people known, but is not evidence of goodwill.
+    void record_copresence(int agent_a, int agent_b, int tick) {
+        if (!learning_enabled_) return;
+        auto& rel_ab = get_rel(agent_a, agent_b);
+        auto& rel_ba = get_rel(agent_b, agent_a);
+        reinforce(rel_ab, tick, 0.001f, 0.0f);
+        reinforce(rel_ba, tick, 0.001f, 0.0f);
+    }
 
-        // Trust shifts toward positive with each interaction
-        // Rate is higher for familiar agents (trust accelerates)
-        float trust_rate = 0.03f * (0.5f + 0.5f * rel_ab.familiarity);
-        rel_ab.trust = std::clamp(rel_ab.trust + trust_rate, -1.0f, 1.0f);
-        rel_ba.trust = std::clamp(rel_ba.trust + trust_rate, -1.0f, 1.0f);
+    // A shared effective task is reciprocal evidence of reliability.
+    void record_collaboration(int agent_a, int agent_b, int tick) {
+        if (!learning_enabled_) return;
+        auto& rel_ab = get_rel(agent_a, agent_b);
+        auto& rel_ba = get_rel(agent_b, agent_a);
+        reinforce(rel_ab, tick, 0.003f, 0.002f);
+        reinforce(rel_ba, tick, 0.003f, 0.002f);
+    }
 
-        rel_ab.last_tick = tick;
-        rel_ba.last_tick = tick;
+    // Help is directional: the recipient gains trust in the helper. The helper
+    // only gains familiarity from observing the recipient.
+    void record_help(int helper_id, int recipient_id, int tick, float amount) {
+        if (!learning_enabled_) return;
+        float evidence = std::clamp(amount, 0.0f, 1.0f);
+        reinforce(get_rel(recipient_id, helper_id), tick,
+                  0.01f * evidence, 0.03f * evidence);
+        reinforce(get_rel(helper_id, recipient_id), tick,
+                  0.005f * evidence, 0.0f);
     }
 
     // --- 2. Emotional contagion via graph edges (doc §17) ---
@@ -147,9 +176,11 @@ public:
             float fam_sum = 0.0f;
             float trust_sum = 0.0f;
             int connections = 0;
-            for (int other = 0; other < max_agents_; other++) {
-                if (other == ag.id) continue;
-                const auto& rel = get_rel(ag.id, other);
+            for (auto other_entity : alive) {
+                const auto& other_agent = registry.get<AgentComponent>(other_entity);
+                if (other_agent.id == ag.id) continue;
+                // Influence reflects being known and trusted by living others.
+                const auto& rel = get_rel(other_agent.id, ag.id);
                 if (rel.familiarity > 0.05f) {
                     fam_sum += rel.familiarity;
                     trust_sum += rel.trust;  // negative trust = less influence
@@ -211,9 +242,9 @@ public:
                         * (1.0f - ps.resilience);
             st.value = std::clamp(st.value + grief, 0.0f, 1.0f);
 
-            // Relationship decays: the dead agent becomes a memory
-            auto& rel_back = get_rel(dead_agent_id, ag.id);
-            rel_back.familiarity *= 0.8f;  // partial fade
+            // The survivor's relationship becomes a memory.
+            auto& survivor_rel = get_rel(ag.id, dead_agent_id);
+            survivor_rel.familiarity *= 0.8f;
         }
     }
 
@@ -249,14 +280,14 @@ public:
 
     // --- 7. Decay relationships over time ---
     void decay_relationships(int tick, float decay_rate = 0.0001f) {
+        if (!learning_enabled_) return;
         for (int i = 0; i < max_agents_; i++) {
             for (int j = 0; j < max_agents_; j++) {
                 if (i == j) continue;
                 auto& rel = get_rel(i, j);
-                if (rel.familiarity <= 0) continue;
                 int ticks_since = tick - (int)rel.last_tick;
-                if (ticks_since > 100) {
-                    rel.familiarity -= decay_rate * (ticks_since - 100);
+                if (rel.familiarity > 0.0f && ticks_since > 100) {
+                    rel.familiarity -= decay_rate;
                     rel.familiarity = std::max(0.0f, rel.familiarity);
                 }
                 // Trust drifts toward 0 (neutral) over time
@@ -265,16 +296,12 @@ public:
         }
     }
 
-    // --- 8. Negative interaction (antagonism) ---
-    // Call when an agent witnesses a transgression or suffers from another.
-    void negative_interaction(int victim_id, int offender_id, int tick,
-                              float severity = 0.1f) {
-        auto& rel = get_rel(victim_id, offender_id);
-        auto& rel_back = get_rel(offender_id, victim_id);
-
-        rel.trust = std::clamp(rel.trust - severity, -1.0f, 1.0f);
-        rel_back.trust = std::clamp(rel_back.trust - severity * 0.3f, -1.0f, 1.0f);
-        rel.last_tick = tick;
+    // An observer updates only its own view of the observed actor.
+    void record_negative_observation(int observer_id, int actor_id, int tick,
+                                     float severity = 0.1f) {
+        if (!learning_enabled_) return;
+        auto& rel = get_rel(observer_id, actor_id);
+        reinforce(rel, tick, 0.01f, -std::max(0.0f, severity));
     }
 
     // --- 9. Opinion exchange via bounded confidence (Hegselmann-Krause, doc §8.5) ---
@@ -287,6 +314,7 @@ public:
         float influence_a, float influence_b,
         float epsilon = 0.3f)
     {
+        if (!learning_enabled_) return false;
         // DeGroot weights: higher influence = more pull.
         // w_a = influence_a / (influence_a + influence_b), clamped for stability.
         float total_inf = influence_a + influence_b;
@@ -296,8 +324,9 @@ public:
 
         // Learning rate: trust amplifies how much each agent shifts.
         const auto& rel_ab = get_rel(agent_a, agent_b);
-        float trust_factor = 0.5f + 0.5f * std::max(0.0f, rel_ab.trust);  // [0.5, 1.0]
-        float lr = 0.1f * trust_factor;  // base learning rate * trust
+        const auto& rel_ba = get_rel(agent_b, agent_a);
+        float lr_a = 0.1f * (0.5f + 0.5f * std::max(0.0f, rel_ab.trust));
+        float lr_b = 0.1f * (0.5f + 0.5f * std::max(0.0f, rel_ba.trust));
 
         bool changed = false;
         for (int d = 0; d < OpinionComponent::DIMS; d++) {
@@ -309,8 +338,8 @@ public:
 
                 float old_a = op_a.values[d];
                 float old_b = op_b.values[d];
-                op_a.values[d] += (blend - op_a.values[d]) * lr;
-                op_b.values[d] += (blend - op_b.values[d]) * lr;
+                op_a.values[d] += (blend - op_a.values[d]) * lr_a;
+                op_b.values[d] += (blend - op_b.values[d]) * lr_b;
 
                 // Clamp to [0, 1]
                 op_a.values[d] = std::clamp(op_a.values[d], 0.0f, 1.0f);
@@ -334,65 +363,17 @@ public:
         return std::sqrt(sum);
     }
 
-    // --- 11. Faction trust modulation ---
-    // Same faction: trust boost. Different faction: friction.
-    void apply_faction_trust_modulation(
-        int agent_a, int agent_b, int tick,
-        int faction_a, int faction_b)
-    {
-        if (faction_a < 0 || faction_b < 0) return;  // no faction = no modulation
-        if (faction_a == faction_b) {
-            // Same faction: small trust boost per interaction
-            auto& rel = get_rel(agent_a, agent_b);
-            rel.trust = std::clamp(rel.trust + 0.01f, -1.0f, 1.0f);
-        } else {
-            // Different faction: small friction
-            auto& rel = get_rel(agent_a, agent_b);
-            rel.trust = std::clamp(rel.trust - 0.005f, -1.0f, 1.0f);
-        }
-    }
-
-    // --- 12. Leader opinion pull (high-influence agents shift faction consensus) ---
-    // Called per tick for each faction: find the most influential member,
-    // then all faction members drift slightly toward that leader's opinions.
-    void leader_opinion_pull(
-        const std::vector<entt::entity>& alive,
-        entt::registry& registry,
-        int max_faction_id)
-    {
-        for (int f = 0; f <= max_faction_id; f++) {
-            // Find leader (highest influence in this faction)
-            entt::entity leader = entt::null;
-            float max_inf = 0.0f;
-            OpinionComponent leader_op;
-
-            for (auto e : alive) {
-                auto& ag = registry.get<AgentComponent>(e);
-                if (!ag.alive || ag.faction_id != f) continue;
-                auto& soc = registry.get<SocialComponent>(e);
-                if (soc.influence > max_inf) {
-                    max_inf = soc.influence;
-                    leader = e;
-                    leader_op = registry.get<OpinionComponent>(e);
-                }
-            }
-            if (leader == entt::null || max_inf < 0.1f) continue;
-
-            // Pull all faction members toward leader's opinions
-            float pull_strength = 0.02f * max_inf;  // stronger leader = stronger pull
-            for (auto e : alive) {
-                auto& ag = registry.get<AgentComponent>(e);
-                if (!ag.alive || ag.faction_id != f || e == leader) continue;
-                auto& op = registry.get<OpinionComponent>(e);
-                for (int d = 0; d < OpinionComponent::DIMS; d++) {
-                    op.values[d] += (leader_op.values[d] - op.values[d]) * pull_strength;
-                    op.values[d] = std::clamp(op.values[d], 0.0f, 1.0f);
-                }
-            }
-        }
-    }
-
 private:
+    static void reinforce(RelationshipEntry& rel, int tick,
+                          float familiarity_gain, float trust_gain) {
+        rel.familiarity = std::clamp(
+            rel.familiarity + familiarity_gain * (1.0f - rel.familiarity),
+            0.0f, 1.0f);
+        rel.trust = std::clamp(rel.trust + trust_gain, -1.0f, 1.0f);
+        rel.last_tick = static_cast<float>(tick);
+    }
+
     int max_agents_;
     std::vector<RelationshipEntry> rels_;
+    bool learning_enabled_;
 };

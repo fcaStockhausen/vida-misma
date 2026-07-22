@@ -8,9 +8,8 @@
 // SYSTEM: Move to Targets (with cached A* pathfinding)
 // ============================================================
 
-// Max agents per tile. EatingZone allows more (congregation point).
+// Tile labels do not grant categorical occupancy privileges.
 static constexpr int MAX_PER_TILE = 6;
-static constexpr int MAX_PER_EATINGZONE = 12;
 
 // Count agents at each position (computed once per tick)
 static std::unordered_map<int, int> compute_occupancy(Simulation& sim) {
@@ -51,12 +50,10 @@ void Simulation::system_move_to_targets() {
 
         if (nx != pos.x || ny != pos.y) {
             // Check occupancy limit before moving
-            auto& grid = grid_;
             int tile_key = ny * 1000 + nx;
             int current_count = occupancy[tile_key];
-            int limit = (grid.at(nx, ny) == TileType::EatingZone) ? MAX_PER_EATINGZONE : MAX_PER_TILE;
 
-            if (current_count < limit) {
+            if (current_count < MAX_PER_TILE) {
                 // Free old tile, occupy new
                 occupancy[pos.y * 1000 + pos.x]--;
                 occupancy[tile_key]++;
@@ -85,10 +82,10 @@ void Simulation::move_toward(PositionComponent& pos, int tx, int ty) {
     }
 }
 
-void Simulation::random_move(PositionComponent& pos) {
+void Simulation::random_move(PositionComponent& pos, std::mt19937& random) {
     std::uniform_int_distribution<int> dir(-1, 1);
-    int nx = pos.x + dir(rng_);
-    int ny = pos.y + dir(rng_);
+    int nx = pos.x + dir(random);
+    int ny = pos.y + dir(random);
     nx = std::clamp(nx, 0, grid_.width() - 1);
     ny = std::clamp(ny, 0, grid_.height() - 1);
     if (grid_.is_walkable(nx, ny)) {
