@@ -1,56 +1,101 @@
 # The Director: Player as Environment Architect {#sec:director}
 
-The Director is the human player's sole interface to the simulation. It operates exclusively at the environmental level: the Director modifies the factory's physical infrastructure and production parameters, but never selects actions for individual agents. Agents determine their own behavior through the utility-based decision system described in Section @sec:inhabitants. This separation of concerns follows the influential design model established by *Dwarf Fortress* (Adams 2014), wherein the player constructs and configures the world, and its inhabitants respond autonomously according to their internal motivations.
+The Director is the human intervention role. It is distinct from the autonomous
+institutional policy and from the configuration enum `DirectorMode`. The player
+changes environmental and institutional parameters; inhabitants continue to
+choose their own actions through the utility pipeline.
 
-The term "Director" is deliberately chosen to distinguish this role from both the *Dwarf Fortress* overseer and RimWorld's Storyteller algorithm. Unlike the Storyteller---which is a software system that procedurally calibrates external events such as raids and weather to maintain a target narrative tension (Sylvester 2013)---the Director is a human player whose interventions are not governed by any utility function. The Director may set impossible quotas, dismantle all food-producing machines, or wall agents into enclosed spaces. The simulation is expected to handle these cases as legitimate outcomes: agents starve, stress cascades through the social network (Section @sec:social-fabric), and the factory may collapse. This is correct emergent behavior, not a failure state.
+## Typed Intervention Boundary
 
-## Director Capabilities
+**Implemented.** `DirectorCommand` is a closed variant with exactly five command
+types:[^director-api]
 
-The Director's action space is restricted to environmental modifications. Table @tbl:director-actions summarizes the available operations, their effects on the simulation state, and the formal systems they engage.
-
-| Action | Effect | Formal basis |
+| Command | Accepted parameters | Effect and constraints |
 |---|---|---|
-| Place/remove machines | Creates or removes production nodes in the factory graph | Production graph (Section @sec:factory) |
-| Place/remove walls | Modifies traversability and the pathfinding graph | Grid-based A\* (Section @sec:pathfinding) |
-| Set production quota | Determines target output rates for resources | Resource flow model (Section @sec:factory) |
-| Place storage zones | Designates tiles as valid destinations for specific material types | No enforcement; agents evaluate storage tasks via utility |
-| Designate spaces | Marks regions for purposes (workshop, common area, residential) | Spatial affordances (Section @sec:spaces) |
-| Observe agents | Inspect agent state: needs, stress, relationships, skills | Diagnostic overlay |
-| Read narrative log | Review chronologically ordered significant events | Narrative system (Section @sec:tick-loop) |
+| `DirectorSetQuota` | nonnegative finite output per tick | fixes subsequent demand; explicitly rejected in `CALM` |
+| `DirectorSetZone` | grid coordinate and occupancy capacity $0\ldots8$ | applies only to `Floor` or `OpenSpace`; this is anonymous physical capacity, not a profession or cultural zone |
+| `DirectorPlaceStructure` | coordinate, structure type, and machine subtype or conveyor direction where relevant | places a completed Wall, Storage, Food/Materials/Output Machine, or Conveyor on a compatible physical site |
+| `DirectorRemoveStructure` | coordinate | removes Wall, Storage, Machine, or Conveyor; Entrance and Exit are protected |
+| `DirectorSetMaintenancePriority` | built conveyor coordinate and `Normal` or `High` | changes an observable priority signal but does not repair the belt or select a worker |
 
-: Director actions and their simulation-level effects. {#tbl:director-actions}
+FoodMachine placement requires a FoodSource, MaterialsMachine placement requires
+a ScrapPile, and OutputMachine, Wall, Storage, and Conveyor placement require
+Floor. Removing a source-backed machine restores the underlying resource deposit.
+Removing storage or a loaded conveyor records discarded contents as physical
+loss.
 
-## The Indirection Principle
+**Implemented invariant.** No Director command accepts an agent identity, action,
+behavioral target, personality, opinion, relationship, community, or utility.
+Static tests inspect both the public type boundary and its implementation for
+those forbidden dependencies. The Director can make an action more attractive or
+feasible by changing the world, but cannot make an inhabitant perform it.
 
-The critical design constraint is that the Director cannot issue direct commands to any agent. This principle---call it the *indirection principle*---ensures that all agent behavior passes through the utility evaluation pipeline. If the Director requires more metalworkers, the correct intervention is not to select an agent and assign it to metalworking, but rather to construct a metalworking workshop, supply it with raw materials via strategically placed storage zones, and allow the utility system to recruit agents whose personality profiles and existing skills make metalworking their highest-utility option.
+## Indirection
 
-This indirection has two consequences. First, the Director's effectiveness depends on understanding how agents evaluate utility. A workshop placed far from residential areas or common spaces may go unused because travel costs reduce the utility of working there below competing actions. Second, the Director cannot guarantee outcomes. The factory's productivity emerges from the interaction between infrastructure configuration and the aggregate utility-maximizing behavior of a population whose members have heterogeneous needs, skills, and preferences.
+**Design objective.** Player influence should remain environmental. A maintenance
+priority can raise the utility of repairing a visible belt, a storage placement
+can shorten a physical transfer, and a quota can alter institutional demand. None
+of these interventions identifies who must respond or guarantees that anyone
+will.
 
-## Interaction with the Production System
+This is narrower than the construction and designation interfaces described in
+older drafts. There is no implemented command for assigning a workshop,
+residential district, artistic quarter, job, schedule, or individual order.
+`DirectorSetZone` means only sustained occupancy capacity, and canonical closure
+reads occupants at a coordinate without consulting their identities or culture.
 
-The Director shapes the production system (Section @sec:factory) through three primary mechanisms:
+## Player View and Debug View
 
-1. **Machine placement and removal.** Each machine added to the factory graph introduces a new production node capable of transforming input resources into output resources. Removing a machine eliminates that transformation capability. Agents discover available machines through the task-generation system, which evaluates the production graph each tick and creates work tasks for machines that have unmet input requirements or pending output quotas.
+**Implemented.** The GUI starts in a player-facing view. Its panel exposes
+observable institutional and environmental consequences such as demand and fill,
+stocks, output flow, infrastructure condition, density, occupancy zones,
+maintenance priority, and factual events. Pressing `E` opens the five Director
+tools and pauses the simulation while editing.[^director-gui]
 
-2. **Storage and logistics configuration.** By placing storage zones near input stockpiles or output destinations, the Director reduces the travel cost component of relevant utility scores, indirectly increasing the likelihood that agents will perform transportation tasks in that area. Agents do not respect storage designations as hard constraints; they evaluate whether moving materials to a designated zone yields higher utility than alternative actions.
+Exact needs, personality facets, directed relationships, and per-action utility
+are debug information rather than assumed player knowledge. `F12` explicitly
+toggles the debug view; `--debug` may also start the GUI there. This separation is
+epistemic as well as visual: internal values can be inspected for model diagnosis
+without being presented as information on which ordinary Director play is based.
 
-3. **Quota setting.** Production quotas establish target output levels. The task-generation system translates quota deficits into work tasks with urgency-weighted utility scores. A quota for 50 units of processed metal, when current stock is 10, produces higher-utility tasks than a quota that is already satisfied. The Director thus influences agent priorities without selecting which agent performs which task.
+## Recording and Replay
 
-## Observational Tools
+**Implemented.** Every accepted intervention is recorded at the simulation tick
+before `Simulation::advance()` and receives a strictly increasing global sequence
+number. Invalid commands are atomic and do not enter the ledger.
 
-Beyond environmental modification, the Director has access to two read-only information channels. The **agent inspection overlay** exposes individual agent state variables: current need levels, accumulated stress, social relationships, and skill proficiencies. The **narrative log** records significant events---births, deaths, relationship formations, production milestones, stress breakdowns---in chronological order, providing the Director with a coherent account of emergent factory life (Section @sec:tick-loop).
+`vida_gui --seed N --record FILE` writes a TOML log with format
+`vida-interventions`, schema version 2, seed, Director mode,
+`tick_phase = "before_advance"`, and an FNV-1a fingerprint of the loaded
+configuration source. `vida_batch replay <ticks> <seed> <file>` rejects an
+incompatible header, seed, configuration fingerprint, ordering, tick, command, or
+parameter, and applies accepted events at their exact recorded phase.[^director-replay]
 
-These observational tools are the Director's only window into the agents' internal states. The simulation does not expose utility calculations, personality parameter values, or the internal state of the need-satisfaction model directly. The Director must infer these from observable behavior and the narrative record.
+The round-trip test compares the original session and replay across the Director
+ledger, metrics, full grid state, population, quota, and Chronicle. The CLI test
+also requires byte-identical same-build replay output and rejects a mismatched seed
+or configuration source. Replay is therefore a current verification mechanism,
+not a future design proposal.
 
-## Current Implementation Status
+## Scope of Claims
 
-The Director role described in this section is a design specification. No implementation exists in the current codebase. The production graph, task-generation system, and agent utility evaluation pipeline described in Sections @sec:factory and @sec:inhabitants are partially implemented, but the player-facing interface for performing Director actions---the construction overlay, quota management panel, agent inspector, and narrative log viewer---remains a future development objective.
+**Implemented.** The Director is a human environmental editor; the canonical
+factory policy is indifferent software. Neither is a RimWorld-style Storyteller
+that selects narrative events from inhabitant psychology. Chronicle stores
+factual events, while narrative rendering is behavior-neutral.
 
-## Disambiguation: Director vs. Factory Adversary {#sec:director-vs-factory}
+**Not established.** The available commands make controlled intervention and
+replay possible, but no experiment yet establishes that a particular Director
+strategy causes specialization, community formation, spatial segregation, or
+long-run survival. Those are outcome hypotheses and require comparative runs,
+not conclusions from the API design.
 
-Earlier drafts created an apparent contradiction by calling the Director "a meta-agent like the Storyteller" in one place (the index) while rejecting that framing here. The contradiction dissolves once two distinct objects are separated:
-
-- **The Director** is the *human player*. It is not governed by a utility function, it intervenes through environmental editing (placing/removing tiles, setting quotas, tuning knobs), and it is correctly *not* a meta-agent. This section's opening paragraph stands.
-- **The factory** is the *autonomous software system* that runs every tick (`system_factory_restructure`, `system_factory_deterioration`, the Watcher). It selects moves from a scoring policy and acts as Player 2 in the two-player stochastic game formalized in Section @sec:factory-adversary. The RimWorld Storyteller analogy applies to **the factory's restructure policy**, not to the human Director.
-
-In RimWorld terms: the Storyteller is software; our equivalent is the factory adversary. The Director is closer to RimWorld's *player* (who designates zones, sets bills, drafts colonists under pressure) than to its Storyteller. The Director *tunes* the adversary (via `adversary_intensity`, `quota_growth_rate`) but is not itself the adversary.
+[^director-api]: `src/director.h` defines the five-command variant;
+    `src/sim_director.cpp` validates and applies it. The boundary audit is in
+    `tests/verify_policy_audit.cmake`.
+[^director-gui]: See `src/main_gui.cpp`, `src/graphical_view.h`, and
+    `src/graphical_view.cpp`.
+[^director-replay]: Serialization is in `src/director.cpp`; batch replay is in
+    `src/batch_main.cpp`. `test_director_environmental_commands` and
+    `test_director_log_round_trip_and_replay` in `tests/simulation_tests.cpp`,
+    together with `tests/verify_replay.cmake`, cover the contract.

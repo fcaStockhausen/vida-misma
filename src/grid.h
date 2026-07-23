@@ -63,7 +63,8 @@ public:
     }
 
     // Find nearest tile of a given type from (fx, fy)
-    std::pair<int,int> find_nearest(TileType type, int fx, int fy) const {
+    std::pair<int,int> find_nearest(TileType type, int fx, int fy,
+                                    int max_dist = 999999) const {
         int best_dist = 999999;
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
@@ -78,6 +79,7 @@ public:
                     // Caller filters by build state externally
                 }
                 int d = std::abs(x - fx) + std::abs(y - fy);
+                if (d > max_dist) continue;
                 if (d < best_dist) {
                     best_dist = d;
                     best = {x, y};
@@ -310,20 +312,6 @@ public:
         return n;
     }
 
-    // Manhattan distance from (x,y) to the nearest built Materials machine.
-    // Returns a large sentinel if none exist.
-    int dist_to_nearest_materials_machine(int x, int y) const {
-        int best = 999999;
-        for (int yy = 0; yy < height_; yy++)
-            for (int xx = 0; xx < width_; xx++) {
-                if (at(xx, yy) != TileType::Machine || !data_at(xx, yy).built) continue;
-                if (data_at(xx, yy).machine_type != MachineType::Materials) continue;
-                int d = std::abs(xx - x) + std::abs(yy - y);
-                if (d < best) best = d;
-            }
-        return best;
-    }
-
     // Find a strategic Floor tile for a new Output machine, closest to (fx, fy).
     // Placement strategy: minimize (dist to nearest Materials machine + dist to
     // nearest Exit). This puts the Output between its c_mat source (Materials)
@@ -333,13 +321,13 @@ public:
     // Returns {-1,-1} if no valid site.
     std::pair<int,int> find_output_machine_site(int fx, int fy) const {
         auto exits = find_all(TileType::Exit);
-        bool has_materials = false;
-        for (int yy = 0; yy < height_ && !has_materials; yy++)
-            for (int xx = 0; xx < width_ && !has_materials; xx++)
+        std::vector<std::pair<int, int>> materials;
+        for (int yy = 0; yy < height_; yy++)
+            for (int xx = 0; xx < width_; xx++)
                 if (at(xx, yy) == TileType::Machine && data_at(xx, yy).built &&
                     data_at(xx, yy).machine_type == MachineType::Materials)
-                    has_materials = true;
-        if (exits.empty() && !has_materials) return {-1, -1};
+                    materials.push_back({xx, yy});
+        if (exits.empty() && materials.empty()) return {-1, -1};
 
         int best_score = 999999;
         int best_dist = 999999;
@@ -360,7 +348,12 @@ public:
                     }
                 if (adj_output) continue;
 
-                int d_mat = has_materials ? dist_to_nearest_materials_machine(x, y) : 0;
+                int d_mat = 0;
+                if (!materials.empty()) {
+                    d_mat = 999999;
+                    for (auto [mx, my] : materials)
+                        d_mat = std::min(d_mat, std::abs(mx - x) + std::abs(my - y));
+                }
                 int d_exit = 999999;
                 for (auto& [ex, ey] : exits) {
                     int d = std::abs(x - ex) + std::abs(y - ey);
@@ -423,16 +416,16 @@ public:
 
     // --- Conveyor helpers ---
 
-    // Find nearest unbuilt or degraded conveyor
+    // Find nearest unbuilt conveyor; degraded built belts belong to MAINTAIN.
     std::pair<int,int> find_nearest_conveyor_to_build(int fx, int fy) const {
         int best_dist = 999999;
         std::pair<int,int> best = {-1, -1};
-        // Existing unbuilt or degraded conveyor frames
+        // Existing unbuilt conveyor frames
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Conveyor) continue;
                 const auto& d = data_at(x, y);
-                if (d.built && d.conveyor_condition > 0.3f) continue; // OK, skip
+                if (d.built) continue;
                 int dist = std::abs(x - fx) + std::abs(y - fy);
                 if (dist < best_dist) { best_dist = dist; best = {x, y}; }
             }
@@ -455,9 +448,10 @@ public:
 
     // Find nearest conveyor needing maintenance (condition < threshold)
     std::pair<int,int> find_nearest_conveyor_needing_maintain(
-        int fx, int fy, float threshold = 0.7f) const
+        int fx, int fy, float threshold = 0.9f, int max_dist = 999999) const
     {
         int best_dist = 999999;
+        int best_priority = -1;
         std::pair<int,int> best = {-1, -1};
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
@@ -466,7 +460,14 @@ public:
                 if (!d.built) continue;
                 if (d.conveyor_condition >= threshold) continue;
                 int dist = std::abs(x - fx) + std::abs(y - fy);
-                if (dist < best_dist) { best_dist = dist; best = {x, y}; }
+                if (dist > max_dist) continue;
+                int priority = static_cast<int>(d.maintenance_priority);
+                if (priority > best_priority
+                    || (priority == best_priority && dist < best_dist)) {
+                    best_priority = priority;
+                    best_dist = dist;
+                    best = {x, y};
+                }
             }
         return best;
     }
@@ -563,6 +564,46 @@ public:
         return best;
     }
 
+    std::pair<int,int> find_nearest_storage_with_processed_food(int fx, int fy) const {
+        int best_dist = 999999;
+        std::pair<int,int> best = {-1, -1};
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                if (at(x, y) != TileType::Storage) continue;
+                if (data_at(x, y).stored_food < 0.01f) continue;
+                int dist = std::abs(x - fx) + std::abs(y - fy);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    best = {x, y};
+                }
+            }
+        return best;
+    }
+
+    bool is_dismantle_candidate(int x, int y) const {
+        if (at(x, y) != TileType::Conveyor || !data_at(x, y).built) return false;
+        auto [tx, ty] = conveyor_target(x, y);
+        if (tx < 0 || tx >= width_ || ty < 0 || ty >= height_) return false;
+        TileType target = at(tx, ty);
+        bool useful = target == TileType::Storage || target == TileType::Exit
+            || (target == TileType::Conveyor && data_at(tx, ty).built)
+            || (target == TileType::Machine && data_at(tx, ty).built);
+        if (useful) return false;
+
+        constexpr int ddx[] = {1, -1, 0, 0};
+        constexpr int ddy[] = {0, 0, 1, -1};
+        for (int i = 0; i < 4; i++) {
+            int nx = x + ddx[i], ny = y + ddy[i];
+            if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) continue;
+            TileType neighbor = at(nx, ny);
+            if ((neighbor == TileType::Machine && data_at(nx, ny).built)
+                || (neighbor == TileType::Conveyor && data_at(nx, ny).built)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Find the nearest built conveyor that is a "dead end" — its flow target
     // is not a useful tile (not Storage, Exit, or another built conveyor).
     // Agents may want to dismantle these to reuse the material elsewhere.
@@ -572,16 +613,7 @@ public:
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 if (at(x, y) != TileType::Conveyor) continue;
-                const auto& d = data_at(x, y);
-                if (!d.built) continue;
-                // Check if this conveyor's flow target is useful
-                auto [tx, ty] = conveyor_target(x, y);
-                if (tx < 0 || tx >= width_ || ty < 0 || ty >= height_) continue; // edge of map
-                TileType tt = at(tx, ty);
-                bool useful = (tt == TileType::Storage || tt == TileType::Exit ||
-                              (tt == TileType::Conveyor && data_at(tx, ty).built));
-                if (useful) continue; // this conveyor flows somewhere useful
-                // Dead end! Check distance
+                if (!is_dismantle_candidate(x, y)) continue;
                 int dist = std::abs(x - fx) + std::abs(y - fy);
                 if (dist < best_dist) {
                     best_dist = dist;
@@ -652,6 +684,32 @@ public:
         return false;
     }
 
+    int exit_connected_output_machine_count() const {
+        int count = 0;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                const auto& data = data_at(x, y);
+                if (at(x, y) == TileType::Machine && data.built
+                    && data.machine_type == MachineType::Output
+                    && machine_connected_to_exit(x, y)) {
+                    count++;
+                }
+            }
+        return count;
+    }
+
+    bool minimum_chain_present() const {
+        bool food = false, materials = false;
+        for (int y = 0; y < height_; y++)
+            for (int x = 0; x < width_; x++) {
+                const auto& data = data_at(x, y);
+                if (at(x, y) != TileType::Machine || !data.built) continue;
+                food |= data.machine_type == MachineType::Food;
+                materials |= data.machine_type == MachineType::Materials;
+            }
+        return food && materials && exit_connected_output_machine_count() > 0;
+    }
+
     // Trace a conveyor chain forward from (start_x, start_y) following each belt's
     // conveyor_dir. Returns true if the chain reaches a built Output machine — i.e.
     // c_mat placed on this belt will actually feed tier 2. Used by the Materials WORK
@@ -678,13 +736,13 @@ public:
         return false;
     }
 
-    // Find a Floor tile adjacent to agent where a new conveyor should be placed.
-    // Strategy: extend a chain from the nearest built machine (that has no adjacent
-    // built conveyor flowing away) toward the nearest Storage or Exit.
+    // Find the next Floor tile where a conveyor should be placed.
+    // Strategy: extend a chain from the nearest unserved built machine toward
+    // Storage or Exit. This is a pure query; BUILD performs the placement.
     // Returns {x, y, direction} or {-1, -1, N} if no valid site.
     struct ConveyorSite { int x, y; ConveyorDir dir; };
     ConveyorSite find_conveyor_build_site(int agent_x, int agent_y) const {
-        // Strategy: BFS from machines to Storage/Exit, place full chain of frames.
+        // Strategy: BFS from machines to Storage/Exit and return one path segment.
         // Guard: don't create new chains if there are too many pending frames
         // or too many conveyors total. Let agents finish what's in progress.
         int unbuilt_conv = 0, total_conv = 0;
@@ -848,18 +906,12 @@ public:
 
         if (path.empty()) return {-1, -1, ConveyorDir::E};
 
-        // 4. Place all unbuilt conveyor frames along the path
-        //    Skip tiles that are already Conveyor (unbuilt frames)
-        //    Respect cap: stop placing if we exceed limits
-        Grid* self = const_cast<Grid*>(this);
+        // 4. Return the first missing segment from the machine side. Existing
+        // conveyors can be part of the route but are never modified here.
         for (int i = 0; i < (int)path.size(); i++) {
-            // Re-check cap during placement
-            if (total_conv >= 100) break;
             auto [tx, ty] = path[i];
-            if (at(tx, ty) == TileType::Conveyor) continue;  // already a frame
-            total_conv++;  // track increment
+            if (at(tx, ty) != TileType::Floor) continue;
 
-            // Determine direction: toward next tile, or toward goal
             ConveyorDir dir = ConveyorDir::E;
             if (i + 1 < (int)path.size()) {
                 int nx2 = path[i+1].first, ny2 = path[i+1].second;
@@ -886,22 +938,9 @@ public:
                     }
                 }
             }
-            self->place_new_conveyor(tx, ty, dir, 0.15f);
+            return {tx, ty, dir};
         }
-
-        // 5. Return the frame closest to the agent for building
-        int best_dist = 999999;
-        ConveyorSite best = {-1, -1, ConveyorDir::E};
-        for (auto [tx, ty] : path) {
-            if (at(tx, ty) == TileType::Conveyor && !data_at(tx, ty).built) {
-                int d = std::abs(tx - agent_x) + std::abs(ty - agent_y);
-                if (d < best_dist) {
-                    best_dist = d;
-                    best = {tx, ty, data_at(tx, ty).conveyor_dir};
-                }
-            }
-        }
-        return best;
+        return {-1, -1, ConveyorDir::E};
     }
 
     // Place a new conveyor frame at a floor tile (for rearranging).
@@ -919,20 +958,11 @@ public:
         return true;
     }
 
-    // Check if a built conveyor at (x,y) is blocking a path — specifically,
-    // if removing it would connect two walkable regions that are currently separated.
-    // Simple heuristic: a built conveyor is "blocking" if it has walkable neighbors
-    // on opposite sides (N/S or E/W) that can't reach each other except through it.
+    // Conveyors are walkable, so they cannot block an agent path.
     bool is_conveyor_blocking_path(int x, int y) const {
-        if (at(x, y) != TileType::Conveyor || !data_at(x, y).built) return false;
-        // Check N-S passage: walkable N and walkable S of conveyor
-        bool walk_n = (y > 0 && is_walkable(x, y - 1));
-        bool walk_s = (y < height_ - 1 && is_walkable(x, y + 1));
-        // Check E-W passage
-        bool walk_e = (x < width_ - 1 && is_walkable(x + 1, y));
-        bool walk_w = (x > 0 && is_walkable(x - 1, y));
-        // If walkable on opposite sides, this conveyor blocks passage
-        return (walk_n && walk_s) || (walk_e && walk_w);
+        (void)x;
+        (void)y;
+        return false;
     }
 
     // --- Factory Layout ---
@@ -941,6 +971,7 @@ public:
         for (int y = 0; y < height_; y++)
             for (int x = 0; x < width_; x++) {
                 set(x, y, TileType::Floor);
+                data_at(x, y) = {};
             }
 
         WFCGenerator wfc(width_, height_, seed);
@@ -960,14 +991,23 @@ public:
                 d.build_progress = p.built ? p.build_cost : 0.0f;
                 d.build_cost     = p.build_cost > 0.0f ? p.build_cost : 2.0f;
                 d.machine_type   = p.machine_type;
+                d.built_on_resource = p.built_on_resource;
+                d.resource_amount = p.resource_amount;
+                d.resource_max = p.resource_max;
+                d.resource_regen = p.resource_regen;
+                d.stored_raw_food = p.stored_raw_food;
+                d.stored_raw_material = p.stored_raw_material;
+                d.stored_construction_material = p.stored_construction_material;
+                d.stored_output = p.stored_output;
             }
             if (p.type == TileType::Storage) {
                 d.built              = true;   // pre-placed infrastructure
                 d.storage_capacity = p.storage_capacity > 0.0f ? p.storage_capacity : 20.0f;
-                d.stored_food         = 0.0f;
-                d.stored_raw_food     = 0.0f;
-                d.stored_raw_material = 0.0f;
-                d.stored_output       = 0.0f;
+                d.stored_food         = p.stored_food;
+                d.stored_raw_food     = p.stored_raw_food;
+                d.stored_raw_material = p.stored_raw_material;
+                d.stored_construction_material = p.stored_construction_material;
+                d.stored_output       = p.stored_output;
             }
             if (p.type == TileType::EatingZone) {
                 d.built          = p.built;   // pre-placed EatingZone is built
@@ -975,11 +1015,11 @@ public:
                 d.build_cost     = p.build_cost > 0.0f ? p.build_cost : 2.0f;
             }
             if (p.type == TileType::Conveyor) {
-                d.built              = false;
-                d.build_progress     = 0.0f;
+                d.built              = p.built;
+                d.build_progress     = p.built ? p.build_cost : 0.0f;
                 d.build_cost         = p.build_cost > 0.0f ? p.build_cost : 1.5f;
                 d.conveyor_dir       = p.conveyor_dir;
-                d.conveyor_condition = 1.0f;
+                d.conveyor_condition = p.conveyor_condition;
                 d.conveyor_contents  = 0.0f;
             }
         }

@@ -72,7 +72,7 @@ where $p_s$ is the prior probability of state $s$.
 
 4. If a cell's allowed set becomes empty (contradiction), backtrack or restart.
 
-The minimum-entropy heuristic (step 1) is a standard variable-ordering strategy from the CSP literature, analogous to the "most constrained variable" heuristic. Karth and Smith (2017) [@karth2017] formalized this connection, demonstrating that WFC is arc consistency checking with a specific variable-ordering heuristic.
+The minimum-entropy heuristic (step 1) is a standard variable-ordering strategy from the CSP literature, analogous to the "most constrained variable" heuristic. @karth2017 formalized this connection, demonstrating that WFC is arc consistency checking with a specific variable-ordering heuristic.
 
 WFC operates in two modes: *tile-based* (adjacency constraints specified explicitly) and *overlapping* (constraints extracted automatically from an exemplar image by analyzing all $N \times N$ sub-patterns). The overlapping mode has been widely adopted in procedural generation for games including *Caves of Qud*, *Townscaper*, and *Bad North*.
 

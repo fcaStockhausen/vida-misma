@@ -1,5 +1,16 @@
 # La Vida Misma — The Factory as Antagonist
 
+> [!WARNING]
+> **HISTORICAL AND SUPERSEDED PLAN.** This document preserves the May 2026
+> proposal as a decision record; it is not the current implementation plan or
+> canonical ontology. Its strategic factory, Watcher, faction privileges and
+> targeted retaliation were superseded by
+> `2026-07-21-alineacion-diseno-implementacion.md`. Canonical policy is an
+> indifferent institution that cannot inspect identities, relationships,
+> communities or the meaning of actions. Do not implement the tasks below as
+> current requirements; `external.policy_variant = 0` retains only selected
+> legacy behavior for explicit historical A/B comparisons.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Transform the factory from a passive backdrop into an active antagonist. Make CREATE, EXPLORE, and SOCIALIZE into acts of resistance, not leisure. Every mechanic must reinforce the central tension: the factory demands output, the agents want to live.

@@ -1,123 +1,165 @@
-# Adaptive Logistics: Dismantle, Rebuild, and Self-Organizing Infrastructure {#sec:adaptive-logistics}
+# Adaptive Logistics: Implemented Dismantling and Open Hypotheses {#sec:adaptive-logistics}
 
-The conveyor infrastructure described in Section @sec:pipelines provides a fixed topology: belts placed during factory setup that agents build and maintain. However, a fixed topology creates rigidity. As the factory evolves---agents discover better machine placements, storage fills at different rates, or population shifts create new demand patterns---the conveyor network may become suboptimal or actively obstructive.
+The current adaptive-logistics mechanism is narrower than a general
+dismantle-and-rebuild system. Agents can identify and remove certain dead-end
+conveyors. They cannot detect conveyor path blockers, are not committed to rebuild
+what they remove, and do not compare the efficiency of the old and new network.
+Claims of self-organizing infrastructure therefore remain hypotheses.
 
-This section introduces the **adaptive logistics** system: the capacity for agents to dismantle and rebuild conveyor segments, reorganizing the factory's physical infrastructure in response to observed inefficiencies. This system creates a feedback loop between spatial layout (Section @sec:factory) and agent decision-making (Section @sec:inhabitants): the factory shapes agent behavior, but agents can reshape the factory.
+## Implemented Candidate: Protected Dead Ends {#sec:dismantle-action}
 
-## The Dismantle Action {#sec:dismantle-action}
+`Grid::is_dismantle_candidate()` accepts only a built Conveyor whose directed
+target remains inside the grid and is not:
 
-The DISMANTLE action type extends the agent's action repertoire (Section @sec:inhabitants) to include infrastructure deconstruction. An agent may dismantle a built conveyor segment when standing on an adjacent tile---the same adjacency rule that governs BUILD and MAINTAIN interactions with conveyors.
+- Storage or Exit;
+- another built Conveyor;
+- a built Machine.
 
-### Dismantle Conditions
+A belt pointing outside the grid is rejected rather than classified as a dead
+end.
 
-Not every conveyor is a candidate for dismantling. An agent evaluates a conveyor for removal only when it falls into one of two categories:
+It then protects the belt if any cardinal neighbor is a built Machine or built
+Conveyor. This grace rule prevents the agent from removing a segment adjacent to
+a chain that may still be under construction. `find_nearest_dead_end_conveyor()`
+returns the nearest remaining candidate (`src/grid.h`).
 
-1. **Dead end**: The conveyor's flow direction points to a tile that is not useful---not a Storage tile, not an Exit tile, and not another built conveyor. Dead-end conveyors consume maintenance resources without transporting material anywhere productive.
+Earlier designs also proposed a **path-blocker** category. It is inactive:
+conveyors are walkable, and `Grid::is_conveyor_blocking_path()` unconditionally
+returns false. The blocker scans left in utility, target selection, and execution
+therefore produce no candidate and no priority. DISMANTLE currently means
+dead-end removal only.
 
-2. **Path blocker**: The conveyor obstructs a critical agent movement corridor. A built conveyor is not traversable (Section @sec:tile-types), so a line of built conveyors can bisect the factory floor, preventing agents from reaching tiles on the other side. Agents detect blocking conveyors by checking whether the conveyor tile prevents north-south or east-west passage between walkable areas.
+## Selection, Targeting, and Execution
 
-These conditions are checked in the target selection phase (Section @sec:inhabitants) before an agent commits to the DISMANTLE action.
+Utility observes candidates within the same 12-tile local window used by agent
+decision-making. Because the blocker branch is false, the active drive is
 
-### Dismantle Mechanics
+$$
+U_D = c_{\mathrm{eff}}\,(0.6)\,
+      \max(0,1-3u_h)\,
+      \max(0,2m-0.5)\,
+      (1-0.5\ell)\,g_m,
+$$
 
-When executed, the DISMANTLE action:
+where $c_{\mathrm{eff}}$ is effective compliance, $u_h$ is hunger urgency,
+$m$ is mood, $\ell$ is laziness, and $g_m$ is the general mood factor. Contrary
+to the older design, hunger suppresses dismantling rather than boosting it. If
+the agent already carries more than 2 units of raw material, utility is multiplied
+by 0.3 (`src/sim_utility.cpp`).
 
-1. **Converts the conveyor tile back to Floor.** The built conveyor is removed, and the tile becomes walkable terrain. The tile retains metadata tracking the dismantle event (see below).
+Target selection chooses the nearest dead end within observation radius and sends
+the agent to a walkable neighboring tile. Execution then scans the agent's
+eight-neighborhood, rechecks built state and chain protection, and removes the
+highest-scoring candidate. With no active blocker score, a valid dead end receives
+score 1 (`src/sim_targets.cpp`, `src/sim_execute.cpp`).
 
-2. **Refunds a fraction of the construction material.** The dismantling agent receives a material refund:
+## Physical Effect and Refund
 
-$$\text{refund} = \text{build\_cost} \times \text{dismantle\_return}$$
+Successful execution:
 
-where `dismantle_return` is a configuration parameter (default $\alpha = 0.5$, i.e., 50% refund). The remaining material is permanently lost, representing the real cost of deconstruction: torn belts, broken connectors, wasted effort.
+1. records the belt's resource type and amount as lost;
+2. changes the tile type to Floor;
+3. resets built state, progress, condition, and contents;
+4. returns
+   $\text{build\_cost}\times\text{dismantle\_return}$ as raw material, capped by
+   a hard-coded inventory value of 10;
+5. stores `dismantled_by`, `dismantled_at_tick`, and `original_type` on the Floor
+   tile;
+6. provides a small purpose-need reduction and emits a factual DISMANTLED event.
 
-3. **Records tracking metadata** on the resulting Floor tile:
+The default return fraction is 0.5 (`[dismantle]` in
+`config/default.toml`). The refund uses the tile's stored `build_cost`, not a
+universal recipe. @sec:pipelines documents the unresolved cost split:
+resident-created, inherited, and Director-created belts currently store different
+costs, so they yield different nominal refunds.
 
-| Field | Value |
-|:------|:------|
-| `dismantled_by` | Agent ID of the dismantler |
-| `dismantled_at_tick` | Current tick $t$ |
-| `original_type` | `TileType::Conveyor` |
+## There Is No Enforced Rebuild Cycle {#sec:rebuild-cycle}
 
-These fields persist until the tile is rebuilt or overwritten.
+After dismantling, the acting agent receives no destination, obligation, sticky
+state, or reserved material for reconstruction. Ordinary BUILD may later place a
+frame selected by the independent machine-to-destination BFS planner, but that
+planner does not know who dismantled the old belt, does not promise to fill the
+same tile, and does not compare route throughput before and after removal.
 
-## The Rebuild Cycle {#sec:rebuild-cycle}
+Consequently, the executable does not implement the proposed sequence
+"detect, dismantle, navigate, rebuild at a better position" as one policy. It
+implements two independent possibilities: removal of a protected dead end and
+ordinary future construction. Any observed rebuild association must be measured,
+not inferred from those two mechanisms.
 
-Dismantling is only useful as part of a rebuild cycle. The agent who dismantles a conveyor is expected to rebuild a conveyor elsewhere---ideally in a position that creates a more efficient logistics path. The rebuild uses the standard BUILD action on an unbuilt conveyor frame at the new location.
+## Repeated Unrebuilt-Site Penalty {#sec:dismantle-penalty}
 
-The rebuild cycle is:
+`system_check_dismantle_penalties()` scans Floor tiles retaining dismantle
+metadata after social relationship decay. For default rebuild window $w=200$, it
+acts on every tick satisfying
 
-1. **Detect** an inefficient or blocking conveyor segment.
-2. **Dismantle** the segment (DISMANTLE action, $\alpha$ material refund).
-3. **Navigate** to a better position for the new segment.
-4. **Build** a new conveyor frame at the improved location (BUILD action, consumes `build_cost` material).
+$$
+w\leq t-t_D\leq w+50.
+$$
 
-The net material cost of one dismantle-rebuild cycle is:
+This is an inclusive 51-tick exposure period, not a one-time penalty. It applies
+only while the original dismantler is alive. On each exposure tick, every other
+living agent within Manhattan distance $d\leq6$:
 
-$$\Delta m = \text{build\_cost} \times (1 - \alpha)$$
+- records a negative observation on its own directed edge
+  `observer -> dismantler`, with severity
+  $0.05(1-d/7)$;
+- receives a stress increment of 0.003, clamped to $[0,1]$.
 
-For the default parameters ($\text{build\_cost} = 3.0$, $\alpha = 0.5$), each cycle costs $\Delta m = 1.5$ units of construction material. This cost ensures that adaptive reorganization is not free: agents must weigh the material cost of rearrangement against the efficiency gains of a better conveyor path.
+Thus repeated observers repeatedly lose trust and repeatedly gain stress. The
+relationship update is disabled when `social_learning_enabled = false`, but the
+stress increment still occurs because it is applied separately. After
+$t-t_D>w+50$, metadata remains but the system performs no further penalty
+(`src/simulation.cpp`, `src/social.h`).
 
-## Social Penalty: The Trust Cost of Disorder {#sec:dismantle-penalty}
+The scan requires the site still to be Floor. Building any non-Floor structure on
+that exact tile stops future checks because the tile no longer matches, even
+though the resident conveyor-build path does not explicitly clear the metadata
+fields. Director replacement assigns fresh `TileData`, but the penalty scan still
+depends first on tile type. Rebuilding somewhere else does not clear the original
+site's exposure. Stopping future checks also does not restore trust or stress
+already changed.
 
-Dismantling a conveyor is a visible act of infrastructure disruption. Other agents who observe a torn-up conveyor belt---a Floor tile where a functioning conveyor used to be---interpret it as evidence of wasted collective effort. This interpretation is modeled through the social penalty system.
+## What the Mechanism Can and Cannot Support
 
-### Penalty Trigger
+| Claim | Current status |
+|---|---|
+| Agents can remove isolated built belts that point nowhere useful | Implemented |
+| Dismantling loses carried belt contents and refunds part of stored cost | Implemented |
+| Nearby observers can repeatedly penalize a surviving dismantler when the exact Floor site remains empty | Implemented |
+| Conveyors can block paths and be removed to reopen corridors | False under current walkability semantics |
+| The dismantler is required or incentivized by explicit state to rebuild | Not implemented |
+| A new segment is guaranteed at the old site or at a better site | Not implemented |
+| The system evaluates route efficiency, redundancy, throughput, or bottlenecks before removal | Not implemented |
+| Repeated dismantlers become socially isolated | Plausible but unverified outcome |
+| Skilled logistics maintainers become valued leaders | Plausible but unverified outcome |
+| The network self-organizes toward greater efficiency | Plausible but unverified outcome |
 
-When a Floor tile retains dismantle tracking metadata (Section @sec:dismantle-action) and no rebuild has occurred on that tile within a configurable window of $w = 200$ ticks (`dismantle_rebuild_window`), the social penalty activates:
+No schema-3 field currently links dismantle events, later builds, route length,
+throughput improvement, or the dismantler's social trajectory. The deterministic
+suite covers conveyor planning purity, one-resource transport, physical shipping,
+and maintenance, but it has no focused behavioral test for dead-end dismantle
+selection or the 51 repeated penalty ticks. These are evidence gaps, not evidence
+that the proposed outcomes occur.
 
-1. **Trust decay**: Every agent within Manhattan distance $d \leq 6$ of the abandoned tile loses trust in the dismantling agent via the `negative_interaction` function (Section @sec:social-fabric). The trust penalty magnitude scales with the observer's proximity to the abandoned site.
+## Required Evidence for Stronger Claims
 
-2. **Stress contagion**: Witnesses receive a small stress increase ($+0.003$ per tick of exposure), modeling the ambient anxiety produced by visible disorder in the workspace.
+A self-organizing-logistics claim would require, at minimum, event linkage between
+removal and construction, a physical route-quality measure fixed before the
+experiment, and a multiseed comparison against dismantling disabled. A social-cost
+claim would additionally require directed trust trajectories with the penalty on
+and off. Until such tests exist, the academically defensible conclusion is only
+that dead-end removal and a repeated local social/stress penalty are active.
 
-### Penalty Clearance
+## Implementation and Verification References
 
-The penalty clears when any agent rebuilds a conveyor (or any structure) on the abandoned tile. The tracking metadata is overwritten, and the social system no longer penalizes the original dismantler. Crucially, **the rebuild need not be performed by the same agent who dismantled**---any agent who fills the gap clears the social debt. This design encourages collaborative reconstruction: an agent who sees an abandoned dismantle site has an incentive to rebuild it, not only to restore logistics efficiency but also to help the dismantler's social standing.
-
-### Calibration
-
-The penalty window ($w = 200$ ticks) is calibrated to be generous enough that agents performing legitimate dismantle-rebuild cycles are not penalized during normal operation (navigation + build time is typically 20--50 ticks), but short enough that genuinely abandoned dismantle sites produce social consequences within a reasonable timeframe. The penalty does not accumulate indefinitely: after $w + 50$ ticks, the tracking metadata is considered stale and the penalty ceases to grow.
-
-## Utility Computation for DISMANTLE {#sec:dismantle-utility}
-
-The DISMANTLE action competes with all other actions in the agent's utility computation (Section @sec:inhabitants). Its utility is:
-
-$$U(\text{DSMNTL}) = u_{\text{base}} \times c_{\text{compliance}} \times g_{\text{calm}} \times g_{\text{hunger}} \times (1 - p_{\text{laziness}}) \times b_{\text{blocker}}$$
-
-where:
-
-| Factor | Formula | Purpose |
-|:-------|:--------|:--------|
-| $u_{\text{base}}$ | $0.15$ | Base utility, intentionally moderate |
-| $c_{\text{compliance}}$ | `personality.compliance` | Only obedient agents consider dismantling |
-| $g_{\text{calm}}$ | $\max(0,\; 2.0 \cdot \text{mood} - 0.5)$ | Stressed agents don't dismantle (gate) |
-| $g_{\text{hunger}}$ | $3.0$ if hunger < 0.3, else $1.0$ | Hungry agents are not gated out but hungry trumps |
-| $p_{\text{laziness}}$ | `personality.laziness` | Lazy agents avoid the effort |
-| $b_{\text{blocker}}$ | $2.0$ if blocking, $1.0$ if dead-end | Prioritize removing blockers |
-
-The calm gate ($g_{\text{calm}}$) requires `mood > 0.25` for the utility to be non-zero. This ensures that only agents in a reasonably calm emotional state attempt infrastructure rearrangement---stressed agents are not trusted with deconstruction tools.
-
-The hunger gate is inverted from the MAINTAIN action's hunger gate (Section @sec:production-chain): MAINTAIN is suppressed when agents are hungry (to avoid starvation from over-maintaining), but DISMANTLE is boosted when agents are hungry. The rationale is that a hungry agent in a blocked factory has the strongest incentive to rearrange logistics---the current layout is failing them.
-
-## Integration with Factory Systems
-
-The adaptive logistics system integrates with the existing factory systems at three points:
-
-### Movement and Pathfinding
-
-When an agent dismantles a blocking conveyor, the tile becomes Floor (traversable), immediately opening the blocked corridor. Agents on both sides of the former barrier can now pathfind to tiles that were previously unreachable. The pathfinding system (Section @sec:pathfinding) automatically incorporates the new walkability state in the next A* computation---no manual update is required.
-
-### Conveyor Transport
-
-The conveyor transport system (Section @sec:pipelines) skips tiles that are not built conveyors. When a conveyor is dismantled mid-chain, the transport system treats the gap as a break in the line: material flowing toward the gap stops at the last conveyor before the break. This creates a local logistics disruption that persists until the gap is rebuilt or the chain is rerouted.
-
-### Social Fabric
-
-The trust penalty for abandoned dismantle sites creates a social incentive structure that mirrors real-world collective action dynamics. Agents who dismantle without rebuilding are perceived as unreliable by their peers---a social cost that must be weighed against the potential efficiency gain of the rearrangement. This dynamic connects the adaptive logistics system to the broader social simulation (Section @sec:social-fabric), where trust and reputation influence cooperation, resource sharing, and coalition formation.
-
-## Design Philosophy: Controlled Disorder
-
-The adaptive logistics system embodies a core tension in the factory's design: **the factory is more efficient when its infrastructure is well-organized, but the agents who maintain it have conflicting priorities**. An agent who dismantles a blocking conveyor does the factory a service by opening a corridor---but if they fail to rebuild, the service becomes a disruption.
-
-This tension creates emergent narratives: an agent who repeatedly dismantles without rebuilding becomes socially isolated (low trust from peers). An agent who systematically identifies and fixes logistics bottlenecks becomes a valued community member. The factory's physical layout becomes a record of agent decisions---a material trace of collective intelligence or collective dysfunction.
-
-The system also creates a natural role for the Director (Section @sec:director): by placing machines and storage in configurations that suggest efficient conveyor paths, the Director can reduce the frequency of dismantle-rebuild cycles, guiding agents toward layouts that require less adaptation. A well-designed factory layout produces less disorder; a poorly designed one produces constant rearrangement and the social friction that accompanies it.
+- Candidate, walkability, refund base, and construction planner: `src/grid.h`.
+- Utility, targeting, and action effect: `src/sim_utility.cpp`,
+  `src/sim_targets.cpp`, `src/sim_execute.cpp`.
+- Repeated penalty and tick placement: `src/simulation.cpp`.
+- Directed negative evidence: `src/social.h`.
+- Configuration: `[dismantle]` and `[conveyor]` in `config/default.toml`, loaded by
+  `src/config.cpp` into `src/config.h`.
+- Existing adjacent logistics coverage and the current focused-test gap:
+  `tests/simulation_tests.cpp`; structured output contract:
+  `tests/verify_metrics.cmake`.

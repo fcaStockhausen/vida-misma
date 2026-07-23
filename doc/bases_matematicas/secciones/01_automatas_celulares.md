@@ -25,7 +25,7 @@ The choice of neighborhood is not merely parametric: it defines the maximum spee
 
 ## Historical Context: Self-Reproduction and Universality
 
-Von Neumann introduced the cellular automaton framework in the late 1940s as a formal setting for the question of kinematic self-reproduction. His construction used 29 states per cell and demonstrated that a configuration could contain a description of itself and use that description to build a copy [@burks1970}. The result was primarily existential: it established that self-reproduction is possible within a deterministic, discrete framework, but the construction was not intended for practical simulation.
+Von Neumann introduced the cellular automaton framework in the late 1940s as a formal setting for the question of kinematic self-reproduction. His construction used 29 states per cell and demonstrated that a configuration could contain a description of itself and use that description to build a copy [@burks1970]. The result was primarily existential: it established that self-reproduction is possible within a deterministic, discrete framework, but the construction was not intended for practical simulation.
 
 Subsequent simplifications by Ulam, Burks, and others reduced the state space while preserving the core property: that local synchronous update rules can produce global configurations with non-trivial structure. The question of *how simple* such a system can be while still exhibiting complex behavior motivates the next development.
 
@@ -89,7 +89,7 @@ The fluid system illustrates a design principle that recurs throughout this docu
 
 The binary state space and discrete time of classical CAs are design choices, not mathematical necessities. Two generalizations relax these constraints.
 
-**SmoothLife** (Rafler, 2011) [@rafler2011] replaces the binary cell state with a continuous value $f(\vec{x}, t) \in [0, 1]$ and the neighbor count with continuous integrals over annular regions:
+**SmoothLife**, introduced by @rafler2011, replaces the binary cell state with a continuous value $f(\vec{x}, t) \in [0, 1]$ and the neighbor count with continuous integrals over annular regions:
 
 $$m(\vec{x}, t) = \frac{1}{M} \int_{|\vec{u}| < r_i} f(\vec{x} + \vec{u}, t) \, d\vec{u}$$ {#eq:inner-filling}
 
@@ -107,19 +107,19 @@ $$\partial_t f(\vec{x}, t) = S[s(n, m)] \cdot f(\vec{x}, t)$$ {#eq:smoothlife-co
 
 SmoothLife produces translating structures ("smooth gliders") that can propagate in any direction, not just the 8 directions of a Moore neighborhood. The significance of this result is that it demonstrates emergence does not depend on spatial discretization: continuous dynamics can produce qualitatively similar phenomena.
 
-**Lenia** (Chan, 2019) [@chan2019] generalizes further by introducing learnable growth functions and parameterized kernels:
+**Lenia**, introduced by @chan2019, generalizes further by introducing learnable growth functions and parameterized kernels:
 
 $$\frac{dA}{dt} = G(K * A^t)$$ {#eq:lenia}
 
 where $A^t$ is the grid state, $G$ is a growth function (typically a Gaussian-shaped function centered at zero), $K$ is a kernel (typically a ring-shaped radial function), and $*$ denotes 2D convolution. By varying $G$ and $K$ across a parameter space, Chan identified over 400 distinct self-organizing patterns ("species") with qualitatively different behaviors: stable orbits, reproduction, predation, and collective motion. Chan's classification of these patterns into families and genera parallels biological taxonomy.
 
-However, Davis (2022) [@davis2022] demonstrated that the self-organization in Lenia is critically dependent on numerical precision. The glider *Scutium gravidus*, for example, destabilizes when simulation precision is increased from float32 to float64, when spatial resolution is increased via larger kernels, or when temporal resolution is increased via smaller time steps. This suggests that the "species" discovered in Lenia are not properties of the continuous mathematical system alone, but co-products of the specific numerical approximation used. Davis frames this as a form of numerical embodied cognition: the patterns that emerge are adapted to the computational substrate on which they were discovered.
+However, @davis2022 demonstrated that the self-organization in Lenia is critically dependent on numerical precision. The glider *Scutium gravidus*, for example, destabilizes when simulation precision is increased from float32 to float64, when spatial resolution is increased via larger kernels, or when temporal resolution is increased via smaller time steps. This suggests that the "species" discovered in Lenia are not properties of the continuous mathematical system alone, but co-products of the specific numerical approximation used. Davis frames this as a form of numerical embodied cognition: the patterns that emerge are adapted to the computational substrate on which they were discovered.
 
 The practical implication for simulation engine design is that numerical representation choices (float precision, temporal step size, spatial resolution) are not merely performance parameters. They can qualitatively affect which behaviors emerge. This is particularly relevant when choosing data representations for large-scale community simulations.
 
 ## Neural Cellular Automata
 
-Sandler et al. (2020) [@sandler2020] replaced the hand-designed transition function with a learned one:
+@sandler2020 replaced the hand-designed transition function with a learned one:
 
 $$s_{t+1} \leftarrow S(s_t, i; \theta)$$ {#eq:neural-ca}
 

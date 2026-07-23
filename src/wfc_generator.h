@@ -5,6 +5,7 @@
 #include <random>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 struct WFCSlot {
     std::vector<bool> possible;
@@ -42,26 +43,31 @@ public:
         float build_cost = 0.0f;
         bool built_on_resource = false;  // Machine sits on FoodSource: auto-gathers
         ConveyorDir conveyor_dir = ConveyorDir::E;
+        float conveyor_condition = 1.0f;
+        float stored_food = 0.0f;
+        float stored_raw_food = 0.0f;
+        float stored_raw_material = 0.0f;
+        float stored_construction_material = 0.0f;
+        float stored_output = 0.0f;
     };
 
     // ================================================================
-    // WFC generates ONLY the bare map skeleton:
+    // WFC generates the inherited institutional layout:
     //   - Wall perimeter
     //   - Floor tiles (majority)
     //   - OpenSpace clusters (4+ tiles, for social/expression)
-    //   - 1 Exit tile (right wall, random Y)
-    //   - 2 initial Storage tiles near the Exit
-    //   - Machine frames (UNBUILT, agents build them)
+    //   - 1 Exit tile on the right and 1 Entrance on the left
+    //   - A minimal built production chain near the Exit
     //   - FoodSource tiles (renewable raw food)
     //   - ScrapPile tiles (renewable raw material)
     //
-    // Everything else (conveyors, eating zones, extra storage)
-    // is built BY AGENTS through the BUILD action.
+    // Agents inherit, maintain, repair, and expand this installation.
     // ================================================================
 
     std::vector<Placement> generate() {
         pre_collapse_boundaries();
         pre_collapse_exit();
+        pre_collapse_entrance();
         // Open floor plan: no internal walls
         for (int y = 1; y < height_ - 1; y++)
             for (int x = 1; x < width_ - 1; x++) {
@@ -111,6 +117,7 @@ private:
     int width_, height_;
     std::mt19937 rng_;
     std::vector<WFCSlot> slots_;
+    int exit_y_ = 3;
 
     int idx(int x, int y) const { return y * width_ + x; }
 
@@ -128,8 +135,16 @@ private:
     // Single Exit on right wall at random Y position
     void pre_collapse_exit() {
         std::uniform_int_distribution<int> y_dist(3, height_ - 4);
-        int ey = y_dist(rng_);
-        force_collapse(width_ - 1, ey, TileType::Exit);
+        exit_y_ = y_dist(rng_);
+        force_collapse(width_ - 1, exit_y_, TileType::Exit);
+    }
+
+    // Deterministic from the already sampled Exit, so adding Entrance consumes
+    // no additional WFC randomness.
+    void pre_collapse_entrance() {
+        int entrance_y = std::clamp(height_ - 1 - exit_y_, 2, height_ - 3);
+        force_collapse(0, entrance_y, TileType::Entrance);
+        force_collapse(1, entrance_y, TileType::Floor);
     }
 
     void force_collapse(int x, int y, TileType t) {
@@ -291,7 +306,7 @@ private:
     // ================================================================
     // build_placements: stamp all non-WFC entities onto the grid.
     // WFC provides: Floor, OpenSpace, Wall, Exit
-    // We add: 2 Storage near Exit, Machine frames, FoodSource, ScrapPile, OpenSpace clusters
+    // We add: inherited factory, FoodSource, ScrapPile, and OpenSpace clusters.
     // ================================================================
 
     std::vector<Placement> build_placements() {
@@ -304,11 +319,61 @@ private:
 
         place_open_spaces(P);      // OpenSpace clusters (4+ tiles, guaranteed)
         place_eating_zone(P);      // Central communal eating space (large, pre-built)
-        place_exit_storage(P);     // 2 Storage tiles near Exit
+        place_inherited_factory(P);// Minimal degraded production chain
         place_food_sources(P);     // Renewable raw food (agents build FoodMachine on top)
-        place_scrap_piles(P);      // Renewable raw material (agents build OutputMachine on top)
+        place_scrap_piles(P);      // Renewable raw material (agents build MaterialsMachine on top)
 
         return P;
+    }
+
+    void place_inherited_factory(std::vector<Placement>& P) {
+        int exit_x = -1, exit_y = -1;
+        for (int y = 1; y < height_ - 1; y++) {
+            if (slot_type(width_ - 1, y) == TileType::Exit) {
+                exit_x = width_ - 1;
+                exit_y = y;
+                break;
+            }
+        }
+        if (exit_x < 0 || exit_x - 12 < 1) {
+            throw std::runtime_error("grid is too narrow for inherited factory");
+        }
+
+        Placement food{exit_x - 12, exit_y, TileType::Machine,
+            MachineType::Food, 6.0f, 15.0f, 0.15f, 0.0f,
+            true, 0.15f, true, ConveyorDir::E};
+        food.stored_raw_food = 0.15f;
+        set_placement(P, food.x, food.y, food);
+
+        Placement service_storage{exit_x - 11, exit_y, TileType::Storage,
+            MachineType::Food, 0, 0, 0, 8.0f, true};
+        service_storage.stored_food = 1.0f;
+        set_placement(P, service_storage.x, service_storage.y, service_storage);
+
+        Placement materials{exit_x - 9, exit_y, TileType::Machine,
+            MachineType::Materials, 4.0f, 10.0f, 0.15f, 0.0f,
+            true, 0.15f, true, ConveyorDir::E};
+        materials.stored_raw_material = 0.15f;
+        set_placement(P, materials.x, materials.y, materials);
+
+        Placement output{exit_x - 6, exit_y, TileType::Machine,
+            MachineType::Output, 0, 0, 0, 0, true, 0.15f, false,
+            ConveyorDir::E};
+        output.stored_construction_material = 0.30f;
+        set_placement(P, output.x, output.y, output);
+
+        constexpr float conditions[] = {0.55f, 0.65f, 0.75f, 0.85f};
+        for (int i = 0; i < 4; i++) {
+            Placement conveyor{exit_x - 5 + i, exit_y, TileType::Conveyor,
+                MachineType::Food, 0, 0, 0, 0, true, 0.15f, false,
+                ConveyorDir::E};
+            conveyor.conveyor_condition = conditions[i];
+            set_placement(P, conveyor.x, conveyor.y, conveyor);
+        }
+
+        Placement output_storage{exit_x - 1, exit_y, TileType::Storage,
+            MachineType::Food, 0, 0, 0, 8.0f, true};
+        set_placement(P, output_storage.x, output_storage.y, output_storage);
     }
 
     TileType peek(const std::vector<Placement>& P, int x, int y) const {
@@ -445,57 +510,8 @@ private:
     }
 
     // ================================================================
-    // Exit-adjacent Storage: 2 tiles near the Exit.
-    // This is where agents deliver food and where Output gets shipped.
-    // Exit position is found from the collapsed WFC grid.
-    // ================================================================
-
-    void place_exit_storage(std::vector<Placement>& P) {
-        // Find the Exit tile
-        int exit_x = -1, exit_y = -1;
-        for (int y = 1; y < height_ - 1; y++) {
-            if (slot_type(width_ - 1, y) == TileType::Exit) {
-                exit_x = width_ - 1;
-                exit_y = y;
-                break;
-            }
-        }
-        if (exit_x < 0) return;  // shouldn't happen
-
-        // Place 2 Storage tiles adjacent to Exit (inside the wall)
-        // Try positions: (exit_x-1, exit_y-1) and (exit_x-1, exit_y+1)
-        // or (exit_x-1, exit_y) and (exit_x-2, exit_y)
-        std::vector<std::pair<int,int>> candidates = {
-            {exit_x - 1, exit_y},
-            {exit_x - 2, exit_y},
-            {exit_x - 1, exit_y - 1},
-            {exit_x - 1, exit_y + 1},
-            {exit_x - 2, exit_y - 1},
-            {exit_x - 2, exit_y + 1},
-        };
-
-        int placed = 0;
-        for (auto [sx, sy] : candidates) {
-            if (placed >= 2) break;
-            if (sx > 0 && sx < width_ - 1 && sy > 0 && sy < height_ - 1) {
-                if (peek(P, sx, sy) == TileType::Floor || peek(P, sx, sy) == TileType::OpenSpace) {
-                    set_placement(P, sx, sy,
-                        {sx, sy, TileType::Storage, MachineType::Food,
-                         0, 0, 0, 20.0f, true, 0.0f, false, ConveyorDir::E});  // built=true: initial infrastructure
-                    placed++;
-                }
-            }
-        }
-    }
-
-    // ================================================================
-    // NOTE: No machine frames are placed by WFC.
-    // ALL machines are built dynamically by agents:
-    //   - FoodMachine on FoodSource tiles
-    //   - MaterialsMachine on ScrapPile tiles
-    //   - OutputMachine on Floor tiles (when agent has construction_material)
-    // This follows the core design principle: agents build the factory.
-    // The factory layout emerges from agent decisions, not from pre-designation.
+    // Additional machines remain agent-built; the inherited chain is deliberately
+    // minimal so residents still have room to repair and expand it.
     // ================================================================
 
     // ================================================================

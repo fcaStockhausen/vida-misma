@@ -36,7 +36,7 @@ Skills can also decay through disuse, providing a countervailing force that prev
 
 ## Relationships and Social Dynamics
 
-The social graph (defined in Section 3.6) is the substrate on which social dynamics operate. The economic and skill systems feed into it through events: working alongside another agent modifies the relationship edge, successful collaboration strengthens it, competition weakens it, and traumatic events (injury, death, loss) create large negative modifications modulated by personality.
+The social graph (defined in @sec:relationship-graph) is the substrate on which social dynamics operate. The economic and skill systems feed into it through events: working alongside another agent modifies the relationship edge, successful collaboration strengthens it, competition weakens it, and traumatic events (injury, death, loss) create large negative modifications modulated by personality.
 
 The stress system interacts with the social graph through contagion:
 
@@ -48,7 +48,7 @@ This mechanism produces emergent social dynamics: a traumatic event (e.g., a cre
 
 ## Spatial Game Theory
 
-The social dynamics described above gain additional structure when agents are embedded in physical space. Nowak and May (1992) [@nowak1992] demonstrated that placing simple game-theoretic interactions on a spatial lattice fundamentally changes the evolutionary outcomes.
+The social dynamics described above gain additional structure when agents are embedded in physical space. @nowak1992 demonstrated that placing simple game-theoretic interactions on a spatial lattice fundamentally changes the evolutionary outcomes.
 
 In the standard Prisoner's Dilemma, defection is the dominant strategy in a well-mixed population: agents who defect always outperform cooperators, leading to universal defection. However, when agents are placed on a 2D lattice and interact only with their spatial neighbors, cooperators can form clusters that resist invasion by defectors. The boundary of a cooperator cluster generates enough mutual benefit to offset the exploitation by surrounding defectors. The spatial structure itself enables cooperation that would be impossible without it.
 

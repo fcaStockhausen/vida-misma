@@ -1,0 +1,18 @@
+format = "vida-interventions"
+schema_version = 2
+seed = 42
+director_mode = "normal"
+tick_phase = "before_advance"
+config_fingerprint = "3b5e6ae9daed88eb"
+
+[[event]]
+tick = 0
+sequence = 0
+kind = "set_quota"
+quota_per_tick = 0.05
+
+[[event]]
+tick = 5
+sequence = 1
+kind = "set_quota"
+quota_per_tick = 0.1

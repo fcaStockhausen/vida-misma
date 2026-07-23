@@ -1,239 +1,289 @@
-# La Vida Misma: Design Specification
-
-> This document is the practical crystallization of the simulation design. For the full academic treatment with formal proofs, cross-referenced mathematical foundations, and literature citations, see the compiled document at `bases_matematicas.pdf` (Part II: Sections 12--19).
-
-## 1. Core Concept
-
-A community simulation where agents inhabit a factory they did not build, do not control, and do not understand. The factory produces something meaningless -- the output is determined by an external agent (the player). The agents' primary constraint is survival: if the factory stops, they die. But survival is not their only drive. They have internal impulses, preferences, and talents that have nothing to do with factory output. The tension between *what the factory requires* and *what the agents want* is the engine of the simulation.
-
-Closer to a company town, a prison, an institution: a closed system where the inhabitants did not choose to be there but must make life within it. Unlike Dwarf Fortress (agents building a home) or RimWorld (agents surviving a crash), there is no founding act -- the factory preexists them and they wake inside it.
-
-## 2. The Factory Metaphor as a Formal System
-
-The metaphor translates directly into the simulation frameworks established in *Mathematical Foundations of Community Simulation Engines*. This section maps each narrative element to its formal component.
-
-### 2.1 The Factory = The World Substrate
-
-The factory is a bounded 2D grid. The choice of 2D is deliberate:
-
-- A 2D grid is sufficient to model the core phenomena (spatial proximity, resource flow, territory formation, segregation). The Nowak-May and Schelling results both operate on 2D lattices.
-- 3D adds pathfinding cost ($O(b^d)$ increases), fluid complexity (gravity in 3 directions), and visualisation complexity that does not contribute to the core mechanic.
-- Dwarf Fortress uses 3D because mining and fluid physics are central to its design. In La Vida Misma, the central tension is social, not spatial. 2D is the adequate approximation per the adequacy principle (Section 7.2 of *Mathematical Foundations*).
-
-The factory is a grid of $W \times H$ tiles. Each tile has a type (floor, wall, machine, storage, open space, garden, etc.) and a set of properties (temperature, cleanliness, ownership, ambient noise).
-
-**Decision**: 2D grid. Expand to 2.5D (multiple Z-levels) only if verticality becomes mechanically necessary (e.g., the factory has a basement or roof). Start flat.
-
-### 2.2 The External Agent = The Player / Director
-
-An entity outside the simulation that sets production targets, defines what the factory produces, and can modify the factory layout. This is analogous to RimWorld's Storyteller but operates at the infrastructure level rather than the event level.
-
-Formally, the Director defines:
-
-- **Production requirements**: what outputs the factory must produce per unit time.
-- **Resource inputs**: what raw materials enter the factory (from outside the grid, from the edges).
-- **Layout constraints**: where machines can be placed, where walls can be built.
-
-The Director does not control agents directly. The Director modifies the *environment* and the agents respond through their utility functions. This is the Dwarf Fortress design principle: the player does not select a dwarf and click "eat." The player builds a dining hall and the dwarf decides to eat because its hunger utility exceeds all other options.
-
-### 2.3 The Agents = Factory Inhabitants
-
-Each agent is an ECS entity with the following components:
-
-**NeedsComponent** (drives behavior):
-| Need | Decay rate | Satisfaction method | Effect at critical level |
-|---|---|---|---|
-| Hunger | Linear, constant | Eat food | Death |
-| Rest | Linear, constant | Sleep in a bed | Collapse (forced sleep), reduced skill |
-| Social | Slow, constant | Proximity + interaction with others | Stress accumulation, isolation penalty |
-| Expression | Very slow, variable | Perform artistic/musical activity | Stress accumulation, personality-dependent |
-| Purpose | Slow, irregular | Varies by personality | Stress accumulation, the "why am I here" drive |
-
-The key addition relative to standard utility AI is the **Expression** and **Purpose** needs. These are the needs that have no factory function. A musician playing music does not produce anything the factory requires. But the musician *needs* to play music. This is the core tension: the factory does not care about the musician's need, but the musician's utility function does.
-
-**PersonalityComponent** (drives differentiation):
-$$P = (f_1, f_2, \ldots, f_k), \quad f_i \in [0, 1]$$
-
-Facets include:
-| Facet | Effect on utility weights |
-|---|---|
-| Compliance | Weight of factory-assigned tasks vs. personal needs |
-| Laziness | Weight of rest/leisure vs. productive action |
-| Artistry | Weight of expression need, probability of artistic action |
-| Gregariousness | Weight of social need, interaction radius |
-| Resilience | Stress recovery rate, tolerance for adverse events |
-| Curiosity | Probability of exploring unknown tiles, weight of novelty |
-
-Personality is assigned at agent creation and is immutable (or nearly so -- very slow drift under extreme stress). This ensures that agents are *born different* rather than becoming different through experience alone.
-
-**SkillsComponent** (drives specialization):
-Same progression model as *Mathematical Foundations* Eq. @eq:skill-xp:
-
-$$\text{XP for level } N = \text{base} + \text{increment} \times N$$
-
-Skill categories: factory work (machine operation, assembly, hauling), domestic (cooking, cleaning), artistic (music, painting, storytelling), social (mediation, leadership). Skills improve with practice and decay with disuse. Specialization emerges from the feedback loop: agents who are good at something are assigned it more, so they get better at it.
-
-**StressComponent** (drives long-term dynamics):
-Same three-layer model as *Mathematical Foundations* Eq. @eq:stress:
-
-$$\text{stress}_t = \sigma\left(\sum_{e \in E_t} \text{impact}(e) \cdot \text{modulate}(e, P) - \text{recovery}(P)\right)$$
-
-Events that cause stress:
-- Factory-related: production failure, quota not met, machine breakdown
-- Social: conflict with another agent, isolation, loss of a relationship
-- Existential: witnessing death, prolonged unfulfilled purpose need, forced compliance
-- Environmental: cold, noise, dirt, overcrowding
-
-Events that reduce stress:
-- Social: positive interaction, friendship, shared meal
-- Expressive: artistic activity (for high-artistry agents), music, storytelling
-- Environmental: clean space, garden, quiet area
-
-**RelationshipsComponent** (the social graph):
-Weighted directed graph $G = (V, E, w)$ with $w(i, j) \in [-100, 100]$. Modified by:
-- Proximity: agents who share space accumulate positive weight slowly (mere exposure effect).
-- Collaboration: working together on a task increases weight.
-- Conflict: competing for resources or space decreases weight.
-- Expression: artistic performance increases weight for audience members with high artistry facet.
-- Stress contagion: propagates through the graph per *Mathematical Foundations* Eq. @eq:stress-contagion.
-
-### 2.4 The Utility Function = The Tension Engine
-
-This is where the design departs from standard simulation. The utility function has two opposing components:
-
-$$U(a) = \underbrace{U_{\text{factory}}(a)}_{\text{survival}} + \underbrace{U_{\text{self}}(a)}_{\text{living}}$$
-
-$$U_{\text{factory}}(a) = w_{\text{compliance}} \cdot f(\text{hunger}) + w_{\text{fear}} \cdot f(\text{factory\_health})$$
-
-$$U_{\text{self}}(a) = w_{\text{laziness}} \cdot f(\text{rest}) + w_{\text{social}} \cdot f(\text{social}) + w_{\text{artistry}} \cdot f(\text{expression}) + w_{\text{purpose}} \cdot f(\text{purpose})$$
-
-The weights $w_i$ are personality-dependent. A high-compliance, low-artistry agent will almost always select factory work. A low-compliance, high-artistry agent will neglect factory work to play music. The population as a whole must produce enough to keep the factory running, but individual agents may not cooperate.
-
-This creates the following dynamics:
-
-1. **The compliance spectrum**: Agents range from obedient workers to reluctant inhabitants. The factory needs a minimum number of compliant agents to function. If too many agents are non-compliant, production fails, resources stop arriving, and agents starve.
-
-2. **The free-rider problem**: Since all agents benefit from the factory running regardless of their contribution, there is an incentive to free-ride. This is directly modeled by the Nowak-May spatial game theory result (*Mathematical Foundations* Section 6.4): on a 2D lattice, cooperators can form clusters that sustain production, but defectors at the edges exploit them.
-
-3. **The artisan's dilemma**: An agent born with high artistry has a strong internal drive to create art, but art does not produce factory output. The agent must choose between self-expression and survival. The player/Director can resolve this by creating spaces where art contributes indirectly (morale boost for nearby agents), but this is not automatic.
-
-4. **The minimum work principle**: "todos quieren trabajar lo menos posible." Each agent's laziness facet increases the utility of rest/leisure relative to productive action. In a compliant population, this produces the effect that agents work the minimum necessary to meet quotas. In a non-compliant population, it produces underproduction and crisis.
-
-### 2.5 The Spaces = Emergent Architecture
-
-"Generan espacios dentro de la fabrica, espacios organizados para poder sobrellevar el tiempo."
-
-Agents modify their environment to satisfy needs. This is not scripted; it emerges from the utility system:
-
-- An agent with high social need will seek out the location where other agents gather (the cafeteria, the courtyard). If no such space exists, the agent will spend time in whichever space has the highest agent density, and other social agents will follow. A *de facto* gathering space emerges without being designated.
-- An agent with high artistry will seek a quiet space with low traffic and attempt to perform. Other high-artistry agents will be drawn to the area (social reinforcement through expression need). A *de facto* studio emerges.
-- An agent with high laziness will seek the space farthest from assigned work stations. Other lazy agents will cluster there. A *de facto* break room emerges.
-
-The Schelling model (*Mathematical Foundations* Section 3.6) predicts this: agents with mild preferences for certain spatial properties will spontaneously segregate into distinct zones. The factory does not designate a "garden district" or an "artists' corner." These emerge from agent preferences operating on the spatial substrate.
-
-The Director can facilitate this by building rooms, placing furniture, or leaving open spaces. But the *use* of those spaces is determined by agent behavior, not by designation.
-
-### 2.6 Resources and Flow
-
-"Recursos que tienen que ir y salir hacia otra parte."
-
-Resources enter the factory from the edges of the grid (representing the outside world) and exit as finished products. The production chain is:
-
-$$\text{Raw materials (edge)} \to \text{Processing (machines)} \to \text{Assembly (workshops)} \to \text{Finished goods (edge)}$$
-
-Agents must haul materials between stages. The distance between stages affects the utility of hauling tasks (*Mathematical Foundations* Eq. @eq:task-distance), which creates natural industrial organization.
-
-The factory's output quota is set by the Director. If the quota is met, resources continue to arrive. If not, the external system reduces input (simulating a contract being cancelled or a supplier withdrawing). This creates a survival pressure that operates at the collective level, not the individual level: no single agent is responsible for meeting the quota, but all agents suffer if it is not met.
-
-Additional resource flows:
-- **Food**: must be produced or received from outside. Agents who do not eat die.
-- **Medicine**: required for treating injuries and illness. Scarce.
-- **Art supplies**: required for satisfying the expression need. Not necessary for survival, but their absence increases stress in artistic agents.
-
-### 2.7 Birth and Death
-
-"En la fábrica vive gente, en la fábrica muere gente."
-
-**Death**: Agents die from starvation (hunger need at maximum for sustained period), catastrophic events (machine explosion, structural collapse), or accumulated stress (stress at maximum triggering a breakdown event that removes the agent). Death is permanent. The agent's relationships become grief events for connected agents.
-
-**Birth**: New agents arrive at the factory entrance (grid edge). The Director does not control who arrives. Each new agent is generated with random personality facets and no skills. The population must integrate new arrivals through the social graph: existing agents must interact with newcomers, and the newcomers must find their role through the utility/skill feedback loop.
-
-The birth-death cycle creates generational dynamics: the original agents who built the factory's social structure eventually die, and new agents without that history must sustain or modify what was built. Social memory exists only in the relationship graph, not in the agents themselves.
-
-## 3. Systems Architecture
-
-### 3.1 Tick-Based Update Loop
-
-Each simulation tick processes systems in order:
-
-```
-1. DecaySystem:        reduce all needs for all agents
-2. EventSystem:        generate external events (resource arrivals, quota checks)
-3. UtilitySystem:      compute utilities for all agents, select actions
-4. ActionSystem:       execute selected actions (move, work, eat, socialize, create)
-5. ProductionSystem:   process factory production based on completed tasks
-6. StressSystem:       update stress based on events, propagate through social graph
-7. RelationshipSystem: update relationship weights based on interactions
-8. EnvironmentSystem:  update tile properties (cleanliness, wear, decay)
-9. NarrativeSystem:    log significant events for the player
+# La Vida Misma: especificacion ejecutable de diseno
+
+Esta es la fuente breve de verdad para el comportamiento canonico. Las afirmaciones
+en presente deben corresponder a codigo, configuracion o pruebas; los modelos
+historicos y la fundamentacion extensa permanecen en `doc/plans/` y
+`doc/bases_matematicas/`, pero no reemplazan al ejecutable.
+
+## 1. Premisa y limite del modelo
+
+**Implementado.** La simulacion ocurre en una grilla 2D generada por WFC. Sus
+habitantes despiertan dentro de una fabrica heredada: no la fundan, no reciben
+ordenes individuales y dependen materialmente de mantener un flujo de output. La
+politica canonica trata a la fabrica como una institucion indiferente, no como un
+adversario que reconoce identidades o interpreta actos culturales
+(`Grid::generate_wfc()` en `src/grid.h`, `Simulation` en `src/simulation.cpp` y
+`external.policy_variant = 1` en `config/default.toml`).
+
+**Objetivo.** Hacer observable la tension entre sostener una institucion necesaria
+y dedicar tiempo a supervivencia, relaciones, expresion, descanso y proposito, sin
+convertir esa tension en un guion ni en control directo del jugador.
+
+**Hipotesis por validar.** La presion material retardada debe cambiar la asignacion
+colectiva de tiempo sin requerir castigos morales, enemigos identificados o una
+semilla que garantice supervivencia y cultura.
+
+## 2. Institucion, cuota y soporte externo
+
+**Implementado.** Solo el `OUTPUT` retirado de Storage dentro de radio Manhattan 3
+del Exit cuenta como enviado. En NORMAL, el cumplimiento actualiza una EMA y una
+curva suave:
+
+```text
+fill_t    = clamp(output_enviado_t / demanda_t, 0, 1)
+support_t = EMA(fill_t, response_ticks)
+supply_t  = floor + (1 - floor) * smoothstep(low, high, support_t)
 ```
 
-### 3.2 Emergence Targets
+Los valores canonicos son respuesta 600 ticks, suelo 0.20 y umbrales 0.05/0.45.
+`supply_t` escala unicamente la regeneracion posterior de FoodSource y ScrapPile;
+no modifica utilidad, estres, eficiencia ni mortalidad. La condicion fabril es un
+agregado mecanico, no una salud moral. CALM fija demanda cero y soporte uno. La
+politica institucional canonica solo usa desgaste/carga de conveyors, ocupacion
+anonima de Storage y conteos espaciales agregados. La regla de sobreocupacion lee
+unicamente `alive` y posicion para contar cuerpos, no identidad, personalidad,
+acciones, targets, confianza, comunidades, utilidad ni output estrategico
+(`Simulation::system_ship_out_food()` y
+`system_update_factory_condition()` en `src/simulation.cpp`, `src/sim_policy.cpp`,
+`src/sim_space_policy.cpp`, y `test_external_supply_causality` en
+`tests/simulation_tests.cpp`). Las variantes `external.supply_variant = 0` y
+`external.policy_variant = 0` son controles historicos A/B, no el modelo canonico.
 
-These are the phenomena the simulation should produce *without being explicitly programmed*:
+**Objetivo.** Representar una dependencia material, gradual y recuperable: fallar
+envios reduce reposicion futura; restaurarlos mejora primero soporte, despues
+stocks y finalmente riesgo de supervivencia. La fabrica nunca mata mediante una
+orden directa.
 
-| Phenomenon | Mechanism that produces it | Formal basis |
-|---|---|---|
-| Natural specialization | Skill-utility feedback loop | *Mathematical Foundations* Eq. @eq:skill-xp |
-| Spatial segregation | Personality-driven tile preference + Schelling dynamics | Schelling (1971) |
-| Informal leadership | High-gregariousness agents become central in social graph | Network centrality |
-| Artistic subcultures | High-artistry agents cluster, reinforce each other's expression | Schelling + bounded confidence |
-| Free-rider crisis | Low-compliance agents exploit high-compliance agents | Nowak-May spatial game theory |
-| Grief cascades | Death of central agent propagates through social graph | Stress contagion Eq. @eq:stress-contagion |
-| Strikes or slowdowns | Critical mass of low-compliance agents reduces output below quota | Threshold models |
-| Emergent spaces | Agent density patterns self-organize around need satisfaction | Schelling segregation |
-| Generational turnover | Old agents die, new agents lack shared history | Birth-death cycle + social graph persistence |
+**Hipotesis por validar.** El efecto debe mantenerse en muestras multisemilla y
+horizontes largos sin que el suelo de suministro vuelva irrelevante la cuota ni
+que topologias concretas dominen el resultado.
 
-### 3.3 What the Player Does
+## 3. Fabrica heredada y flujo fisico
 
-The player interacts with the simulation at the *environmental* level:
+**Implementado.** Cada mapa comienza, antes de crear la poblacion, con una cadena
+minima alcanzable y degradada de tres maquinas:
 
-- **Build and modify the factory**: place machines, walls, storage areas, open spaces.
-- **Set production quotas**: determine how much output the factory must produce.
-- **Observe**: watch agents behave, read the narrative log, inspect relationships and stress levels.
-- **Do NOT directly control agents**: agents decide their own actions based on utility.
+```text
+FoodSource -> FoodMachine -> FOOD
+ScrapPile  -> MaterialsMachine -> CONSTRUCTION_MATERIAL
+CONSTRUCTION_MATERIAL -> OutputMachine -> OUTPUT -> Storage cercano a Exit -> envio
+```
 
-This is the Dwarf Fortress model: the player is a city planner, not a micromanager. The interesting behavior emerges from agents responding to the environment the player creates.
+WFC coloca una FoodMachine, una MaterialsMachine, una OutputMachine, tres Storages
+y cuatro conveyors con condiciones distintas; la OutputMachine queda conectada al
+Exit. Los habitantes pueden operar, mantener, transportar, reparar y ampliar esa
+infraestructura. Conveyors y agentes son rutas fisicas de transporte y cada belt
+lleva un solo tipo de recurso. Construir puede desactivarse sin eliminar la cadena
+inicial (`actions.allow_build` en `config/default.toml`,
+`Grid::minimum_chain_present()` en
+`src/grid.h`, `src/sim_conveyor.cpp`, y las pruebas
+`test_inherited_factory_map_properties`, `test_inherited_chain_operates_without_build`
+y `test_output_haul_requires_storage_arrival` en `tests/simulation_tests.cpp`).
+FoodSource y ScrapPile son depositos del mapa cuya reposicion depende del soporte;
+las materias primas no aparecen como inputs magicos en los bordes. Entrance se usa
+para llegadas de personas, no para recursos.
 
-## 4. Design Decisions and Rationale
+**Objetivo.** Conseguir que producir, transportar y enviar sean hechos distintos y
+auditables. Output atrapado en maquina, inventory, conveyor o Storage remoto no
+satisface la cuota.
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Grid dimensionality | 2D | Adequate for social mechanics; avoids unnecessary pathfinding cost |
-| Agent control | Indirect (environment only) | Emergence requires agent autonomy |
-| Personality | Immutable at creation | Ensures stable behavioral diversity |
-| Artistic need | Present, not factory-productive | Core tension between survival and living |
-| Resource flow | Edge-to-edge through factory | Creates hauling logistics and spatial layout decisions |
-| Death | Permanent | Gives consequences to player decisions and agent behavior |
-| New agents | Random, from edge | Prevents player from optimizing population composition |
-| LLM integration | None for core simulation | All decisions are utility-based; LLM optional for narrative rendering only |
+**Hipotesis por validar.** La cadena degradada debe crear cuellos de botella
+reparables y decisiones logisticas legibles sin convertir BUILD en un acto
+fundacional ni imponer una plantilla central de trabajadores.
 
-## 5. Implementation Priority
+## 4. Habitantes y decision individual
 
-Following the phased roadmap from *Mathematical Foundations* Section 9, adapted for La Vida Misma:
+**Implementado.** Cada habitante es una entidad ECS con necesidades de hambre,
+descanso, social, expresion, proposito y significado; enfermedad; personalidad
+continua; cuatro skills; inventario; estres/trauma; estado social; memoria de
+lugares y ciclo vital (`src/components.h`). Hay trece acciones, incluido `IDLE`.
+Cada accion registra `UtilityBreakdown {self, factory, cost, risk, final,
+feasible}`. La seleccion canonica es Boltzmann sobre acciones factibles con
+`stress.selection_temperature = 0.4`; una utilidad cero recibe peso cero e `IDLE`
+es siempre una alternativa real. El valor cero de temperatura es solo el limite
+greedy, no el comportamiento por defecto (`Simulation::system_compute_utility()`
+en `src/sim_utility.cpp`, `action_feasible()` en `src/sim_targets.cpp`, y
+`test_metrics_contract`/`test_build_can_be_disabled` en
+`tests/simulation_tests.cpp`).
 
-**Phase 1 -- The Factory Floor**: 2D grid with tile types, simple Perlin terrain (industrial floor with varied zones), resource input/output at edges. ~2,000 LOC.
+La urgencia de supervivencia usa la variante sigmoide 3 y el estres canonico usa
+modificadores continuos; `StressState` es una etiqueta de presentacion. Los skills
+progresan solo cuando una accion tiene efecto y aumentan suavemente utilidad y
+eficacia; no existe olvido. REST no requiere cama y CREATE no consume un recurso de
+arte: una unidad creativa requiere por defecto veinte ticks efectivos y produce un
+artefacto (`urgency.curve_variant = 3`, `urgency.stress_model_variant = 1` y
+`culture.creative_work_ticks = 20` en `config/default.toml`).
 
-**Phase 2 -- The Workers**: Agents with Needs, Personality, and UtilityAI. Factory work actions (operate machine, haul material) and personal actions (rest, socialize, create). ~3,000 LOC.
+La mayor parte de la utilidad y los targets productivos observa estado dentro de
+radio Manhattan 12 y no consulta `ProductionChain::assess()`. Un target recordado
+puede quedar fuera del radio, pero sus propiedades actuales remotas no se vuelven
+a leer. Quedan dos limites conocidos a la localidad estricta: el planner de
+conveyors todavia escanea topologia fabril global antes de comprobar visibilidad,
+y A*, despues de escoger un target visible o recordado, usa el mapa completo para
+encontrar una ruta y cachearla
+(`Simulation::OBSERVATION_RADIUS`, `find_preferred_place()` en
+`src/sim_targets.cpp`, `cached_next_step()` en `src/sim_movement.cpp`, y
+`test_unseen_stock_does_not_change_decision`).
 
-**Phase 3 -- Moving Around**: A* pathfinding on 2D grid with tile costs. ~1,500 LOC.
+**Objetivo.** Hacer que la conducta se explique por estado individual,
+observaciones, memoria, relaciones y azar privado, sin reparto por ID, profesion
+impuesta ni omnisciencia economica.
 
-**Phase 4 -- Production Chain**: Machine processing, resource flow, quota system. Factory health as a global variable that affects all agents' fear utility. ~1,500 LOC.
+**Hipotesis por validar.** La retroalimentacion practica-skill-eficacia-utilidad
+debe producir especializacion persistente mas alla de la correlacion directamente
+inducida por los coeficientes de personalidad.
 
-**Phase 5 -- Social Fabric**: Relationship graph, stress system, stress contagion, personality-driven interaction. ~2,500 LOC.
+## 5. Mecanismos sociales, culturales y espaciales
 
-**Phase 6 -- The Spaces**: Agent-driven space use, environmental modification, emergent zone formation. Schelling dynamics via tile preference. ~1,000 LOC.
+**Implementado.** Familiaridad y confianza son aristas dirigidas continuas. La
+copresencia aumenta familiaridad; WORK, BUILD y CREATE efectivos compartidos
+refuerzan relaciones; recibir ayuda aumenta confianza hacia quien ayuda; observar
+conflicto cambia `observador -> actor`; el reparto de comida depende de excedente,
+hambre, distancia, confianza, gregariousness e influencia (`src/social.h`,
+`Simulation::system_social_learning()` y `src/sim_execute.cpp`). `community_id` se
+deriva periodicamente del grafo solo para observacion y metricas; no concede
+utilidad, comida, significado, proteccion ni privilegios, restriccion cubierta por
+`tests/verify_policy_audit.cmake` y `test_graph_labels_are_behavior_neutral`.
 
-**Phase 7 -- Life and Death**: Birth-death cycle, grief events, generational turnover, narrative logging. ~1,000 LOC.
+Cada agente recuerda hasta 24 experiencias de lugar. REST, SOCIALIZE y CREATE
+puntuan lugares por afinidad aprendida, distancia, trafico observable, ruido,
+riesgo, comida, personas conocidas y artefactos. EatingZone no otorga una ventaja
+categorica y CREATE funciona sobre suelo ordinario. Los artefactos tienen una
+respuesta de mood modulada por artistry y pueden desactivarse de forma
+contrafactual (`PlaceMemoryComponent` en `src/components.h`,
+`find_preferred_place()` en `src/sim_targets.cpp`, `system_spatial_learning()` en
+`src/simulation.cpp`, `culture.*` en `config/default.toml`, y
+`test_create_completes_discrete_work_units_on_ordinary_floor`).
 
-Total: ~12,500 LOC.
+**Objetivo.** Permitir coordinacion, comunidades observadas y apropiacion de
+lugares como resultados de interacciones continuas, no como efectos de una etiqueta
+de faccion, arquetipo, zona cultural o modelo Schelling codificado.
+
+**Hipotesis por validar.** Segregacion espacial, subculturas artisticas, liderazgo
+causal, free-riding, huelgas y tradiciones requieren contrafactuales y evidencia
+multisemilla adicional; no se consideran implementados por la mera existencia de
+clusters, influencia o correlaciones trait-accion.
+
+## 6. Ciclo vital e historia
+
+**Implementado.** Los IDs son historicos, monotonicos y no se reutilizan; las
+entidades muertas permanecen para analisis y liberan claims fisicos. Hay mortalidad
+natural, llegadas exogenas por Entrance y reproduccion. Los intentos de llegada
+dependen de tick y seed, no de muertes ni de una poblacion objetivo: un intento sin
+capacidad se pierde. La reproduccion evalua cada 50 ticks condiciones continuas de
+edad, proximidad, seguridad alimentaria local, necesidades, estres, mood,
+familiaridad y confianza. Un descendiente hereda el promedio de seis traits con
+mutacion acotada `+-0.08`, pero no skills, XP, arquetipo, comunidad, relaciones,
+opiniones, memoria ni progreso creativo (`src/sim_lifecycle.cpp`, `[lifecycle]` en
+`config/default.toml`, y las pruebas
+`test_arrivals_are_exogenous_and_newcomers_start_empty`,
+`test_reproduction_inherits_traits_not_roles_or_relationships` y
+`test_dynamic_identity_and_ten_thousand_tick_turnover`). Todas las muertes pasan
+por el pipeline exclusivo `Simulation::kill_agent()` y aplican duelo una vez.
+
+**Objetivo.** Producir cohortes, genealogia e integracion sin reemplazo forzado y
+sin predestinar roles o grupos a nuevas personas.
+
+**Hipotesis por validar.** Que existan generaciones no demuestra transmision
+cultural. Debe medirse si relaciones, convivencia, opiniones y objetos persistentes
+transmiten patrones entre cohortes mejor que controles barajados o desactivados.
+
+## 7. Director humano y replay
+
+**Implementado.** `DirectorCommand` es una variante tipada que solo permite fijar
+cuota, capacidad anonima de ocupacion, colocar o retirar estructura y priorizar
+mantenimiento. La API no acepta identidad, accion, target conductual,
+personalidad, relacion ni utilidad (`src/director.h`, `src/sim_director.cpp` y la
+auditoria `tests/verify_policy_audit.cmake`). Cada intervencion aceptada registra
+tick y secuencia antes de `Simulation::advance()`. La GUI puede grabar TOML schema
+2 con seed, modo y huella FNV-1a de la fuente de configuracion; `vida_batch replay`
+rechaza diferencias y reproduce el ledger. El estado resultante se compara en
+`test_director_log_round_trip_and_replay` y la CLI byte-identica en
+`tests/verify_replay.cmake`. La salida JSON de replay conserva schema 1 y las
+metricas usan schema 3. La vista normal muestra consecuencias observables y la
+vista `F12` separa informacion de debug.
+
+**Objetivo.** Dar agencia ambiental reproducible al jugador sin convertir al
+Director en un despachador de personas ni asumir que su vista debug es conocimiento
+del mundo.
+
+**Hipotesis por validar.** Las cinco intervenciones fisicas deben ofrecer decisiones
+jugables suficientes; cualquier comando nuevo debe conservar el limite tipado y
+tener round-trip/replay determinista.
+
+## 8. Pipeline de tick
+
+**Implementado.** El orden efectivo es el de `Simulation::advance()` en
+`src/simulation.cpp`; las intervenciones Director del tick se aplican antes de
+entrar en esta secuencia:
+
+```text
+1. regenerar recursos; decaer necesidades y enfermedad
+2. fijar/escalar cuota segun modo
+3. calcular utilidad; buscar targets; mover; ejecutar acciones
+4. aprendizaje social; aprendizaje espacial
+5. transportar conveyors; enviar output y actualizar soporte
+6. evaluar globalmente la cadena para diagnostico post-tick
+7. aplicar presion institucional no-CALM y actualizar condicion fisica
+8. efectos de artefactos; detectar comunidades; actualizar estres; muertes y duelo
+9. contagio, influencia, mood, decay de relaciones y consecuencias de dismantle
+10. metricas de emergencia; Chronicle; metricas de muerte; ciclo vital
+11. incrementar contadores de tick
+```
+
+`ProductionChain::assess()` corre despues de acciones y shipping; su snapshot
+global no participa en la utilidad o targeting canonicos. Chronicle clasifica
+hechos por `EventType` y renderizar narrativa no consume RNG conductual
+(`test_narrative_is_behavior_neutral`).
+
+**Objetivo.** Mantener una causalidad temporal unica para batch y GUI, distinguir
+seleccion, target, llegada y efecto, y hacer reproducibles las intervenciones antes
+del tick.
+
+**Hipotesis por validar.** Cualquier reordenamiento debe demostrar mediante replay
+y metricas que no introduce feedback en el mismo tick donde el modelo especifica
+retardo, en especial `shipping_t -> regeneracion_t+1`.
+
+## 9. Evidencia, resultados negativos y criterio de afirmacion
+
+**Implementado.** `vida_batch metrics` emite un unico JSON schema 3 con poblacion,
+demografia, fabrica, funnel y descomposicion de acciones, recursos, maquinas,
+stocks, red social, emergencia, necesidades, skills, eventos y timeline
+(`src/batch_main.cpp`, `src/metrics.h` y `tests/verify_metrics.cmake`). La misma seed
+y el mismo build producen salida identica; CTest cubre contrato schema 3, replay,
+limites de politica/Director y fixtures deterministas (`tests/simulation_tests.cpp`).
+
+La evidencia registrada hasta Fase 8 sostiene afirmaciones acotadas:
+
+- Bloquear Exit a 3000 ticks redujo vivos en 14/20 seeds y aumento muertes por hambre en
+  18/20; reabrirlo mejoro soporte en 5/5 y vivos en 4/5, con un empate. La secuencia
+  observada fue envio, soporte, reposicion, stock y riesgo posterior
+  (`doc/plans/2026-07-21-alineacion-diseno-implementacion.md`).
+- En CALM, 20 seeds emparejadas a 1000 ticks dieron modularidad/estabilidad
+  `0.443/0.672` con el modelo completo y `0/0` sin aprendizaje social. Sin afinidad,
+  la persistencia espacial media bajo de `0.238` a `0.198`. Esto apoya componentes
+  comunitarios derivados y memoria espacial, no segregacion.
+- En CALM a 10000 ticks para seeds `0,1,2,3,7`, hubo picos de 51-64 personas,
+  63-71 identidades historicas, 8-10 cohortes, generaciones maximas 2-3 y ningun
+  fundador vivo. Esto verifica turnover y genealogia, no herencia cultural.
+- La regresion de cierre de Fase 8 a 3000 ticks termino NORMAL con
+  `51,48,51,49,50` vivos y cero target failures para seeds `0,1,2,3,7`.
+
+Tambien se conservan resultados negativos. El delta de distancia frente a traits
+barajados carece de intervalo estadistico y horizonte largo, por lo que no se
+declara segregacion. No hay preferencia estetica compartida modelada, asi que no se
+declara subcultura. No se midio precedencia causal de influencia, asi que no se
+declara liderazgo. La correlacion contribucion-beneficio fue positiva (`0.693`) y
+no demuestra free-riding. Desactivar efectos de artefactos no valido un efecto
+cultural macro. Sustituir el kink de compliance cuando `meaning > 0.7` por una
+sigmoide colapso una seed (`44 -> 10` vivos) y se revirtio; no todo umbral es un
+parche (`doc/plans/2026-07-21-emergence-redesign.md`).
+
+**Objetivo.** Reservar las palabras "emerge", "segregacion", "subcultura",
+"liderazgo" y "free-riding" para diferencias reproducibles frente a un
+contrafactual definido antes del experimento.
+
+**Hipotesis por validar.** Faltan intervalos multisemilla y horizontes largos para
+patrones espaciales, causalidad de influencia, distribucion contribucion-beneficio
+y transmision entre generaciones. Un resultado nulo debe conservarse como
+evidencia, no corregirse agregando un gate para producir el relato esperado.

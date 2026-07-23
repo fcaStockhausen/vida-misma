@@ -9,21 +9,19 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
-#include <functional>
 
 class GraphicalView {
 public:
-    GraphicalView(Simulation& sim, std::atomic<bool>& paused);
+    explicit GraphicalView(Simulation& sim, bool debug_view = false);
     ~GraphicalView();
 
     void run();
-    void set_speed_callback(std::function<void(int)> cb) { speed_cb_ = std::move(cb); }
 
 private:
     Simulation& sim_;
-    std::atomic<bool>& paused_;
     bool quit_ = false;
     bool running_ = true;
+    bool debug_view_ = false;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -44,14 +42,13 @@ private:
     float zoom_target_ = 1.0f;
 
     // Selection
-    int selected_idx_ = 0;
+    int selected_agent_id_ = 0;
     bool follow_agent_ = false;
 
     // Speed
     int speed_idx_ = 5; // index into SPEED_PRESETS (default 300ms = slow)
     static constexpr int SPEED_PRESETS[] = {20, 50, 100, 150, 200, 300, 500, 800, 1200};
     static constexpr int SPEED_COUNT = 9;
-    std::function<void(int)> speed_cb_;  // notifies main when speed changes
 
     // View toggles
     bool show_help_ = false;
@@ -59,6 +56,17 @@ private:
     bool show_grid_coords_ = false;
     bool show_quit_confirm_ = false;
     bool journal_colony_mode_ = false;  // false=per-agent, true=colony-wide
+
+    enum class DirectorTool : uint8_t { Quota, Zone, Place, Remove, Maintenance };
+    bool director_edit_ = false;
+    bool director_restore_running_ = false;
+    DirectorTool director_tool_ = DirectorTool::Quota;
+    float director_quota_ = 0.0f;
+    int director_zone_index_ = 2;
+    int director_structure_index_ = 4;
+    MaintenancePriority director_priority_ = MaintenancePriority::High;
+    ConveyorDir director_direction_ = ConveyorDir::E;
+    std::string director_status_;
 
     // Drag
     bool drag_ = false;
@@ -95,6 +103,7 @@ private:
     void render_tile(int gx, int gy, const std::vector<entt::entity>& agents);
     void render_header_bar();
     void render_side_panel();
+    void render_player_panel(int px, int pw, int header_h);
     void render_help_overlay();
     void render_quit_confirm();
     void render_tooltip();
@@ -113,6 +122,12 @@ private:
     void prev_agent();
     int speed_ms() const;
     void cycle_speed(int dir);
+    void toggle_director_edit();
+    void cycle_director_option(int dir);
+    void apply_director_at(int x, int y);
+    void apply_director_quota();
+    const char* director_tool_name() const;
+    const char* director_option_name() const;
 
     static std::string ff(float v) {
         char b[16];

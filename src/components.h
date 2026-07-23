@@ -3,7 +3,10 @@
 // Components are plain data structs -- no logic here.
 
 #include <cstdint>
+#include <array>
 #include <string>
+#include <vector>
+#include <random>
 #include <algorithm>  // std::clamp (for stress smoothstep helpers)
 #include "path_cache.h"
 
@@ -14,8 +17,8 @@ enum class TileType : uint8_t {
     Wall,
     Machine,      // Factory machine (needs building, then produces food)
     Storage,      // Holds resources for communal use
-    Entrance,     // DEPRECATED: no longer placed, kept for enum compatibility
     Exit,
+    Entrance,     // External arrivals enter here
     OpenSpace,    // Social/creative area
     FoodSource,   // Wild food (legacy, unused in current model)
     ScrapPile,    // Raw material deposit -- finite or slow regen
@@ -49,7 +52,7 @@ enum class ActionType : uint8_t {
     EAT,          // Consume food (from inventory or adjacent Storage / EatingZone)
     REST,
     SOCIALIZE,
-    CREATE,       // Artistic expression (needs OpenSpace)
+    CREATE,       // Artistic expression at a personally selected place
     EXPLORE,      // Move randomly, discover
     GET_FOOD,     // Pick up food from adjacent Storage into inventory (snack to-go)
     MAINTAIN,     // Repair a degraded Conveyor
@@ -59,8 +62,8 @@ enum class ActionType : uint8_t {
     COUNT
 };
 
-// Spatial contract: which tile an action requires the agent to stand on.
-// EAT/REST/SOCIALIZE/EXPLORE/IDLE/GET_FOOD have no hard tile requirement (return true).
+// Spatial contract: cultural actions use a scored walkable target rather than a
+// semantically privileged tile type.
 inline bool is_valid_action_tile(ActionType action, TileType tile) {
     switch (action) {
         case ActionType::GATHER:   return tile == TileType::ScrapPile || tile == TileType::FoodSource;
@@ -71,7 +74,7 @@ inline bool is_valid_action_tile(ActionType action, TileType tile) {
                                          || tile == TileType::FoodSource
                                          || tile == TileType::ScrapPile;
         case ActionType::WORK:     return tile == TileType::Machine;
-        case ActionType::CREATE:   return tile == TileType::OpenSpace;
+        case ActionType::CREATE:   return tile != TileType::Wall;
         case ActionType::MAINTAIN: return true;  // agent stands ADJACENT to conveyor
         case ActionType::DISMANTLE: return true; // agent stands ADJACENT to conveyor to tear down
         case ActionType::SABOTAGE:  return true; // agent stands ADJACENT to target
@@ -97,8 +100,7 @@ struct NeedsComponent {
     float social     = 0.0f;
     float expression = 0.0f;
     float purpose    = 0.0f;
-    float meaning    = 0.0f;   // [0, 1], 1 = unfulfilled. Factory work doesn't satisfy.
-                               // Only CREATE (artifacts), factions, hidden spaces fill this.
+    float meaning    = 0.0f;   // [0, 1], 1 = unfulfilled. Completed creative work can satisfy it.
     float disease    = 0.0f;   // [0, 1], 0 = healthy. Raw food risk. Increases hunger decay + stress.
 };
 
@@ -107,6 +109,81 @@ struct ArtifactComponent {
     int creator_id = -1;
     float strength = 1.0f;  // decays over time
     int age = 0;            // ticks since creation
+};
+
+struct PlaceMemoryEntry {
+    int x = -1;
+    int y = -1;
+    float affinity = 0.0f;  // [-1, 1], learned from personal outcomes
+    int exposures = 0;
+    int last_tick = -1;
+};
+
+struct PlaceMemoryComponent {
+    std::vector<PlaceMemoryEntry> places;
+};
+
+struct CreativeWorkComponent {
+    float progress = 0.0f;  // retained fraction of the next artifact work unit
+    uint64_t completed_units = 0;
+};
+
+enum class AgentOrigin : uint8_t {
+    INITIAL = 0,
+    ARRIVAL,
+    BIRTH,
+};
+
+enum class DeathCause : uint8_t {
+    NONE = 0,
+    STARVATION,
+    EXHAUSTION,
+    BREAKDOWN,
+    COLLAPSE,
+    SUICIDE,
+    NATURAL,
+};
+
+inline const char* agent_origin_name(AgentOrigin origin) {
+    switch (origin) {
+        case AgentOrigin::INITIAL: return "initial";
+        case AgentOrigin::ARRIVAL: return "arrival";
+        case AgentOrigin::BIRTH: return "birth";
+        default: return "unknown";
+    }
+}
+
+inline const char* death_cause_name(DeathCause cause) {
+    switch (cause) {
+        case DeathCause::STARVATION: return "starvation";
+        case DeathCause::EXHAUSTION: return "exhaustion";
+        case DeathCause::BREAKDOWN: return "breakdown";
+        case DeathCause::COLLAPSE: return "collapse";
+        case DeathCause::SUICIDE: return "suicide";
+        case DeathCause::NATURAL: return "natural";
+        default: return "none";
+    }
+}
+
+struct LifecycleComponent {
+    AgentOrigin origin = AgentOrigin::INITIAL;
+    int parent_a = -1;
+    int parent_b = -1;
+    int entry_tick = 0;
+    int age_at_entry = 0;
+    int lifespan = 0;
+    int cohort = 0;
+    int generation = 0;
+    int last_reproduction_tick = -1000000000;
+    int death_tick = -1;
+    int first_trusted_edge_tick = -1;
+    float peak_influence = 0.0f;
+};
+
+struct RandomComponent {
+    std::mt19937 engine;
+
+    explicit RandomComponent(uint32_t seed) : engine(seed) {}
 };
 
 // ============================================================
@@ -137,7 +214,7 @@ inline const char* archetype_name(Archetype a) {
         case Archetype::SURVIVOR:      return "Survivor";
         case Archetype::EXPLORER:      return "Explorer";
         case Archetype::STEADY_WORKER: return "Worker";
-        default:                       return "?";
+        default:                       return "Unclassified";
     }
 }
 
@@ -181,11 +258,21 @@ struct PositionComponent {
     int y = 0;
 };
 
+struct UtilityBreakdown {
+    float self = 0.0f;
+    float factory = 0.0f;
+    float cost = 0.0f;
+    float risk = 0.0f;
+    float final = 0.0f;
+    bool feasible = false;
+};
+
 struct ActionComponent {
     ActionType current = ActionType::IDLE;
     int target_x = -1;
     int target_y = -1;
     bool at_target = false;
+    bool effected_last_tick = false;
 
     // Action stickiness: once an agent commits to WORK or BUILD, it stays
     // committed for this many ticks (resets when action changes).
@@ -197,16 +284,20 @@ struct ActionComponent {
     // Path cache for A* — avoids recomputing the full path every tick
     PathCache path_cache;
 
-    // Last computed utilities (for display/debugging)
-    float last_utility_gather    = 0.0f;
-    float last_utility_build     = 0.0f;
-    float last_utility_work      = 0.0f;
-    float last_utility_eat       = 0.0f;
-    float last_utility_rest      = 0.0f;
-    float last_utility_socialize = 0.0f;
-    float last_utility_create    = 0.0f;
-    float last_utility_explore   = 0.0f;
-    float last_utility_get_food  = 0.0f;
+    // Last computed utility decomposition for display and diagnostics.
+    std::array<UtilityBreakdown,
+               static_cast<size_t>(ActionType::COUNT)> last_utility{};
+    std::array<int, static_cast<size_t>(ActionType::COUNT)> preferred_x = [] {
+        std::array<int, static_cast<size_t>(ActionType::COUNT)> values{};
+        values.fill(-1);
+        return values;
+    }();
+    std::array<int, static_cast<size_t>(ActionType::COUNT)> preferred_y = [] {
+        std::array<int, static_cast<size_t>(ActionType::COUNT)> values{};
+        values.fill(-1);
+        return values;
+    }();
+    std::array<float, static_cast<size_t>(ActionType::COUNT)> preferred_place_score{};
 };
 
 // Stress states — qualitative behavior changes at thresholds
@@ -215,7 +306,6 @@ enum class StressState : uint8_t {
     DISSOCIATED,      // 0.4 - 0.7: -30% social, +30% create/explore
     HOSTILE_EUPHORIA, // 0.7 - 0.9: ignores noncompliance, artificial mood boost, -50% trust gain
     BROKEN,           // 0.9+:      point of no return — stressed utility function
-    REDEEMED,         // post-sabotage epiphany — collectivist martyr
 };
 
 inline const char* stress_state_name(StressState s) {
@@ -224,7 +314,6 @@ inline const char* stress_state_name(StressState s) {
         case StressState::DISSOCIATED:     return "Dissociated";
         case StressState::HOSTILE_EUPHORIA: return "Euphoric";
         case StressState::BROKEN:          return "Broken";
-        case StressState::REDEEMED:        return "Redeemed";
         default:                           return "?";
     }
 }
@@ -279,7 +368,6 @@ inline float stress_work_mult(float stress_value) {
 }
 
 // Derive the display label from stress.value (for GUI/chronicle).
-// REDEEMED is handled separately (it's an event flag, not stress-derived).
 inline StressState stress_state_from_value(float stress_value) {
     if (stress_value < 0.4f) return StressState::NORMAL;
     if (stress_value < 0.7f) return StressState::DISSOCIATED;
@@ -293,7 +381,6 @@ struct StressComponent {
     StressState state = StressState::NORMAL;
     int ticks_in_state = 0;   // how many consecutive ticks above 0.6 (for trauma accumulation)
     int sabotage_count = 0;   // how many times this agent has sabotaged
-    bool can_redeem = false;  // set true after first sabotage; enables redemption roll
 };
 
 // Opinion dynamics: cultural beliefs that diverge via bounded confidence (doc §8.5)
@@ -337,8 +424,9 @@ struct AgentComponent {
     bool alive = true;
     int ticks_at_max_hunger = 0;
     int ticks_at_max_rest = 0;
-    float noncompliance = 0.0f;  // [0,1] how much the factory "notices" this agent slacking
-    int faction_id = -1;         // -1 = no faction
+    float noncompliance = 0.0f;  // [0,1] legacy policy diagnostic
+    int community_id = -1;       // Observed graph community; never read by behavior.
+    DeathCause death_cause = DeathCause::NONE;
     std::string cause_of_death;
 };
 
@@ -366,6 +454,8 @@ struct SkillsComponent {
     float xp_domestic = 0.0f;
     float xp_art     = 0.0f;
     float xp_social  = 0.0f;
+
+    // Skills are persistent: the current model has no forgetting by disuse.
 
     static float xp_to_level(float xp) { return std::min(5.0f, xp / 10.0f); }
     static float level_bonus(float level) { return 1.0f + level * 0.15f; }  // +15% per level
@@ -398,11 +488,34 @@ struct TileData {
     float stored_output               = 0.0f;  // from OutputMachine — shipped as quota
     float storage_capacity    = 0.0f;
 
+    float total_stored() const {
+        return stored_raw_food + stored_raw_material + stored_food
+             + stored_construction_material + stored_output;
+    }
+
+    std::array<float, 5> remove_stored_fraction(float fraction) {
+        fraction = std::clamp(fraction, 0.0f, 1.0f);
+        std::array<float, 5> removed{
+            stored_raw_food * fraction,
+            stored_raw_material * fraction,
+            stored_food * fraction,
+            stored_construction_material * fraction,
+            stored_output * fraction,
+        };
+        stored_raw_food -= removed[0];
+        stored_raw_material -= removed[1];
+        stored_food -= removed[2];
+        stored_construction_material -= removed[3];
+        stored_output -= removed[4];
+        return removed;
+    }
+
     // Conveyor state
     ConveyorDir conveyor_dir      = ConveyorDir::E; // flow direction
     float       conveyor_condition = 1.0f;           // [0, 1], 0 = broken
     ResourceType conveyor_contents_type = ResourceType::FOOD;
     float       conveyor_contents     = 0.0f;       // amount sitting on belt
+    uint8_t     maintenance_priority = 0;           // anonymous institutional signal
 
     // Dismantle tracking — who tore down a conveyor here, and when.
     // Used for social penalty if not rebuilt promptly.
@@ -412,6 +525,9 @@ struct TileData {
 
     // Hidden space tracking
     int   hidden_space_occupancy = 0; // ticks of over-occupancy; factory seals at 10
+    // Anonymous physical occupancy policy used by the indifferent institution.
+    int   occupancy_capacity = 0;
+    int   overcapacity_ticks = 0;
 
     bool has_data() const {
         return resource_max > 0.0f || build_cost > 0.0f || storage_capacity > 0.0f;

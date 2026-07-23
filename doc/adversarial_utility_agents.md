@@ -1,5 +1,13 @@
 # Adversarial Utility Agents for Optimization Decision Pipelines
 
+> **Scope:** This is a general theoretical note with historical links to utility
+> simulation. It does not define the canonical ontology of *La Vida Misma*.
+> In the current simulation the factory is an indifferent institution governed by
+> physical rules, not an Evaluator, strategic opponent or minimax player. The old
+> strategic policy survives only as `external.policy_variant = 0` for explicit
+> historical A/B comparison. For the current model, use
+> `doc/plans/2026-07-21-alineacion-diseno-implementacion.md`.
+
 ## The Problem Pattern
 
 A recurring architecture in quantitative systems:
@@ -17,13 +25,22 @@ This framework draws from several established bodies of theory. This section map
 
 ### Utility Theory and Local Decision-Making
 
-The utility-based agent architecture used in community simulation (Dwarf Fortress, RimWorld) provides the formal basis for individual agent behavior. Each agent evaluates a set of candidate actions by computing a scalar utility:
+Utility-based agent architectures used in community simulation provide a useful
+formal basis for individual choice. Each agent evaluates candidate actions by
+computing scalar utility; a simple deterministic formulation is:
 
 $$a^* = \arg\max_{a \in A} U(a)$$
 
-In the simulation context, agents have needs (hunger, rest, social) and personality weights that modulate urgency. The agent selects the highest-utility action at each tick. The key property is **composability**: adding a new need or action requires only defining its utility contribution, not modifying the decision loop.
+Implementations may choose this argmax or sample a softmax/Boltzmann distribution.
+The current *La Vida Misma* agents use the latter. The general property relevant
+here is **composability**: a need or action can add a utility contribution without
+replacing the selection architecture.
 
-In the adversarial optimization context, the same mechanism applies, but with a critical difference: each agent's utility function is **opposed** to the other's. Where a simulation agent cooperates with the system (it follows rules that produce emergent order), adversarial agents compete. The decision loop is the same; the incentive structure is inverted.
+In the adversarial optimization context, the same mechanism can be reused, but
+with a critical difference: each optimization agent's utility function is
+**opposed** to the other's. This is an architectural analogy to utility-based
+simulation, not a claim that a simulation environment or institution is itself
+an adversarial agent.
 
 ### Emergence and Wolfram's Classification
 
@@ -119,13 +136,22 @@ The system seeks a configuration $\theta^*$ such that:
 
 $$\theta^* \in \arg\min_\theta \max\{U_p(\theta), U_e(\theta)\}$$
 
-This is a minimax formulation. By the Minimax theorem (von Neumann, 1928), if the action space is compact and the utility functions are continuous, a saddle point exists. In practice, the system converges under best-response dynamics when:
+As written, this is a robust scalar optimization over one configuration, not yet a
+two-player zero-sum game with separate strategy variables. Compactness and
+continuity guarantee that its extrema are attained, but do not guarantee a saddle
+point. A minimax equality needs additional structure, such as compact convex
+strategy sets and a convex-concave payoff, or finite action sets with mixed
+strategies. Alternating best responses are an algorithmic choice and can cycle
+even when an equilibrium exists.
 
-1. Both utility functions are continuous in $\theta$.
-2. $\Theta$ is bounded (finite model families, bounded parameter ranges).
-3. The proposal step uses best-response (greedy maximization given the other's last move).
-
-**Important caveat for discrete implementations.** The continuity hypothesis (condition 1) is essential for von Neumann's theorem and is frequently violated in practice: any utility function built from threshold gates (`if need > τ`) is piecewise-discontinuous, not continuous. The community-simulation implementation of *La Vida Misma* is exactly such a case — its agent utilities in `sim_utility.cpp` contain dozens of hard `if`-threshold gates, so the von Neumann saddle point is *not* guaranteed. For discrete settings like this, the correct framework is **Shapley's stochastic game** (Shapley, 1953): every two-player zero-sum stochastic game with *finite* state and action sets has a value and optimal stationary strategies, with **no continuity requirement**. Finiteness — which the discrete-action, grid-based setting satisfies — is sufficient. See Section @sec:factory-adversary for the full formal model applied to *La Vida Misma*.
+**Important caveat for discrete implementations.** A threshold branch may be
+continuous at its boundary or may introduce a jump; the code must be inspected
+rather than classifying every gate as discontinuous. Historical audits of grid
+simulations, including this project's earlier utility code, do not turn those
+simulations into two-player zero-sum games. For a discounted zero-sum stochastic
+game with finite states and actions, Shapley's 1953 framework supplies a value and
+stationary optimal strategies without a continuity assumption on a continuous
+action space.
 
 The structural equivalences across domains:
 
@@ -135,9 +161,13 @@ The structural equivalences across domains:
 | Microeconomics | Principal-agent | Agent (takes action) | Principal (evaluates outcome) |
 | Machine learning | GAN | Generator | Discriminator |
 | Robust optimization | Adversarial formulation | Minimizer | Maximizer |
-| Community simulation | Needs-utility loop | Agent (acts on highest utility) | Environment (provides consequences) |
+| Utility simulation analogy | Needs-utility loop | Agent selects an action | Environment provides consequences |
 
-The last row is the connection to the simulation framework: in Dwarf Fortress, the agent acts (Proposer) and the physics/social systems return consequences (Evaluator). The adversarial optimization system abstracts this pattern: the "world" is reduced to a validation function, and the "agent" is reduced to an optimization proposer.
+The last row is an implementation analogy only: a simulation agent acts and the
+physics/social systems return consequences. Those systems need not optimize an
+opposed utility and should not be called an Evaluator in the game-theoretic sense.
+An adversarial optimization system deliberately adds that opposed objective by
+reducing the world to a validation function and the agent to a proposer.
 
 ## Architectural Patterns
 
@@ -215,22 +245,29 @@ Model Selector:
 
 ### Convergence
 
-For two-player zero-sum games with compact action spaces, the Minimax theorem (von Neumann, 1928) guarantees the existence of a Nash equilibrium — **provided the utility functions are continuous**. In practice, von Neumann convergence requires:
+For finite two-player zero-sum games, von Neumann's minimax theorem guarantees a
+value in mixed strategies. Continuous-action extensions require conditions such
+as compact convex strategy sets, continuity, and convex-concave payoff structure.
+These are equilibrium-existence conditions, not a proof that naive alternating
+best responses converge. Best-response trajectories can cycle and need a separate
+algorithmic convergence argument. DeGroot consensus has different linear-system
+assumptions and is not the same criterion.
 
-1. Both utility functions are continuous in the action space.
-2. The action space is bounded (finite model families, bounded parameter ranges).
-3. The iteration uses best-response dynamics (each agent greedily maximizes its own utility given the other's last move).
-
-This is the same convergence criterion as the DeGroot model with a strongly connected, aperiodic influence graph: the system converges when no agent is isolated from the influence of the others and the influence structure does not produce periodic oscillation.
-
-**Discrete / discontinuous regime.** When condition 1 fails — as it does in any implementation whose utility functions contain threshold gates — the von Neumann result does not apply and the system should not be described as "converging to a saddle point." The correct replacement is **Shapley's theorem (1953)** for two-player zero-sum stochastic games: if the state set $S$ and the action sets are *finite*, the game has a value $V(s)$ and both players have optimal stationary (Markov) strategies. The discount factor $\gamma \in [0,1)$ replaces the role of compactness+continuity; it corresponds, in a simulation, to the rate at which agents leave the game (death). Under Shapley, the long-run behavior is not convergence to a fixed point but approach to a **stationary distribution** over states — the game-theoretic form of Wolfram's Class IV (edge of chaos). The *La Vida Misma* implementation lives in this discrete regime: see Section @sec:factory-adversary.
+**Discrete / discontinuous adversarial regime.** A genuine discounted two-player
+zero-sum stochastic game with finite state and action sets falls under Shapley's
+framework and has a value $V(s)$ with stationary optimal strategies. This result
+cannot be transferred merely because an agent-based simulation is discrete; the
+simulation must first satisfy the finite, discounted, two-player and opposed-payoff
+assumptions.
 
 ### When the System Does NOT Converge
 
 - **Non-convex utility landscapes** (multiple local equilibria). The system may cycle between proposals. This is analogous to Wolfram's Class III (chaotic) regime: the rules produce perpetual change without stabilization.
 - **Unbounded action spaces** (the Fitter can always propose a more complex model). This violates the compactness/ finiteness requirement of both von Neumann and Shapley.
 - **Non-stationary data** (the equilibrium shifts before convergence). This is the online learning setting: the target moves faster than the system can adapt.
-- **Discontinuous utilities under the von Neumann framing.** Threshold-gated utilities break the continuity hypothesis of the 1928 theorem. This is *not* a failure of the adversarial system per se — it is a signal to switch to the Shapley discrete-game framework, which dispenses with continuity. Many simulation/agent-based implementations fall here by construction.
+- **Discontinuous utilities in a continuous-action framing.** A genuine jump can
+  invalidate a selected continuous minimax theorem, but it does not by itself
+  justify switching to Shapley's finite discounted stochastic-game framework.
 
 Mitigations: limit iteration count (truncated best-response), add a "referee" agent that detects cycling and forces a decision, or use simulated annealing on the proposal step (occasionally accept worse proposals to escape local equilibria, analogous to introducing noise at the edge of chaos).
 

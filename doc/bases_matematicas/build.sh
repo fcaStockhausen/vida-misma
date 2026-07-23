@@ -6,8 +6,18 @@ SECTIONS_DIR="$SCRIPT_DIR/secciones"
 OUTPUT_DIR="$SCRIPT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-# Use brew pandoc (3.9.0.2) over anaconda's older version
-PANDOC="/opt/homebrew/bin/pandoc"
+# PANDOC may override PATH resolution for reproducible local toolchains.
+PANDOC="${PANDOC:-$(command -v pandoc || true)}"
+if [ -z "$PANDOC" ] || [ ! -x "$PANDOC" ]; then
+  echo "error: pandoc not found; install it or set PANDOC=/path/to/pandoc" >&2
+  exit 1
+fi
+for tool in pandoc-crossref xelatex; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: $tool not found on PATH" >&2
+    exit 1
+  fi
+done
 
 # All section files in order
 SECTIONS=(
@@ -56,6 +66,7 @@ echo "=== PDF generated: $OUTPUT_DIR/bases_matematicas.pdf ==="
 "$PANDOC" "${SECTIONS[@]}" \
   "${COMMON_FLAGS[@]}" \
   --standalone \
+  --eol=lf \
   --mathjax \
   -o "$OUTPUT_DIR/bases_matematicas.html"
 
